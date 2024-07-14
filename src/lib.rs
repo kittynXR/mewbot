@@ -1,70 +1,43 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+pub mod config;
+pub mod twitch;
+pub mod vrchat;
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct World {
-    pub name: String,
-    pub description: String,
-    #[serde(rename = "authorName")]
-    pub author_name: String,
-    pub capacity: i32,
-    pub id: String,
-    #[serde(rename = "releaseStatus")]
-    pub release_status: String,
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+// Re-export the most important types for convenience
+pub use config::Config;
+pub use twitch::client::TwitchClient;
+pub use vrchat::client::VRChatClient;
+
+pub async fn init(mut config: Config) -> Result<(TwitchClient, VRChatClient), Box<dyn std::error::Error + Send + Sync>> {
+    let twitch_client = TwitchClient::new(&mut config)?;
+    let vrchat_client = VRChatClient::new(&mut config).await?;
+
+    Ok((twitch_client, vrchat_client))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Message {
-    #[serde(rename = "type")]
-    message_type: String,
-    content: Option<String>,
-}
+pub async fn run(twitch_client: TwitchClient, mut vrchat_client: VRChatClient) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let world_info = Arc::new(Mutex::new(None));
 
-pub fn extract_user_location_info(json_message: &str) -> Result<Option<World>, serde_json::Error> {
-    //println!("Received JSON: {}", json_message);
+    let vrchat_handle = tokio::spawn(vrchat::websocket::handler(vrchat_client.get_auth_cookie(), world_info.clone(), vrchat_client.get_current_user_id().await?));
 
-    let message: Result<Message, serde_json::Error> = serde_json::from_str(json_message);
+    let twitch_handle = tokio::spawn(twitch::handler::run(
+        twitch_client.client,
+        twitch_client.incoming_messages,
+        world_info.clone()
+    ));
 
-    match message {
-        Ok(msg) => {
-            //println!("Deserialized message: {:?}", msg);
-            if msg.message_type == "user-location" {
-                if let Some(content) = msg.content {
-                    match serde_json::from_str::<Value>(&content) {
-                        Ok(content_val) => {
-                            if let Some(world_val) = content_val.get("world") {
-                                match serde_json::from_value::<World>(world_val.clone()) {
-                                    Ok(world) => {
-                                        println!("Extracted world: {:?}", world);
-                                        Ok(Some(world))
-                                    }
-                                    Err(err) => {
-                                        println!("Failed to deserialize world: {}", err);
-                                        Err(err)
-                                    }
-                                }
-                            } else {
-                                println!("'world' key not found in content.");
-                                Ok(None)
-                            }
-                        }
-                        Err(err) => {
-                            println!("Failed to parse content as JSON: {}", err);
-                            Err(err)
-                        }
-                    }
-                } else {
-                    println!("No content in user-location message.");
-                    Ok(None)
-                }
-            } else {
-                println!("Message is not of type 'user-location'.");
-                Ok(None)
-            }
-        },
-        Err(err) => {
-            println!("Failed to deserialize JSON: {}", err);
-            Err(err)
-        },
-    }
+    let current_user_id = vrchat_client.get_current_user_id().await
+        .map_err(|e| format!("Failed to get current user ID: {}", e))?;
+
+    println!("Current user ID: {}", current_user_id);
+
+
+    // Handle potential errors from both tasks
+    let (twitch_result, vrchat_result) = tokio::try_join!(twitch_handle, vrchat_handle)?;
+    twitch_result?;
+    vrchat_result?;
+
+    Ok(())
 }

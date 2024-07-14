@@ -13,19 +13,31 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vrchatapi = "^1.0"
-twitch-irc = "5.0.1"
-url = "2.4.1"
-futures = "0.3.28"
-futures-util = "0.3.28"
-tokio-tungstenite = { version = "0.20.1", features = ["rustls-native-certs", "rustls-tls-native-roots", "native-tls", "rustls-tls-webpki-roots"] }
-native-tls = "0.2.11"
-http = "0.2.9"
-serde = "1.0.190"
-serde_json = "1.0.108"
+vrchatapi = "^1.17.6"
+twitch-irc = "^5.0.1"
+url = "^2.5.1"
+futures = "^0.3"
+futures-util = "^0.3"
+tokio-tungstenite = { version = "^0.23", features = ["rustls-native-certs", "rustls-tls-native-roots", "native-tls", "rustls-tls-webpki-roots"] }
+native-tls = "^0.2"
+http = "^1.1.0"
+serde = "^1.0.203"
+serde_json = "^1.0.117"
+reqwest = { version = "^0.12.5", features = ["json", "cookies"] }
+rpassword = "^7.3.1"
+percent-encoding = "^2.3.1"
+config = "^0.14.0"
+tungstenite = "^0.23.0"
+serenity = "^0.12.2"
+twitch_api = { version = "^0.7.0-rc.7", features = ["pubsub", "twitch_oauth2", "client", "eventsub"] }
+twitch_oauth2 = "^0.13.0"
+rosc = "^0.10.1"
+toml = "^0.8.14"
+chrono = "0.4.38"
+
 
 [dependencies.tokio]
-version = "1.33.0"
+version = "^1.38"
 features = [
     "rt",
     "time",
@@ -36,15 +48,16 @@ features = [
 ]
 
 [dependencies.tokio-native-tls]
-version = "0.3"
+version = "^0.3.1"
 
 [dependencies.tokio-rustls]
-version = "0.24"
+version = "^0.26.0"
 
 [dependencies.tokio-stream]
-version = "0.1"
+version = "^0.1"
 features = ["io-util"]
 
 [dependencies.tokio-util]
-version = "0.7"
+version = "^0.7"
 features = ["codec"]
+
