@@ -16,7 +16,7 @@ All tokens and credentials are currently stored in plaintext in `mewbot.conf` wh
 
 Will merge to main and post an executable package when it's more feature-complete.
 
-* NOTE: *
+## NOTE:
 
 2-factor authentication is REQUIRED for vrchat usage.
 
