@@ -18,7 +18,7 @@ Will merge to main and post an executable package when it's more feature-complet
 
 ## NOTE:
 
-2-factor authentication is REQUIRED for vrchat usage.
+2-factor authentication will be REQUIRED for vrchat usage.
 
 It does not continue with the sign-in process unless you have 2FA active on your account.
 
