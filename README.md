@@ -12,4 +12,6 @@ Until I feel it's ready for public use, you can download the source from the 202
 
 When it runs for the first time it gives instructions and links for you get get the appropriate tokens from the various services it connects to.
 
+All tokens and credentials are stored in `mewbot.conf` which is located in the same folder as the built .exe
+
 Will merge to main and post an executable package when it's more feature-complete.
