@@ -22,4 +22,4 @@ Will merge to main and post an executable package when it's more feature-complet
 
 It does not continue with the sign-in process unless you have 2FA active on your account.
 
-I am not removing this.  It's 2024, turn it on.  I'm not enabling bad behavior.
+It's 2024, turn it on.  I'm not enabling bad hygeine.
