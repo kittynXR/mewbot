@@ -15,3 +15,11 @@ When it runs for the first time it gives instructions and links for you get get 
 All tokens and credentials are currently stored in plaintext in `mewbot.conf` which is located in the same folder as the built .exe
 
 Will merge to main and post an executable package when it's more feature-complete.
+
+NOTE:
+
+2-factor authentication is REQUIRED for vrchat usage.
+
+It does not continue with the sign-in process unless you have 2FA active on your account.
+
+I am not removing this.  It's 2024, turn it on.  I'm not enabling bad behavior.
