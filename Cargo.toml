@@ -29,12 +29,13 @@ percent-encoding = "^2.3.1"
 config = "^0.14.0"
 tungstenite = "^0.23.0"
 serenity = "^0.12.2"
-twitch_api = { version = "^0.7.0-rc.7", features = ["pubsub", "twitch_oauth2", "client", "eventsub"] }
+twitch_api = { version = "^0.7.0-rc.7", features = ["pubsub", "helix", "twitch_oauth2", "client", "eventsub"] }
 twitch_oauth2 = "^0.13.0"
 rosc = "^0.10.1"
 toml = "^0.8.14"
-chrono = "0.4.38"
-
+chrono = "^0.4.38"
+webbrowser = "^1.0.1"
+warp = "^0.3.7"
 
 [dependencies.tokio]
 version = "^1.38"

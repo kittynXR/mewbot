@@ -1,18 +1,45 @@
 use chrono::{DateTime, Utc, Duration};
-use reqwest::Client;
+use crate::twitch::TwitchAPIClient;
 use serde_json::Value;
 
-pub async fn get_stream_uptime(channel: &str) -> Result<Option<Duration>, Box<dyn std::error::Error + Send + Sync>> {
-    let client = Client::new();
+pub async fn get_stream_uptime(channel: &str, api_client: &TwitchAPIClient) -> Result<Option<Duration>, Box<dyn std::error::Error + Send + Sync>> {
+    println!("Attempting to get stream uptime for channel: {}", channel);
+
+    let access_token = match api_client.get_token().await {
+        Ok(token) => token,
+        Err(e) => {
+            eprintln!("Failed to get access token: {:?}", e);
+            return Err(e.into());
+        }
+    };
+
+    println!("Successfully obtained access token");
+
+    let client_id = match api_client.get_client_id().await {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("Failed to get client ID: {:?}", e);
+            return Err(e.into());
+        }
+    };
+
+    println!("Successfully obtained client ID");
+
+    let client = reqwest::Client::new();
     let response = client.get(format!("https://api.twitch.tv/helix/streams?user_login={}", channel))
-        .header("Client-ID", "your_client_id_here")
-        .header("Authorization", "Bearer your_access_token_here")
+        .header("Client-ID", client_id)
+        .header("Authorization", format!("Bearer {}", access_token))
         .send()
-        .await?
-        .json::<Value>()
         .await?;
 
-    if let Some(stream_data) = response["data"].as_array().and_then(|arr| arr.first()) {
+    println!("API Response status: {}", response.status());
+
+    let response_body = response.text().await?;
+    println!("API Response body: {}", response_body);
+
+    let json: Value = serde_json::from_str(&response_body)?;
+
+    if let Some(stream_data) = json["data"].as_array().and_then(|arr| arr.first()) {
         if let Some(started_at) = stream_data["started_at"].as_str() {
             let start_time = DateTime::parse_from_rfc3339(started_at)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?

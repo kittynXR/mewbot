@@ -6,6 +6,20 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::vrchat::models::World;
 
+use tokio::sync::RwLock;
+use crate::config::Config;
+
+pub struct DiscordClient {
+    // Add necessary fields
+}
+
+impl DiscordClient {
+    pub async fn new(_config: Arc<RwLock<Config>>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // Implement initialization logic
+        todo!()
+    }
+}
+
 pub struct DiscordHandler {
     world_info: Arc<Mutex<Option<World>>>,
 }

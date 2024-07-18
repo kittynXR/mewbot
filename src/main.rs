@@ -1,8 +1,14 @@
-use mewbot::{Config, init, run};
+use mewbot::{config::Config, init, run};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::new()?;
-    let (twitch_client, vrchat_client) = init(config).await?;
-    run(twitch_client, vrchat_client).await
+    let config = Arc::new(RwLock::new(config));
+    let clients = init(config).await?;
+
+    run(clients).await?;
+
+    Ok(())
 }

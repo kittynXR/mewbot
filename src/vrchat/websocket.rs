@@ -13,7 +13,7 @@ pub async fn handler(
     auth_cookie: String,
     world_info: Arc<Mutex<Option<World>>>,
     current_user_id: String,
-) -> Result<(), VRChatError> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(64);
 

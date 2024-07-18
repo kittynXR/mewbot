@@ -1,6 +1,8 @@
-pub mod client;
-pub mod handler;
-pub mod commands;
+pub mod api;
+pub mod irc;
+pub mod eventsub;
 pub mod utils;
 
-pub use client::TwitchClient;
+pub use api::TwitchAPIClient;
+pub use irc::TwitchIRCClient;
+pub use eventsub::TwitchEventSubClient;
