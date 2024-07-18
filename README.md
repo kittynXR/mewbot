@@ -1,6 +1,7 @@
 # mewbot
 FAST bot for VRChat streamers on Twitch
 
+It's written in pure rust.
 
 The Discord module has yet to be implemented.
 
