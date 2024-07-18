@@ -20,6 +20,8 @@ Will merge to main and post an executable package when it's more feature-complet
 
 2-factor authentication will be REQUIRED for vrchat usage.
 
+(it currently does a check, but will remove the check in a future update)
+
 It does not continue with the sign-in process unless you have 2FA active on your account.
 
 It's 2024, turn it on.  I'm not enabling bad hygeine.
