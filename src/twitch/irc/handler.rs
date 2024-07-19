@@ -1,3 +1,5 @@
+
+use lazy_static::lazy_static;
 use crate::vrchat::models::World;
 use std::sync::Arc;
 use crate::config::Config;
@@ -9,6 +11,11 @@ use twitch_irc::message::PrivmsgMessage;
 use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::roles::{UserRole, get_user_role};
 use super::command_system::COMMANDS;
+use super::commands;
+
+lazy_static! {
+    static ref SHOUTOUT_COOLDOWNS: Arc<Mutex<commands::ShoutoutCooldown>> = Arc::new(Mutex::new(commands::ShoutoutCooldown::new()));
+}
 
 pub async fn handle_twitch_message(
     msg: &PrivmsgMessage,
@@ -38,7 +45,7 @@ pub async fn handle_twitch_message(
     if let Some(cmd) = command {
         if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
             if user_role >= command.required_role {
-                return (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &params).await;
+                return (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &SHOUTOUT_COOLDOWNS, &params).await;
             } else {
                 client.say(msg.channel_login.clone(), format!("This command is only available to {:?}s and above.", command.required_role)).await?;
                 return Ok(());
