@@ -7,7 +7,7 @@ use std::sync::Arc;
 use twitch_irc::message::PrivmsgMessage;
 
 pub async fn handle_uptime(
-    msg: &PrivmsgMessage,
+    _msg: &PrivmsgMessage,
     client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,

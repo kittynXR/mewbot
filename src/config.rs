@@ -15,6 +15,8 @@ pub struct Config {
     pub twitch_refresh_token: Option<String>,
     pub vrchat_auth_cookie: Option<String>,
     pub discord_token: Option<String>,
+    #[serde(default)]
+    pub verbose_logging: bool,
 }
 
 impl Config {
@@ -106,6 +108,7 @@ impl Config {
             twitch_user_id: None, // You might want to prompt for this or fetch it from the API
             vrchat_auth_cookie: None,
             discord_token: None,
+            verbose_logging: false,
         };
 
         config.save()?;
@@ -158,5 +161,12 @@ impl Config {
 
     pub fn is_discord_configured(&self) -> bool {
         self.discord_token.is_some()
+    }
+
+    pub fn toggle_verbose_logging(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.verbose_logging = !self.verbose_logging;
+        println!("Debug: Verbose logging toggled to {}", self.verbose_logging);
+        self.save()?;
+        Ok(())
     }
 }

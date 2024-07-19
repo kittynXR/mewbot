@@ -20,6 +20,8 @@ pub async fn handle_message(
             "channel.update" => events::channel_update::handle(&parsed, irc_client, channel).await?,
             "channel.follow" => events::channel_follow::handle(&parsed, irc_client, channel).await?,
             "channel.raid" => events::channel_raid::handle(&parsed, irc_client, channel, api_client).await?,
+            "channel.shoutout.create" => events::shoutout::handle_shoutout_create(&parsed, irc_client, channel).await?,
+            "channel.shoutout.receive" => events::shoutout::handle_shoutout_receive(&parsed, irc_client, channel).await?,
             _ => println!("Unhandled event type: {}", event_type),
         }
     }

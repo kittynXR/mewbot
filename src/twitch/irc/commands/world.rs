@@ -7,7 +7,7 @@ use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 
 pub async fn handle_world(
-    msg: &PrivmsgMessage,
+    _msg: &PrivmsgMessage,
     client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
     world_info: &Arc<Mutex<Option<World>>>,

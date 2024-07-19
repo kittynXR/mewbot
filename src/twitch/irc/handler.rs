@@ -1,19 +1,23 @@
 use crate::vrchat::models::World;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::config::Config;
+use tokio::sync::{Mutex, RwLock};
 use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::PrivmsgMessage;
 use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::irc::commands;
+use crate::twitch::roles::{UserRole, get_user_role};
+use super::command_system::COMMANDS;
 
 pub async fn handle_twitch_message(
-    msg: PrivmsgMessage,
+    msg: &PrivmsgMessage,
     client: Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     world_info: Arc<Mutex<Option<World>>>,
     api_client: Arc<TwitchAPIClient>,
+    config: Arc<RwLock<Config>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let user_role = get_user_role(msg);
     println!("Handling Twitch message: {:?}", msg);
 
     // Clean the message: remove invisible characters and trim
@@ -29,28 +33,30 @@ pub async fn handle_twitch_message(
     // Split the message into command and parameters
     let mut parts = cleaned_message.split_whitespace();
     let command = parts.next();
- //   let params: Vec<&str> = parts.collect();
+    let params: Vec<&str> = parts.collect();
 
-    match command {
-        Some("!world") => {
-            commands::handle_world(&msg, &client, &msg.channel_login, &world_info).await?;
-        },
-        Some("!uptime") => {
-            commands::handle_uptime(&msg, &client, &msg.channel_login, &api_client).await?;
-        },
-        Some("!hello") => {
-            commands::handle_hello(&msg, &client, &msg.channel_login).await?;
-        },
-        Some("!ping") => {
-            commands::handle_ping(&msg, &client, &msg.channel_login).await?;
-        },
-        Some(cmd) => {
+    if let Some(cmd) = command {
+        if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
+            if user_role >= command.required_role {
+                return (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &params).await;
+            } else {
+                client.say(msg.channel_login.clone(), format!("This command is only available to {:?}s and above.", command.required_role)).await?;
+                return Ok(());
+            }
+        }
+
+        // Handle special commands like !verbose that require access to config
+        if cmd == "!verbose" && user_role == UserRole::Broadcaster {
+            let mut config = config.write().await;
+            config.toggle_verbose_logging()?;
+            let status = if config.verbose_logging { "enabled" } else { "disabled" };
+            client.say(msg.channel_login.clone(), format!("Verbose logging {}", status)).await?;
+        } else {
             println!("Unknown command: {}", cmd);
             // Optionally, respond to unknown commands
-        },
-        None => {
-            println!("Empty message received.");
         }
+    } else {
+        println!("Empty message received.");
     }
 
     Ok(())

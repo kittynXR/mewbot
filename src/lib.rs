@@ -2,10 +2,12 @@ pub mod config;
 pub mod twitch;
 pub mod vrchat;
 pub mod discord;
+pub mod logging;
+
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedReceiver};
 //use futures::StreamExt;
 use twitch_irc::message::ServerMessage;
 use twitch_irc::TwitchIRCClient;
@@ -18,6 +20,7 @@ use crate::vrchat::VRChatClient;
 use crate::vrchat::World;
 
 use crate::twitch::TwitchEventSubClient;
+
 
 pub struct BotClients {
     pub twitch_irc: Option<(Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>, UnboundedReceiver<ServerMessage>)>,
@@ -99,7 +102,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     Ok(clients)
 }
 
-pub async fn run(mut clients: BotClients) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let world_info = Arc::new(Mutex::new(None::<World>));
     let mut handles = vec![];
 
@@ -111,7 +114,6 @@ pub async fn run(mut clients: BotClients) -> Result<(), Box<dyn std::error::Erro
         let api_client = Arc::new(api_client);
 
         // Get the channel name from the configuration
-        let config = Arc::new(RwLock::new(Config::new()?));
         let channel = config.read().await.twitch_channel_to_join.clone()
             .ok_or("Twitch channel to join not set")?;
 
@@ -121,26 +123,31 @@ pub async fn run(mut clients: BotClients) -> Result<(), Box<dyn std::error::Erro
         // Twitch IRC handler
         let twitch_handler = tokio::spawn({
             let api_client_clone = Arc::clone(&api_client);
+            let config_clone = Arc::clone(&config);
             async move {
-                handle_twitch_messages(irc_client_for_messages, incoming_messages, world_info_clone, api_client_clone).await
+                handle_twitch_messages(irc_client_for_messages, incoming_messages, world_info_clone, api_client_clone, config_clone).await
             }
         });
         handles.push(twitch_handler);
         println!("Twitch IRC handler started.");
 
         // Twitch EventSub handler
+        let config_clone = Arc::clone(&config);
         let eventsub_client = TwitchEventSubClient::new(
-            config.clone(),
+            config_clone,
             api_client.clone(),
-            irc_client,  // Use the original irc_client here
-            channel
+            irc_client.clone(),
+            channel.clone()
         );
+
         let eventsub_handle = tokio::spawn(async move {
+            println!("Debug: Starting EventSub client");
             if let Err(e) = eventsub_client.connect_and_listen().await {
                 eprintln!("EventSub client error: {:?}", e);
             }
             Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
         });
+
         handles.push(eventsub_handle);
         println!("EventSub client started.");
     } else {
@@ -177,41 +184,41 @@ pub async fn run(mut clients: BotClients) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+
+
 async fn handle_twitch_messages(
     client: Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     mut incoming_messages: UnboundedReceiver<ServerMessage>,
     world_info: Arc<Mutex<Option<World>>>,
     api_client: Arc<TwitchAPIClient>,
+    config: Arc<RwLock<Config>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
     while let Some(message) = incoming_messages.recv().await {
-        println!("Received IRC message: {:?}", message);
-        match message {
+        match &message {
+            ServerMessage::Ping(_) | ServerMessage::Pong(_) => {
+                log_verbose!(config, "Received IRC message: {:?}", message);
+            }
             ServerMessage::Privmsg(msg) => {
                 let client_clone = Arc::clone(&client);
                 let world_info_clone = Arc::clone(&world_info);
                 let api_client_clone = Arc::clone(&api_client);
+                let config_clone = Arc::clone(&config);
+                let msg_clone = msg.clone();  // Clone the message
+
                 tokio::spawn(async move {
                     if let Err(e) = crate::twitch::irc::handler::handle_twitch_message(
-                        msg,
+                        &msg_clone,
                         client_clone,
                         world_info_clone,
-                        api_client_clone
+                        api_client_clone,
+                        config_clone
                     ).await {
                         eprintln!("Error handling Twitch message: {:?}", e);
                     }
                 });
             }
-            ServerMessage::Notice(notice) => {
-                if notice.message_text.contains("Login authentication failed") {
-                    eprintln!("Twitch IRC authentication failed. Please check your OAuth token.");
-                } else {
-                    println!("Received notice: {:?}", notice);
-                }
-            }
-            _ => {
-                println!("Received other IRC message: {:?}", message);
-            }
+            _ => println!("Received other IRC message: {:?}", message),
         }
     }
     println!("Twitch message handling ended.");

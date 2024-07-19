@@ -116,7 +116,7 @@ impl TwitchAPIClient {
 
         let config = self.config.read().await;
         let auth_url = format!(
-            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers",
+            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts",
             config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
         drop(config);
@@ -283,5 +283,16 @@ impl TwitchAPIClient {
     pub async fn get_client_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.read().await;
         config.twitch_client_id.clone().ok_or_else(|| "Twitch client ID not set".into())
+    }
+
+    pub async fn get_broadcaster_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let config = self.config.read().await;
+        let channel_name = config.twitch_channel_to_join.clone().ok_or("Channel name not set")?;
+        drop(config);
+
+        let user_info = self.get_user_info(&channel_name).await?;
+        let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
+
+        Ok(channel_id)
     }
 }

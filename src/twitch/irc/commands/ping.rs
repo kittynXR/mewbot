@@ -5,7 +5,7 @@ use std::sync::Arc;
 use twitch_irc::message::PrivmsgMessage;
 
 pub async fn handle_ping(
-    msg: &PrivmsgMessage,
+    _msg: &PrivmsgMessage,
     client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

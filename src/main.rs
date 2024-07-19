@@ -6,9 +6,9 @@ use tokio::sync::RwLock;
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::new()?;
     let config = Arc::new(RwLock::new(config));
-    let clients = init(config).await?;
+    let clients = init(Arc::clone(&config)).await?;
 
-    run(clients).await?;
+    run(clients, config).await?;
 
     Ok(())
 }

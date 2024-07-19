@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use super::handlers;
+use crate::log_verbose;
 
 use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 
@@ -43,6 +44,7 @@ impl TwitchEventSubClient {
         irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
         channel: String,
     ) -> Self {
+        println!("Debug: Creating new TwitchEventSubClient");
         Self {
             config,
             api_client,
@@ -56,7 +58,7 @@ impl TwitchEventSubClient {
         let (ws_stream, _) = connect_async("wss://eventsub.wss.twitch.tv/ws").await?;
         println!("EventSub WebSocket connected");
 
-        let (mut write, mut read) = ws_stream.split();
+        let (_, mut read) = ws_stream.split();
 
         let mut session_id = String::new();
 
@@ -65,12 +67,21 @@ impl TwitchEventSubClient {
                 Ok(Message::Text(text)) => {
                     println!("Received WebSocket message: {}", text);
                     let response: WebSocketResponse = serde_json::from_str(&text)?;
-                    if response.metadata.message_type == "session_welcome" {
-                        if let Some(session) = response.payload.get("session") {
-                            session_id = session["id"].as_str().unwrap_or("").to_string();
-                            println!("EventSub session established. Session ID: {}", session_id);
-                            break;
+                    match response.metadata.message_type.as_str() {
+                        "session_welcome" => {
+                            if let Some(session) = response.payload.get("session") {
+                                session_id = session["id"].as_str().unwrap_or("").to_string();
+                                println!("EventSub session established. Session ID: {}", session_id);
+                                break;
+                            }
                         }
+                        "session_keepalive" => {
+                            let config = self.config.clone();
+                            tokio::spawn(async move {
+                                log_verbose!(config, "Received EventSub keepalive: {}", text);
+                            });
+                        }
+                        _ => println!("Received EventSub message: {}", text),
                     }
                 }
                 Ok(Message::Close(_)) => {
@@ -92,7 +103,18 @@ impl TwitchEventSubClient {
         while let Some(message) = read.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client).await?;
+                    let response: WebSocketResponse = serde_json::from_str(&text)?;
+                    match response.metadata.message_type.as_str() {
+                        "session_keepalive" => {
+                            let config = self.config.clone();
+                            tokio::spawn(async move {
+                                log_verbose!(config, "Received EventSub keepalive: {}", text);
+                            });
+                        }
+                        _ => {
+                            handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client).await?;
+                        }
+                    }
                 }
                 Ok(Message::Close(_)) => {
                     println!("EventSub WebSocket closed");
@@ -124,6 +146,14 @@ impl TwitchEventSubClient {
         })),
             ("channel.raid", "1", json!({
             "to_broadcaster_user_id": channel_id
+        })),
+            ("channel.shoutout.create", "1", json!({
+            "broadcaster_user_id": channel_id,
+            "moderator_user_id": channel_id
+        })),
+            ("channel.shoutout.receive", "1", json!({
+            "broadcaster_user_id": channel_id,
+            "moderator_user_id": channel_id
         })),
         ];
 
