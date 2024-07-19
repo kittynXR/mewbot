@@ -29,7 +29,7 @@ pub async fn handle_twitch_message(
     // Split the message into command and parameters
     let mut parts = cleaned_message.split_whitespace();
     let command = parts.next();
-    let params: Vec<&str> = parts.collect();
+ //   let params: Vec<&str> = parts.collect();
 
     match command {
         Some("!world") => {

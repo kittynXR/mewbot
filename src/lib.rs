@@ -6,10 +6,7 @@ pub mod discord;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::time::sleep;
-use tokio::select;
-use futures::StreamExt;
-use std::time::Duration;
+//use futures::StreamExt;
 use twitch_irc::message::ServerMessage;
 use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
@@ -221,19 +218,19 @@ async fn handle_twitch_messages(
     Ok(())
 }
 
-async fn forward_messages(
-    mut incoming_messages: UnboundedReceiver<ServerMessage>,
-    tx: mpsc::Sender<twitch_irc::message::PrivmsgMessage>,
-) {
-    println!("Message forwarding started.");
-    while let Some(message) = incoming_messages.recv().await {
-        println!("Received IRC message: {:?}", message);
-        if let ServerMessage::Privmsg(msg) = message {
-            if tx.send(msg).await.is_err() {
-                eprintln!("Failed to send Twitch message to channel");
-                break;
-            }
-        }
-    }
-    println!("Message forwarding ended.");
-}
+// async fn forward_messages(
+//     mut incoming_messages: UnboundedReceiver<ServerMessage>,
+//     tx: mpsc::Sender<twitch_irc::message::PrivmsgMessage>,
+// ) {
+//     println!("Message forwarding started.");
+//     while let Some(message) = incoming_messages.recv().await {
+//         println!("Received IRC message: {:?}", message);
+//         if let ServerMessage::Privmsg(msg) = message {
+//             if tx.send(msg).await.is_err() {
+//                 eprintln!("Failed to send Twitch message to channel");
+//                 break;
+//             }
+//         }
+//     }
+//     println!("Message forwarding ended.");
+// }

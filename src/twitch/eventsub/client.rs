@@ -1,7 +1,8 @@
 use crate::config::Config;
 use crate::twitch::TwitchAPIClient;
-use crate::twitch::irc::TwitchIRCClient;
-use futures_util::{SinkExt, StreamExt};
+
+// use futures_util::{SinkExt, StreamExt};
+use futures_util::{StreamExt};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -91,7 +92,7 @@ impl TwitchEventSubClient {
         while let Some(message) = read.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    handlers::handle_message(&text, &self.irc_client, &self.channel).await?;
+                    handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client).await?;
                 }
                 Ok(Message::Close(_)) => {
                     println!("EventSub WebSocket closed");
@@ -113,31 +114,45 @@ impl TwitchEventSubClient {
         let channel_id = self.get_channel_id().await?;
         let client_id = self.config.read().await.twitch_client_id.clone().ok_or("Twitch client ID not set")?;
 
-        let subscription = json!({
-            "type": "channel.update",
-            "version": "1",
-            "condition": {
-                "broadcaster_user_id": channel_id
-            },
+        let subscriptions = vec![
+            ("channel.update", "2", json!({
+            "broadcaster_user_id": channel_id
+        })),
+            ("channel.follow", "2", json!({
+            "broadcaster_user_id": channel_id,
+            "moderator_user_id": channel_id
+        })),
+            ("channel.raid", "1", json!({
+            "to_broadcaster_user_id": channel_id
+        })),
+        ];
+
+        for (subscription_type, version, condition) in subscriptions {
+            let subscription = json!({
+            "type": subscription_type,
+            "version": version,
+            "condition": condition,
             "transport": {
                 "method": "websocket",
                 "session_id": session_id
             }
         });
 
-        let response = self.http_client
-            .post("https://api.twitch.tv/helix/eventsub/subscriptions")
-            .header("Client-Id", client_id)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&subscription)
-            .send()
-            .await?;
+            let response = self.http_client
+                .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+                .header("Client-Id", &client_id)
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&subscription)
+                .send()
+                .await?;
 
-        if response.status().is_success() {
-            println!("EventSub subscription created successfully");
-        } else {
-            let error_body = response.text().await?;
-            return Err(format!("Failed to create EventSub subscription: {}", error_body).into());
+            if response.status().is_success() {
+                println!("EventSub subscription created successfully for {} (version {})", subscription_type, version);
+            } else {
+                let error_body = response.text().await?;
+                eprintln!("Failed to create EventSub subscription for {} (version {}): {}", subscription_type, version, error_body);
+
+            }
         }
 
         Ok(())

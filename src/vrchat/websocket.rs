@@ -94,7 +94,7 @@ fn create_request(auth_token: &str) -> Result<Request<()>, VRChatError> {
 }
 
 fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Result<Option<World>, VRChatError> {
-    println!("Received JSON: {}", json_message);
+    // println!("Received JSON: {}", json_message);
 
     let message: serde_json::Value = serde_json::from_str(json_message)
         .map_err(|e| VRChatError(format!("Failed to parse JSON: {}", e)))?;
@@ -105,19 +105,19 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
 
         if let Some(user_id) = content.get("userId") {
             let user_id_str = user_id.as_str().unwrap_or("");
-            println!("Message for user ID: {}", user_id_str);
+            // println!("Message for user ID: {}", user_id_str);
             if user_id_str != current_user_id {
-                println!("Message not for current user. Current user ID: {}", current_user_id);
+                // println!("Message not for current user. Current user ID: {}", current_user_id);
                 return Ok(None);
             }
         } else {
-            println!("No userId found in message");
+            // println!("No userId found in message");
             return Ok(None);
         }
 
         if let Some(location) = content.get("location") {
             if location.as_str() == Some("private") {
-                println!("User is in a private world");
+                // println!("User is in a private world");
                 return Ok(None);
             }
         }
@@ -136,6 +136,6 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
         }
     }
 
-    println!("Received a message, but it's not world info for the current user.");
+    // println!("Received a message, but it's not world info for the current user.");
     Ok(None)
 }

@@ -22,7 +22,7 @@ struct TwitchToken {
 pub struct TwitchAPIClient {
     config: Arc<RwLock<Config>>,
     token: Arc<RwLock<Option<TwitchToken>>>,
-    client: Client,
+    pub(crate) client: Client,
     initialized: Arc<AtomicBool>,
 }
 
@@ -116,7 +116,7 @@ impl TwitchAPIClient {
 
         let config = self.config.read().await;
         let auth_url = format!(
-            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit",
+            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers",
             config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
         drop(config);
