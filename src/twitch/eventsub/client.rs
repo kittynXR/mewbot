@@ -1,8 +1,6 @@
 use crate::config::Config;
 use crate::twitch::TwitchAPIClient;
-
-// use futures_util::{SinkExt, StreamExt};
-use futures_util::{StreamExt};
+use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,9 +11,8 @@ use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use super::handlers;
 use crate::log_verbose;
-
 use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-
+use std::time::Duration;
 
 pub struct TwitchEventSubClient {
     config: Arc<RwLock<Config>>,
@@ -55,80 +52,99 @@ impl TwitchEventSubClient {
     }
 
     pub async fn connect_and_listen(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (ws_stream, _) = connect_async("wss://eventsub.wss.twitch.tv/ws").await?;
-        println!("EventSub WebSocket connected");
+        let mut reconnect_url = "wss://eventsub.wss.twitch.tv/ws".to_string();
+        let mut reconnect_attempt = 0;
+
+        loop {
+            match self.connect_websocket(&reconnect_url).await {
+                Ok(new_url) => {
+                    if let Some(url) = new_url {
+                        reconnect_url = url;
+                        println!("Reconnecting to new URL: {}", reconnect_url);
+                        reconnect_attempt = 0; // Reset reconnect attempt count on successful connection
+                    } else {
+                        println!("WebSocket closed normally. Exiting.");
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("WebSocket error: {:?}", e);
+                    reconnect_attempt += 1;
+                    let backoff_duration = self.calculate_backoff(reconnect_attempt);
+                    println!("Attempting to reconnect after {:?}", backoff_duration);
+                    tokio::time::sleep(backoff_duration).await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn calculate_backoff(&self, attempt: u32) -> Duration {
+        let base_delay = 1;
+        let max_delay = 60;
+        let delay = base_delay * 2u64.pow(attempt - 1);
+        Duration::from_secs(delay.min(max_delay))
+    }
+
+    async fn connect_websocket(&self, url: &str) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let (ws_stream, _) = connect_async(url).await?;
+        println!("EventSub WebSocket connected to {}", url);
 
         let (_, mut read) = ws_stream.split();
 
         let mut session_id = String::new();
+        let mut subscriptions_created = false;
 
         while let Some(message) = read.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    println!("Received WebSocket message: {}", text);
                     let response: WebSocketResponse = serde_json::from_str(&text)?;
                     match response.metadata.message_type.as_str() {
                         "session_welcome" => {
                             if let Some(session) = response.payload.get("session") {
                                 session_id = session["id"].as_str().unwrap_or("").to_string();
                                 println!("EventSub session established. Session ID: {}", session_id);
-                                break;
+                                if !subscriptions_created {
+                                    self.create_eventsub_subscription(&session_id).await?;
+                                    subscriptions_created = true;
+                                }
                             }
                         }
                         "session_keepalive" => {
                             let config = self.config.clone();
-                            tokio::spawn(async move {
-                                log_verbose!(config, "Received EventSub keepalive: {}", text);
-                            });
+                            log_verbose!(config, "Received EventSub keepalive: {}", text);
                         }
-                        _ => println!("Received EventSub message: {}", text),
-                    }
-                }
-                Ok(Message::Close(_)) => {
-                    println!("EventSub WebSocket closed before session establishment");
-                    return Ok(());
-                }
-                Err(e) => {
-                    eprintln!("EventSub WebSocket error: {:?}", e);
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-
-        // Create EventSub subscription
-        self.create_eventsub_subscription(&session_id).await?;
-
-        // Handle incoming messages
-        while let Some(message) = read.next().await {
-            match message {
-                Ok(Message::Text(text)) => {
-                    let response: WebSocketResponse = serde_json::from_str(&text)?;
-                    match response.metadata.message_type.as_str() {
-                        "session_keepalive" => {
-                            let config = self.config.clone();
-                            tokio::spawn(async move {
-                                log_verbose!(config, "Received EventSub keepalive: {}", text);
-                            });
+                        "session_reconnect" => {
+                            if let Some(new_url) = response.payload["session"]["reconnect_url"].as_str() {
+                                println!("Received reconnect message. New URL: {}", new_url);
+                                return Ok(Some(new_url.to_string()));
+                            }
                         }
-                        _ => {
+                        "notification" => {
+                            println!("Received notification: {}", text);
                             handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client).await?;
                         }
+                        _ => {
+                            println!("Received unhandled message type: {}", response.metadata.message_type);
+                        }
                     }
                 }
-                Ok(Message::Close(_)) => {
-                    println!("EventSub WebSocket closed");
-                    break;
+                Ok(Message::Close(frame)) => {
+                    println!("EventSub WebSocket closed with frame: {:?}", frame);
+                    return Ok(None);
                 }
                 Err(e) => {
                     eprintln!("EventSub WebSocket error: {:?}", e);
-                    break;
+                    return Err(Box::new(e));
                 }
-                _ => {}
+                _ => {
+                    println!("Received non-text message: {:?}", message);
+                }
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     async fn create_eventsub_subscription(&self, session_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
