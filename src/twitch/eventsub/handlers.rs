@@ -1,4 +1,5 @@
 use serde_json::Value;
+use super::client::TwitchEventSubClient;
 use super::events;
 use super::events::{channel_follow, channel_raid, channel_update, stream_online, stream_offline, channel_subscribe, channel_subscription_message};
 use super::events::{channel_subscription_gift, channel_subscription_end};
@@ -13,6 +14,7 @@ pub async fn handle_message(
     irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
+    eventsub_client: &TwitchEventSubClient,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Received EventSub message: {}", message);
     let parsed: Value = serde_json::from_str(message)?;
@@ -30,6 +32,10 @@ pub async fn handle_message(
             "channel.subscription.message" => channel_subscription_message::handle(&parsed, irc_client, channel).await?,
             "channel.subscription.gift" => channel_subscription_gift::handle(&parsed, irc_client, channel).await?,
             "channel.subscription.end" => channel_subscription_end::handle(&parsed, irc_client, channel).await?,
+            "channel.channel_points_custom_reward_redemption.add" => {
+                // We'll let the TwitchEventSubClient handle this event
+                eventsub_client.handle_channel_point_redemption(&parsed["payload"]["event"]).await?;
+            },
             _ => println!("Unhandled event type: {}", event_type),
         }
     }

@@ -8,6 +8,7 @@ use warp::Filter;
 use tokio::time::timeout;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
+use crate::twitch::api::models::ChannelPointReward;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TwitchToken {
@@ -116,7 +117,7 @@ impl TwitchAPIClient {
 
         let config = self.config.read().await;
         let auth_url = format!(
-            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions",
+            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions",
             config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
         drop(config);
@@ -294,5 +295,130 @@ impl TwitchAPIClient {
         let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
 
         Ok(channel_id)
+    }
+
+    pub async fn update_redemption_status(
+        &self,
+        reward_id: &str,
+        redemption_id: &str,
+        status: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let broadcaster_id = self.get_broadcaster_id().await?;
+        crate::twitch::api::requests::channel_points::update_redemption_status(
+            self,
+            &broadcaster_id,
+            reward_id,
+            redemption_id,
+            status,
+        ).await
+    }
+
+    pub async fn refund_channel_points(
+        &self,
+        reward_id: &str,
+        redemption_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let broadcaster_id = self.get_broadcaster_id().await?;
+        crate::twitch::api::requests::channel_points::refund_channel_points(
+            self,
+            &broadcaster_id,
+            reward_id,
+            redemption_id,
+        ).await
+    }
+
+    pub async fn get_custom_reward(
+        &self,
+        reward_id: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let broadcaster_id = self.get_broadcaster_id().await?;
+        crate::twitch::api::requests::channel_points::get_custom_reward(
+            self,
+            &broadcaster_id,
+            reward_id,
+        ).await
+    }
+
+    pub async fn get_channel_point_rewards(&self) -> Result<Vec<ChannelPointReward>, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+        let broadcaster_id = self.get_broadcaster_id().await?;
+
+        let response = self.client
+            .get("https://api.twitch.tv/helix/channel_points/custom_rewards")
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .query(&[("broadcaster_id", broadcaster_id)])
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(format!("Failed to get channel point rewards. Status: {}, Error: {}", status, error_text).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        let rewards: Vec<ChannelPointReward> = serde_json::from_value(body["data"].clone())?;
+
+        Ok(rewards)
+    }
+
+    pub async fn is_user_moderator(&self, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+        let broadcaster_id = self.get_broadcaster_id().await?;
+
+        let response = self.client
+            .get("https://api.twitch.tv/helix/moderation/moderators")
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .query(&[
+                ("broadcaster_id", broadcaster_id.as_str()),
+                ("user_id", user_id),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(format!("Failed to check moderator status. Status: {}, Error: {}", status, error_text).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        Ok(!body["data"].as_array().map_or(true, |arr| arr.is_empty()))
+    }
+
+    pub async fn update_custom_reward(
+        &self,
+        reward_id: &str,
+        title: &str,
+        cost: u32,
+        is_enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+        let broadcaster_id = self.get_broadcaster_id().await?;
+
+        let response = self.client
+            .patch(&format!("https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}&id={}", broadcaster_id, reward_id))
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+            "title": title,
+            "cost": cost,
+            "is_enabled": is_enabled
+        }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(format!("Failed to update custom reward. Status: {}, Error: {}", status, error_text).into());
+        }
+
+        Ok(())
     }
 }

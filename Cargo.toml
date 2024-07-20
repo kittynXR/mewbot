@@ -37,6 +37,7 @@ chrono = "^0.4.38"
 webbrowser = "^1.0.1"
 warp = "^0.3.7"
 lazy_static = "^1.5.0"
+async-trait = "^0.1.81"
 
 
 [dependencies.tokio]

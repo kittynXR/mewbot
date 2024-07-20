@@ -1,5 +1,7 @@
 use crate::config::Config;
 use crate::twitch::TwitchAPIClient;
+use crate::ai::AIClient;
+use crate::osc::VRChatOSC;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
@@ -13,6 +15,7 @@ use super::handlers;
 use crate::log_verbose;
 use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use std::time::Duration;
+use super::events::redemptions::{Redemption, RedemptionManager, RedemptionResult};
 
 pub struct TwitchEventSubClient {
     config: Arc<RwLock<Config>>,
@@ -20,6 +23,7 @@ pub struct TwitchEventSubClient {
     irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     http_client: Client,
     channel: String,
+    redemption_manager: Arc<RedemptionManager>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,14 +44,18 @@ impl TwitchEventSubClient {
         api_client: Arc<TwitchAPIClient>,
         irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
         channel: String,
+        ai_client: Option<Arc<AIClient>>,
+        osc_client: Option<Arc<VRChatOSC>>,
     ) -> Self {
         println!("Debug: Creating new TwitchEventSubClient");
+        let redemption_manager = Arc::new(RedemptionManager::new(ai_client, osc_client, api_client.clone()));
         Self {
             config,
             api_client,
             irc_client,
             http_client: Client::new(),
             channel,
+            redemption_manager,
         }
     }
 
@@ -123,7 +131,7 @@ impl TwitchEventSubClient {
                         }
                         "notification" => {
                             println!("Received notification: {}", text);
-                            handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client).await?;
+                            handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client, self).await?;
                         }
                         _ => {
                             println!("Received unhandled message type: {}", response.metadata.message_type);
@@ -190,6 +198,9 @@ impl TwitchEventSubClient {
             ("channel.subscription.end", "1", json!({
         "broadcaster_user_id": channel_id
     })),
+            ("channel.channel_points_custom_reward_redemption.add", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
         ];
 
         for (subscription_type, version, condition) in subscriptions {
@@ -216,7 +227,6 @@ impl TwitchEventSubClient {
             } else {
                 let error_body = response.text().await?;
                 eprintln!("Failed to create EventSub subscription for {} (version {}): {}", subscription_type, version, error_body);
-
             }
         }
 
@@ -232,5 +242,63 @@ impl TwitchEventSubClient {
         let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
 
         Ok(channel_id)
+    }
+
+    // async fn handle_message(&self, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    //     let parsed: serde_json::Value = serde_json::from_str(message)?;
+    //
+    //     if let Some(event_type) = parsed["payload"]["subscription"]["type"].as_str() {
+    //         match event_type {
+    //             "channel.channel_points_custom_reward_redemption.add" => {
+    //                 self.handle_channel_point_redemption(&parsed["payload"]["event"]).await?;
+    //             },
+    //             _ => {
+    //                 handlers::handle_message(message, &self.irc_client, &self.channel, &self.api_client).await?;
+    //             }
+    //         }
+    //     }
+    //
+    //     Ok(())
+    // }
+
+    pub async fn handle_channel_point_redemption(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let redemption = Redemption {
+            id: event["id"].as_str().unwrap_or("").to_string(),
+            broadcaster_id: event["broadcaster_user_id"].as_str().unwrap_or("").to_string(),
+            user_id: event["user_id"].as_str().unwrap_or("").to_string(),
+            user_name: event["user_login"].as_str().unwrap_or("").to_string(),
+            reward_id: event["reward"]["id"].as_str().unwrap_or("").to_string(),
+            reward_title: event["reward"]["title"].as_str().unwrap_or("").to_string(),
+            user_input: event["user_input"].as_str().map(|s| s.to_string()),
+            status: event["status"].as_str().unwrap_or("").into(),
+            queued: false,
+            queue_number: None,
+            announce_in_chat: false,
+        };
+
+        let result = self.redemption_manager.handle_redemption(redemption.clone()).await;
+
+        if result.success {
+            println!("Redemption handled successfully: {:?}", result);
+        } else {
+            eprintln!("Failed to handle redemption: {:?}", result);
+        }
+
+        if redemption.announce_in_chat {
+            self.announce_redemption(&redemption, &result).await;
+        }
+
+        Ok(())
+    }
+
+    async fn announce_redemption(&self, redemption: &Redemption, result: &RedemptionResult) {
+        let message = match &result.message {
+            Some(msg) => format!("{} redeemed {}! {}", redemption.user_name, redemption.reward_title, msg),
+            None => format!("{} redeemed {}!", redemption.user_name, redemption.reward_title),
+        };
+
+        if let Err(e) = self.irc_client.say(self.channel.clone(), message).await {
+            eprintln!("Failed to announce redemption in chat: {}", e);
+        }
     }
 }
