@@ -23,7 +23,7 @@ pub async fn handle(
         let game = get_channel_game(from_broadcaster_user_id, api_client).await?;
 
         let response = format!(
-            "Welcome raiders! Thank you {} for the raid with {} {}! They were just playing {}. Hope you all enjoy your stay!",
+            "Welcome raiders! Thank you {} for the raid with {} {}! They were just playing {}. Hope you all had fun and enjoy your stay!",
             from_broadcaster_user_name,
             viewers,
             if viewers == 1 { "viewer" } else { "viewers" },

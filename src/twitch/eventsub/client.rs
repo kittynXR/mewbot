@@ -139,7 +139,8 @@ impl TwitchEventSubClient {
                     return Err(Box::new(e));
                 }
                 _ => {
-                    println!("Received non-text message: {:?}", message);
+                    let config = self.config.clone();
+                    log_verbose!(config, "Received non-text message: {:?}", message);
                 }
             }
         }
@@ -171,6 +172,24 @@ impl TwitchEventSubClient {
             "broadcaster_user_id": channel_id,
             "moderator_user_id": channel_id
         })),
+            ("stream.online", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
+            ("stream.offline", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
+            ("channel.subscribe", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
+            ("channel.subscription.message", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
+            ("channel.subscription.gift", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
+            ("channel.subscription.end", "1", json!({
+        "broadcaster_user_id": channel_id
+    })),
         ];
 
         for (subscription_type, version, condition) in subscriptions {

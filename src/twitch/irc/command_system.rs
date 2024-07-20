@@ -45,7 +45,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "!so",
-        required_role: UserRole::Moderator,
+        required_role: UserRole::Subscriber,
         handler: |msg, client, channel, api_client, _, cooldowns, params| Box::pin(commands::handle_shoutout(msg, client, channel, api_client, cooldowns, params)),
         description: "Gives a shoutout to another streamer",
     },

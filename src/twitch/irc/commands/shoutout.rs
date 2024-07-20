@@ -23,6 +23,10 @@ impl ShoutoutCooldown {
     }
 }
 
+fn strip_at_symbol(username: &str) -> &str {
+    username.strip_prefix('@').unwrap_or(username)
+}
+
 pub async fn handle_shoutout(
     msg: &PrivmsgMessage,
     client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
@@ -36,7 +40,7 @@ pub async fn handle_shoutout(
         return Ok(());
     }
 
-    let target_username = params[0];
+    let target_username = strip_at_symbol(params[0]);
     let broadcaster_id = api_client.get_broadcaster_id().await?;
     let moderator_id = msg.sender.id.clone();
 

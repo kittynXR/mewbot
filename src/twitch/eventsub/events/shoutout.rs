@@ -13,7 +13,7 @@ pub async fn handle_shoutout_create(
         let from_broadcaster_user_name = payload["from_broadcaster_user_name"].as_str().unwrap_or("Unknown");
         let to_broadcaster_user_name = payload["to_broadcaster_user_name"].as_str().unwrap_or("Unknown");
 
-        let message = format!("{} has given a shoutout to {}! Go check out their channel!", from_broadcaster_user_name, to_broadcaster_user_name);
+        let message = format!("Hey, you should go check out {}!  Click the heart at the top of the chatbox ~ it's easy! luv luv", to_broadcaster_user_name);
         irc_client.say(channel.to_string(), message).await?;
     }
 
