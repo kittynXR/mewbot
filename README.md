@@ -18,6 +18,8 @@ Will merge to main and post an executable package when it's more feature-complet
 
 ## NOTE:
 
+As a content creator you ARE a prime target for hackers.
+
 2-factor authentication will be REQUIRED for vrchat usage.
 
 (it currently does a check, but will remove the check in a future update)
