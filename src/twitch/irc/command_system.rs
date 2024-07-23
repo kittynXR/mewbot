@@ -6,16 +6,16 @@ use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use std::future::Future;
 use std::pin::Pin;
 use super::commands;
-use crate::twitch::eventsub::events::redemptions::RedemptionManager;
+use crate::twitch::redeems::RedeemManager;
 
 pub struct Command {
     pub name: &'static str,
     pub required_role: UserRole,
-    pub handler: for<'a> fn(&'a PrivmsgMessage, &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>, &'a str, &'a Arc<TwitchAPIClient>, &'a Arc<Mutex<Option<World>>>, &'a Arc<Mutex<commands::ShoutoutCooldown>>, &'a Arc<RedemptionManager>, &'a [&'a str]) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>,
+    pub handler: for<'a> fn(&'a PrivmsgMessage, &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>, &'a str, &'a Arc<TwitchAPIClient>, &'a Arc<Mutex<Option<World>>>, &'a Arc<Mutex<commands::ShoutoutCooldown>>, &'a Arc<RwLock<RedeemManager>>, &'a [&'a str]) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>,
     pub description: &'static str,
 }
 
@@ -53,7 +53,14 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "!complete",
         required_role: UserRole::Subscriber,
-        handler: |msg, client, channel, _, _, _, redemption_manager, params| Box::pin(commands::handle_complete_redemption(msg, client, channel, redemption_manager, params)),
+        handler: |msg, client, channel, _, _, _, redeem_manager, params| Box::pin(commands::handle_complete_redemption(msg, client, channel, redeem_manager, params)),
         description: "Marks a queued redemption as complete",
+    },
+    Command {
+        name: "!add_redeem",
+        required_role: UserRole::Moderator, // Or UserRole::Broadcaster, depending on your preference
+        handler: |msg, client, channel, api_client, _, _, redeem_manager, params|
+        Box::pin(commands::handle_add_redeem(msg, client, channel, api_client, redeem_manager, params)),
+        description: "Adds a new channel point redemption",
     },
 ];

@@ -6,6 +6,10 @@ mod hello;
 mod ping;
 mod shoutout;
 mod complete_redemption;
+mod add_redeem;
+// ... other mod declarations ...
+
+pub use add_redeem::handle_add_redeem;
 
 pub use uptime::handle_uptime;
 pub use world::handle_world;

@@ -15,15 +15,16 @@ use super::handlers;
 use crate::log_verbose;
 use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use std::time::Duration;
-use super::events::redemptions::{Redemption, RedemptionManager, RedemptionResult};
+use crate::twitch::redeems::{Redemption, RedeemManager, RedemptionResult, RedemptionStatus};
+use crate::twitch::irc::client::TwitchIRCClientType;
 
 pub struct TwitchEventSubClient {
     config: Arc<RwLock<Config>>,
     api_client: Arc<TwitchAPIClient>,
-    irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    irc_client: Arc<TwitchIRCClientType>,
     http_client: Client,
     channel: String,
-    redemption_manager: Arc<RedemptionManager>,
+    redeem_manager: Arc<RwLock<RedeemManager>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,29 +47,30 @@ impl TwitchEventSubClient {
         channel: String,
         ai_client: Option<Arc<AIClient>>,
         osc_client: Option<Arc<VRChatOSC>>,
+        redeem_manager: Arc<RwLock<RedeemManager>>,
     ) -> Self {
         println!("Debug: Creating new TwitchEventSubClient");
-        let redemption_manager = Arc::new(RedemptionManager::new(ai_client, osc_client, api_client.clone()));
         Self {
             config,
             api_client,
             irc_client,
             http_client: Client::new(),
             channel,
-            redemption_manager,
+            redeem_manager,
         }
     }
 
     pub async fn connect_and_listen(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut reconnect_url = "wss://eventsub.wss.twitch.tv/ws".to_string();
+        let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();
         let mut reconnect_attempt = 0;
+        let max_reconnect_attempts = 5;
 
         loop {
-            match self.connect_websocket(&reconnect_url).await {
-                Ok(new_url) => {
-                    if let Some(url) = new_url {
-                        reconnect_url = url;
-                        println!("Reconnecting to new URL: {}", reconnect_url);
+            match self.connect_websocket(&url).await {
+                Ok(reconnect_url) => {
+                    if let Some(new_url) = reconnect_url {
+                        println!("Reconnecting to new URL: {}", new_url);
+                        url = new_url;
                         reconnect_attempt = 0; // Reset reconnect attempt count on successful connection
                     } else {
                         println!("WebSocket closed normally. Exiting.");
@@ -78,8 +80,12 @@ impl TwitchEventSubClient {
                 Err(e) => {
                     eprintln!("WebSocket error: {:?}", e);
                     reconnect_attempt += 1;
+                    if reconnect_attempt > max_reconnect_attempts {
+                        eprintln!("Max reconnection attempts reached. Exiting.");
+                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Max reconnection attempts reached")));
+                    }
                     let backoff_duration = self.calculate_backoff(reconnect_attempt);
-                    println!("Attempting to reconnect after {:?}", backoff_duration);
+                    println!("Attempting to reconnect (attempt {}/{}) after {:?}", reconnect_attempt, max_reconnect_attempts, backoff_duration);
                     tokio::time::sleep(backoff_duration).await;
                 }
             }
@@ -133,6 +139,10 @@ impl TwitchEventSubClient {
                             println!("Received notification: {}", text);
                             handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client, self).await?;
                         }
+                        "revocation" => {
+                            println!("Received revocation: {}", text);
+                            // Handle revocation (e.g., remove the subscription from our list)
+                        }
                         _ => {
                             println!("Received unhandled message type: {}", response.metadata.message_type);
                         }
@@ -141,6 +151,10 @@ impl TwitchEventSubClient {
                 Ok(Message::Close(frame)) => {
                     println!("EventSub WebSocket closed with frame: {:?}", frame);
                     return Ok(None);
+                }
+                Ok(Message::Ping(_)) => {
+                    // Respond with a Pong message
+                    // Note: The WebSocket library might handle this automatically
                 }
                 Err(e) => {
                     eprintln!("EventSub WebSocket error: {:?}", e);
@@ -201,6 +215,9 @@ impl TwitchEventSubClient {
             ("channel.channel_points_custom_reward_redemption.add", "1", json!({
             "broadcaster_user_id": channel_id
         })),
+            ("channel.channel_points_custom_reward_redemption.update", "1", json!({
+    "broadcaster_user_id": channel_id
+})),
         ];
 
         for (subscription_type, version, condition) in subscriptions {
@@ -244,23 +261,6 @@ impl TwitchEventSubClient {
         Ok(channel_id)
     }
 
-    // async fn handle_message(&self, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    //     let parsed: serde_json::Value = serde_json::from_str(message)?;
-    //
-    //     if let Some(event_type) = parsed["payload"]["subscription"]["type"].as_str() {
-    //         match event_type {
-    //             "channel.channel_points_custom_reward_redemption.add" => {
-    //                 self.handle_channel_point_redemption(&parsed["payload"]["event"]).await?;
-    //             },
-    //             _ => {
-    //                 handlers::handle_message(message, &self.irc_client, &self.channel, &self.api_client).await?;
-    //             }
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
-
     pub async fn handle_channel_point_redemption(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let redemption = Redemption {
             id: event["id"].as_str().unwrap_or("").to_string(),
@@ -276,7 +276,68 @@ impl TwitchEventSubClient {
             announce_in_chat: false,
         };
 
-        let result = self.redemption_manager.handle_redemption(redemption.clone()).await;
+        let status: RedemptionStatus = redemption.status.clone();
+
+        match status {
+            RedemptionStatus::Unfulfilled => {
+                println!("Processing new redemption: {:?}", redemption);
+                let result = self.redeem_manager.read().await.handle_redemption(
+                    redemption.clone(),
+                    self.irc_client.clone(),
+                    self.channel.clone()
+                ).await;
+
+                if result.success {
+                    println!("Redemption handled successfully: {:?}", result);
+                } else {
+                    eprintln!("Failed to handle redemption: {:?}", result);
+                }
+
+                if redemption.announce_in_chat {
+                    self.announce_redemption(&redemption, &result).await;
+                }
+            },
+            RedemptionStatus::Fulfilled => {
+                println!("Redemption already fulfilled: {:?}", redemption);
+            },
+            RedemptionStatus::Canceled => {
+                println!("Redemption canceled: {:?}", redemption);
+                if let Err(e) = self.redeem_manager.write().await.cancel_redemption(&redemption.id).await {
+                    eprintln!("Error canceling redemption: {}", e);
+                }
+            },
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_new_channel_point_redemption(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let redemption = Redemption {
+            id: event["id"].as_str().unwrap_or("").to_string(),
+            broadcaster_id: event["broadcaster_user_id"].as_str().unwrap_or("").to_string(),
+            user_id: event["user_id"].as_str().unwrap_or("").to_string(),
+            user_name: event["user_login"].as_str().unwrap_or("").to_string(),
+            reward_id: event["reward"]["id"].as_str().unwrap_or("").to_string(),
+            reward_title: event["reward"]["title"].as_str().unwrap_or("").to_string(),
+            user_input: event["user_input"].as_str().map(|s| s.to_string()),
+            status: event["status"].as_str().unwrap_or("").into(),
+            queued: false,
+            queue_number: None,
+            announce_in_chat: false,
+        };
+
+        println!("Processing new redemption: {:?}", redemption);
+
+        let redeem_manager = self.redeem_manager.read().await;
+        let result = if redemption.reward_title == "coin game" {
+            redeem_manager.handle_coin_game(&redemption, &self.irc_client, &self.channel).await
+        } else {
+            redeem_manager.handle_redemption(
+                redemption.clone(),
+                self.irc_client.clone(),
+                self.channel.clone()
+            ).await
+        };
 
         if result.success {
             println!("Redemption handled successfully: {:?}", result);
@@ -284,8 +345,31 @@ impl TwitchEventSubClient {
             eprintln!("Failed to handle redemption: {:?}", result);
         }
 
-        if redemption.announce_in_chat {
-            self.announce_redemption(&redemption, &result).await;
+        // Only update the status if it's not a coin game redemption
+        if redemption.reward_title != "coin game" {
+            let status = if result.success { "FULFILLED" } else { "CANCELED" };
+            if let Err(e) = self.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
+                eprintln!("Failed to update redemption status: {:?}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_channel_point_redemption_update(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let redemption_id = event["id"].as_str().unwrap_or("");
+        let status: RedemptionStatus = event["status"].as_str().unwrap_or("").into();
+
+        match status {
+            RedemptionStatus::Canceled => {
+                println!("Redemption {} canceled", redemption_id);
+                if let Err(e) = self.redeem_manager.write().await.cancel_redemption(redemption_id).await {
+                    eprintln!("Error canceling redemption: {}", e);
+                }
+            },
+            _ => {
+                println!("Unhandled redemption update status: {:?} for redemption {}", status, redemption_id);
+            },
         }
 
         Ok(())
@@ -299,6 +383,18 @@ impl TwitchEventSubClient {
 
         if let Err(e) = self.irc_client.say(self.channel.clone(), message).await {
             eprintln!("Failed to announce redemption in chat: {}", e);
+        }
+    }
+
+
+
+    pub(crate) async fn refresh_token_periodically(&self) {
+        let refresh_interval = Duration::from_secs(3600); // 1 hour in seconds
+        loop {
+            tokio::time::sleep(refresh_interval).await;
+            if let Err(e) = self.api_client.refresh_token().await {
+                eprintln!("Failed to refresh token: {:?}", e);
+            }
         }
     }
 }

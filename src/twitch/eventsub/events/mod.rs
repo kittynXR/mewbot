@@ -8,4 +8,3 @@ pub mod channel_subscribe;
 pub mod channel_subscription_message;
 pub mod channel_subscription_gift;
 pub mod channel_subscription_end;
-pub mod redemptions;

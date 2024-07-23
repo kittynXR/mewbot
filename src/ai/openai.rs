@@ -23,9 +23,9 @@ impl AIProvider for OpenAIProvider {
         let response = self.client.post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&json!({
-                "model": "gpt-3.5-turbo",
+                "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 150
+                "max_tokens": 100
             }))
             .send()
             .await

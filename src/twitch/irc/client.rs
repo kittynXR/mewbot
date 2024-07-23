@@ -6,9 +6,12 @@ use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::ServerMessage;
+use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
+
+pub type TwitchIRCClientType = ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>;
 
 pub struct TwitchIRCClient {
-    pub client: Arc<TwitchIRC<SecureTCPTransport, StaticLoginCredentials>>,
+    pub client: Arc<TwitchIRCClientType>,
     pub message_receiver: mpsc::UnboundedReceiver<ServerMessage>,
 }
 
@@ -40,5 +43,20 @@ impl TwitchIRCClient {
             client,
             message_receiver: incoming_messages,
         })
+    }
+
+    /// Sends a message to the specified Twitch channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - The name of the channel to send the message to.
+    /// * `message` - The content of the message to send.
+    ///
+    /// # Returns
+    ///
+    /// Returns a Result indicating success or failure of sending the message.
+    pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.client.say(channel.to_string(), message.to_string()).await?;
+        Ok(())
     }
 }

@@ -217,7 +217,7 @@ impl TwitchAPIClient {
         self.refresh_token().await
     }
 
-    async fn refresh_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub(crate) async fn refresh_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.token.read().await;
         let refresh_token = token.as_ref().map(|t| t.refresh_token.clone()).ok_or("No refresh token available")?;
         drop(token);
@@ -327,16 +327,35 @@ impl TwitchAPIClient {
         ).await
     }
 
-    pub async fn get_custom_reward(
-        &self,
-        reward_id: &str,
-    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_custom_reward(&self, reward_id: &str) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
         let broadcaster_id = self.get_broadcaster_id().await?;
-        crate::twitch::api::requests::channel_points::get_custom_reward(
-            self,
-            &broadcaster_id,
-            reward_id,
-        ).await
+        let response = self.client
+            .get("https://api.twitch.tv/helix/channel_points/custom_rewards")
+            .header("Client-ID", self.get_client_id().await?)
+            .header("Authorization", format!("Bearer {}", self.get_token().await?))
+            .query(&[
+                ("broadcaster_id", broadcaster_id.as_str()),
+                ("id", reward_id),
+            ])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(format!("Failed to get custom reward. Status: {}", response.status()).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        let reward = &body["data"][0];
+
+        Ok(ChannelPointReward {
+            id: reward["id"].as_str().unwrap_or("").to_string(),
+            title: reward["title"].as_str().unwrap_or("").to_string(),
+            cost: reward["cost"].as_u64().unwrap_or(0) as u32,
+            is_enabled: reward["is_enabled"].as_bool().unwrap_or(false),
+            is_in_stock: reward["is_in_stock"].as_bool().unwrap_or(false),
+            is_paused: reward["is_paused"].as_bool().unwrap_or(false),
+            is_user_input_required: reward["is_user_input_required"].as_bool().unwrap_or(false),
+        })
     }
 
     pub async fn get_channel_point_rewards(&self) -> Result<Vec<ChannelPointReward>, Box<dyn std::error::Error + Send + Sync>> {
@@ -390,13 +409,48 @@ impl TwitchAPIClient {
         Ok(!body["data"].as_array().map_or(true, |arr| arr.is_empty()))
     }
 
+    pub async fn create_custom_reward(
+        &self,
+        title: &str,
+        cost: u32,
+        is_user_input_required: bool,
+    ) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+        let broadcaster_id = self.get_broadcaster_id().await?;
+
+        let response = self.client
+            .post(&format!("https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id={}", broadcaster_id))
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({
+            "title": title,
+            "cost": cost,
+            "is_user_input_required": is_user_input_required,
+            "is_enabled": true
+        }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(format!("Failed to create custom reward. Status: {}, Error: {}", status, error_text).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        let reward: ChannelPointReward = serde_json::from_value(body["data"][0].clone())?;
+
+        Ok(reward)
+    }
+
     pub async fn update_custom_reward(
         &self,
         reward_id: &str,
         title: &str,
         cost: u32,
         is_enabled: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
         let client_id = self.get_client_id().await?;
         let broadcaster_id = self.get_broadcaster_id().await?;
@@ -413,12 +467,9 @@ impl TwitchAPIClient {
             .send()
             .await?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await?;
-            return Err(format!("Failed to update custom reward. Status: {}, Error: {}", status, error_text).into());
-        }
+        let body: serde_json::Value = response.json().await?;
+        let reward: ChannelPointReward = serde_json::from_value(body["data"][0].clone())?;
 
-        Ok(())
+        Ok(reward)
     }
 }

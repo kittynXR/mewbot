@@ -191,4 +191,13 @@ impl VRChatClient {
     pub async fn get_auth_cookie(&self) -> String {
         self.auth_cookie.lock().await.clone()
     }
+
+    pub async fn disconnect(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Implement VRChat disconnection logic here
+        // For example:
+        // self.websocket.close().await?;
+        // self.clear_session_data()?;
+        println!("VRChat client disconnected");
+        Ok(())
+    }
 }

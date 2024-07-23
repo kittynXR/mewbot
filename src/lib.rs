@@ -14,22 +14,107 @@ use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::ClientConfig;
+
 use crate::config::Config;
 use crate::twitch::api::TwitchAPIClient;
 use crate::vrchat::VRChatClient;
 use crate::vrchat::World;
 use crate::twitch::TwitchEventSubClient;
-use crate::twitch::eventsub::events::redemptions::RedemptionManager;
+use crate::twitch::redeems::RedeemManager;
 use crate::ai::AIClient;
-use crate::osc::VRChatOSC;
+//use crate::osc::VRChatOSC;
 use std::time::Duration;
+use tokio::time::timeout;
+
 
 pub struct BotClients {
     pub twitch_irc: Option<(Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>, UnboundedReceiver<ServerMessage>)>,
-    pub twitch_api: Option<Arc<TwitchAPIClient>>, // Change this line
+    pub twitch_api: Option<Arc<TwitchAPIClient>>,
     pub vrchat: Option<VRChatClient>,
     pub discord: Option<()>, // Replace with DiscordClient when implemented
-    pub redemption_manager: Arc<RedemptionManager>,
+    pub redeem_manager: Arc<RwLock<RedeemManager>>,
+    pub ai_client: Option<Arc<AIClient>>,
+}
+
+impl BotClients {
+    pub async fn shutdown(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        println!("Initiating graceful shutdown...");
+
+        // Notify users about shutdown
+        self.notify_shutdown().await?;
+
+        // Gracefully stop Twitch IRC client
+        if let Some((irc_client, _)) = &self.twitch_irc {
+            println!("Stopping Twitch IRC client...");
+            match timeout(Duration::from_secs(5), async {
+                // Send a final message to the channel
+                let channel = self.get_twitch_channel()?;
+                irc_client.say(channel, "MewBot is shutting down. Goodbye!".to_string()).await?;
+
+                // Sleep briefly to allow the message to be sent
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+            }).await {
+                Ok(result) => {
+                    if let Err(e) = result {
+                        eprintln!("Error stopping Twitch IRC client: {}", e);
+                    } else {
+                        println!("Twitch IRC client stopped successfully");
+                    }
+                },
+                Err(_) => eprintln!("Timeout while stopping Twitch IRC client"),
+            }
+        }
+
+        // Disconnect from VRChat
+        if let Some(vrchat_client) = &mut self.vrchat {
+            println!("Disconnecting from VRChat...");
+            match timeout(Duration::from_secs(5), vrchat_client.disconnect()).await {
+                Ok(result) => {
+                    if let Err(e) = result {
+                        eprintln!("Error disconnecting from VRChat: {}", e);
+                    }
+                },
+                Err(_) => eprintln!("Timeout while disconnecting from VRChat"),
+            }
+        }
+
+        // Save final state
+        println!("Saving final redemption settings...");
+        if let Err(e) = self.redeem_manager.read().await.save_settings().await {
+            eprintln!("Error saving redemption settings: {}", e);
+        }
+
+        println!("Shutdown complete.");
+        Ok(())
+    }
+
+    async fn notify_shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some((irc_client, _)) = &self.twitch_irc {
+            let channel = self.get_twitch_channel()?;
+            irc_client.say(channel, "MewBot is shutting down. Thank you for using our services!".to_string()).await?;
+        }
+        Ok(())
+    }
+
+    fn get_twitch_channel(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // Implement this method to return the correct Twitch channel
+        // For now, we'll return a placeholder
+        Ok("your_channel_name".to_string())
+    }
+
+    async fn save_final_state(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Implement saving final state here
+        // For example:
+        if let Err(e) = self.redeem_manager.read().await.save_settings().await {
+            eprintln!("Error saving RedeemManager state: {}", e);
+        }
+
+        // Add any other state saving logic here
+
+        Ok(())
+    }
 }
 
 pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std::error::Error + Send + Sync>> {
@@ -41,48 +126,30 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         None
     };
 
-    let mut redemption_manager = Arc::new(RedemptionManager::new(
-        None, // AI client
+    let config_read = config.read().await;
+    let ai_client = if config_read.openai_secret.is_some() || config_read.anthropic_secret.is_some() {
+        Some(Arc::new(AIClient::new(
+            config_read.openai_secret.clone(),
+            config_read.anthropic_secret.clone(),
+        )))
+    } else {
+        None
+    };
+    drop(config_read);
+
+    let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
+        ai_client.clone(), // Pass the AI client
         None, // OSC client
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
-    ));
-
-    // Initialize RedemptionManager
-    {
-        let manager = Arc::get_mut(&mut redemption_manager).unwrap();
-        println!("Loading redemption settings...");
-        if let Err(e) = manager.load_settings() {
-            eprintln!("Failed to load redemption settings: {}. Using default settings.", e);
-        }
-        println!("Updating Twitch redeems based on local settings...");
-        if let Err(e) = manager.update_twitch_redeems().await {
-            eprintln!("Failed to update Twitch redeems: {}. Local settings may not be reflected on Twitch.", e);
-        }
-        println!("Updating local settings from Twitch...");
-        if let Err(e) = manager.update_from_twitch().await {
-            eprintln!("Failed to update redemption settings from Twitch: {}. Using local settings.", e);
-        }
-
-    }
-
-    // Start periodic updates
-    let mut update_manager = Arc::clone(&redemption_manager);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await; // Update every hour
-            let manager = Arc::get_mut(&mut update_manager).unwrap();
-            if let Err(e) = manager.update_from_twitch().await {
-                eprintln!("Failed to update redemption settings: {}", e);
-            }
-        }
-    });
+    )));
 
     let mut clients = BotClients {
         twitch_irc: None,
         twitch_api,
         vrchat: None,
         discord: None,
-        redemption_manager,
+        redeem_manager: redeem_manager.clone(),
+        ai_client, // Add this field to BotClients struct
     };
 
     if config.read().await.is_twitch_irc_configured() {
@@ -150,6 +217,12 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     let world_info = Arc::new(Mutex::new(None::<World>));
     let mut handles = vec![];
 
+    // Initialize redeems
+    println!("Initializing channel point redeems...");
+    if let Err(e) = clients.redeem_manager.write().await.initialize_redeems().await {
+        eprintln!("Failed to initialize channel point redeems: {}. Some redeems may not be available.", e);
+    }
+
     if let (Some((irc_client, incoming_messages)), Some(api_client)) = (clients.twitch_irc.take(), clients.twitch_api.take()) {
         println!("Setting up Twitch IRC message handling...");
 
@@ -159,35 +232,51 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let channel = config.read().await.twitch_channel_to_join.clone()
             .ok_or("Twitch channel to join not set")?;
 
+        // Announce redeems after initialization
+        if let Err(e) = clients.redeem_manager.read().await.announce_redeems(&irc_client, &channel).await {
+            eprintln!("Failed to announce redeems: {}", e);
+        }
+
         let irc_client_for_messages = Arc::clone(&irc_client);
 
         let twitch_handler = tokio::spawn({
             let api_client_clone = Arc::clone(&api_client);
             let config_clone = Arc::clone(&config);
-            let redemption_manager_clone = Arc::clone(&clients.redemption_manager);
+            let redeem_manager_clone = Arc::clone(&clients.redeem_manager);
             async move {
-                handle_twitch_messages(irc_client_for_messages, incoming_messages, world_info_clone, api_client_clone, config_clone, redemption_manager_clone).await
+                handle_twitch_messages(irc_client_for_messages, incoming_messages, world_info_clone, api_client_clone, config_clone, redeem_manager_clone).await
             }
         });
         handles.push(twitch_handler);
+        println!("Checking RedeemManager initialization...");
+        let handler_count = clients.redeem_manager.read().await.get_handler_count().await;
+        println!("Number of initialized handlers: {}", handler_count);
         println!("Twitch IRC handler started.");
 
         let config_clone = Arc::clone(&config);
-        let eventsub_client = TwitchEventSubClient::new(
+
+        let eventsub_client = Arc::new(TwitchEventSubClient::new(
             config_clone,
             Arc::clone(&api_client),
             irc_client.clone(),
             channel.clone(),
-            None, // AI client
-            None  // OSC client
-        );
+            clients.ai_client.clone(), // Pass the AI client
+            None, // OSC client
+            Arc::clone(&clients.redeem_manager)
+        ));
 
+        let eventsub_client_clone = Arc::clone(&eventsub_client);
         let eventsub_handle = tokio::spawn(async move {
             println!("Debug: Starting EventSub client");
-            if let Err(e) = eventsub_client.connect_and_listen().await {
+            if let Err(e) = eventsub_client_clone.connect_and_listen().await {
                 eprintln!("EventSub client error: {:?}", e);
             }
             Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
+        });
+
+        let eventsub_client_clone = Arc::clone(&eventsub_client);
+        tokio::spawn(async move {
+            eventsub_client_clone.refresh_token_periodically().await;
         });
 
         handles.push(eventsub_handle);
@@ -230,7 +319,7 @@ async fn handle_twitch_messages(
     world_info: Arc<Mutex<Option<World>>>,
     api_client: Arc<Arc<TwitchAPIClient>>,
     config: Arc<RwLock<Config>>,
-    redemption_manager: Arc<RedemptionManager>,
+    redeem_manager: Arc<RwLock<RedeemManager>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
     while let Some(message) = incoming_messages.recv().await {
@@ -243,7 +332,7 @@ async fn handle_twitch_messages(
                 let world_info_clone = Arc::clone(&world_info);
                 let api_client_clone = Arc::clone(&api_client);
                 let config_clone = Arc::clone(&config);
-                let redemption_manager_clone = Arc::clone(&redemption_manager);
+                let redeem_manager_clone = Arc::clone(&redeem_manager);
                 let msg_clone = msg.clone();
 
                 tokio::spawn(async move {
@@ -253,7 +342,7 @@ async fn handle_twitch_messages(
                         world_info_clone,
                         api_client_clone,
                         config_clone,
-                        redemption_manager_clone
+                        redeem_manager_clone
                     ).await {
                         eprintln!("Error handling Twitch message: {:?}", e);
                     }
@@ -265,3 +354,4 @@ async fn handle_twitch_messages(
     println!("Twitch message handling ended.");
     Ok(())
 }
+

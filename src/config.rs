@@ -15,6 +15,8 @@ pub struct Config {
     pub twitch_refresh_token: Option<String>,
     pub vrchat_auth_cookie: Option<String>,
     pub discord_token: Option<String>,
+    pub openai_secret: Option<String>,
+    pub anthropic_secret: Option<String>,
     #[serde(default)]
     pub verbose_logging: bool,
 }
@@ -57,6 +59,16 @@ impl Config {
             self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token (leave empty if not using Discord): ")?);
         }
 
+        // OpenAI
+        if self.openai_secret.is_none() {
+            self.openai_secret = Some(Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?);
+        }
+
+        // Anthropic
+        if self.anthropic_secret.is_none() {
+            self.anthropic_secret = Some(Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?);
+        }
+
         self.save()?;
         Ok(())
     }
@@ -97,6 +109,14 @@ impl Config {
         let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
         let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
 
+        let twitch_irc_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
+        let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
+        let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
+
+        // Add prompts for OpenAI and Anthropic keys
+        let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
+        let anthropic_secret = Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?;
+
         let config = Config {
             twitch_bot_username: Some(twitch_bot_username),
             twitch_channel_to_join: Some(twitch_channel_to_join),
@@ -105,10 +125,12 @@ impl Config {
             twitch_irc_oauth_token: Some(twitch_irc_oauth_token),
             twitch_access_token: None,
             twitch_refresh_token: None,
-            twitch_user_id: None, // You might want to prompt for this or fetch it from the API
+            twitch_user_id: None,
             vrchat_auth_cookie: None,
             discord_token: None,
             verbose_logging: false,
+            openai_secret: if openai_secret.is_empty() { None } else { Some(openai_secret) },
+            anthropic_secret: if anthropic_secret.is_empty() { None } else { Some(anthropic_secret) },
         };
 
         config.save()?;

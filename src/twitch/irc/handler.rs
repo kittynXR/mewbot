@@ -12,7 +12,7 @@ use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::roles::{UserRole, get_user_role};
 use super::command_system::COMMANDS;
 use super::commands;
-use crate::twitch::eventsub::events::redemptions::RedemptionManager;
+use crate::twitch::redeems::RedeemManager;
 
 lazy_static! {
     static ref SHOUTOUT_COOLDOWNS: Arc<Mutex<commands::ShoutoutCooldown>> = Arc::new(Mutex::new(commands::ShoutoutCooldown::new()));
@@ -24,7 +24,7 @@ pub async fn handle_twitch_message(
     world_info: Arc<Mutex<Option<World>>>,
     api_client: Arc<Arc<TwitchAPIClient>>,
     config: Arc<RwLock<Config>>,
-    redemption_manager: Arc<RedemptionManager>,
+    redemption_manager: Arc<RwLock<RedeemManager>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let user_role = get_user_role(msg);
     println!("Handling Twitch message: {:?}", msg);
@@ -47,7 +47,7 @@ pub async fn handle_twitch_message(
     if let Some(cmd) = command {
         if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
             if user_role >= command.required_role {
-                return (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &SHOUTOUT_COOLDOWNS, &redemption_manager, &params).await;
+                return (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &SHOUTOUT_COOLDOWNS, &redemption_manager.clone(), &params).await
             } else {
                 client.say(msg.channel_login.clone(), format!("This command is only available to {:?}s and above.", command.required_role)).await?;
                 return Ok(());

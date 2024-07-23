@@ -33,8 +33,12 @@ pub async fn handle_message(
             "channel.subscription.gift" => channel_subscription_gift::handle(&parsed, irc_client, channel).await?,
             "channel.subscription.end" => channel_subscription_end::handle(&parsed, irc_client, channel).await?,
             "channel.channel_points_custom_reward_redemption.add" => {
-                // We'll let the TwitchEventSubClient handle this event
-                eventsub_client.handle_channel_point_redemption(&parsed["payload"]["event"]).await?;
+                println!("Received new channel point redemption: {:?}", parsed["payload"]["event"]);
+                eventsub_client.handle_new_channel_point_redemption(&parsed["payload"]["event"]).await?;
+            },
+            "channel.channel_points_custom_reward_redemption.update" => {
+                println!("Received channel point redemption update: {:?}", parsed["payload"]["event"]);
+                eventsub_client.handle_channel_point_redemption_update(&parsed["payload"]["event"]).await?;
             },
             _ => println!("Unhandled event type: {}", event_type),
         }

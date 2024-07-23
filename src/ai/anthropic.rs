@@ -25,7 +25,7 @@ impl AIProvider for AnthropicProvider {
             .json(&json!({
                 "model": "claude-2",
                 "prompt": format!("Human: {}\n\nAssistant:", prompt),
-                "max_tokens_to_sample": 150
+                "max_tokens_to_sample": 100
             }))
             .send()
             .await

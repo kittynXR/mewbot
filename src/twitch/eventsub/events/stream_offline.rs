@@ -3,6 +3,7 @@ use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
+use crate::twitch::redeems::manager::RedeemManager;
 
 pub async fn handle(
     event: &Value,

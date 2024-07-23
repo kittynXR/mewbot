@@ -1,18 +1,9 @@
-// src/twitch/eventsub/events/redemptions/models.rs
-
 use serde::{Deserialize, Serialize};
-
-use std::fmt;
-
-use std::sync::Arc;
-// src/twitch/eventsub/events/redemptions/models.rs
-
-// src/twitch/eventsub/events/redemptions/models.rs
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Redemption {
     pub id: String,
-    pub broadcaster_id: String,  // Add this line
+    pub broadcaster_id: String,
     pub user_id: String,
     pub user_name: String,
     pub reward_id: String,
@@ -24,7 +15,6 @@ pub struct Redemption {
     pub announce_in_chat: bool,
 }
 
-// Add a new enum for redemption completion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RedemptionCompletion {
     NotApplicable,
@@ -32,7 +22,6 @@ pub enum RedemptionCompletion {
     Completed,
 }
 
-// Update RedemptionResult to include the queue number
 #[derive(Debug, Clone)]
 pub struct RedemptionResult {
     pub success: bool,
@@ -40,13 +29,12 @@ pub struct RedemptionResult {
     pub queue_number: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RedemptionStatus {
     Unfulfilled,
     Fulfilled,
     Canceled,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct RedemptionActionConfig {
@@ -56,37 +44,30 @@ pub struct RedemptionActionConfig {
     pub requires_manual_completion: bool,
 }
 
-// impl fmt::Debug for RedemptionActionConfig {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         f.debug_struct("RedemptionActionConfig")
-//             .field("action", &self.action)
-//             .field("queued", &self.queued)
-//             .field("announce_in_chat", &self.announce_in_chat)
-//             .field("requires_manual_completion", &self.requires_manual_completion)
-//             .finish()
-//     }
-// }
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum RedemptionActionType {
     AIResponse,
+    AIResponseWithHistory,
+    AIResponseWithoutHistory,
     OSCMessage,
     UpdateText,
     Refund,
     Custom(String),
 }
 
-// impl fmt::Debug for RedemptionActionType {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match self {
-//             Self::AIResponse => write!(f, "AIResponse"),
-//             Self::OSCMessage => write!(f, "OSCMessage"),
-//             Self::UpdateText => write!(f, "UpdateText"),
-//             Self::Refund => write!(f, "Refund"),
-//             Self::Custom(s) => write!(f, "Custom({})", s),
-//         }
-//     }
-// }
+impl ToString for RedemptionActionType {
+    fn to_string(&self) -> String {
+        match self {
+            RedemptionActionType::AIResponse => "AI Response".to_string(),
+            RedemptionActionType::AIResponseWithHistory => "AI Response with History".to_string(),
+            RedemptionActionType::AIResponseWithoutHistory => "AI Response without History".to_string(),
+            RedemptionActionType::OSCMessage => "OSC Message".to_string(),
+            RedemptionActionType::UpdateText => "Update Text".to_string(),
+            RedemptionActionType::Refund => "Refund".to_string(),
+            RedemptionActionType::Custom(name) => name.clone(),
+        }
+    }
+}
 
 pub trait RedemptionHandler {
     fn handle(&self, redemption: Redemption) -> RedemptionResult;
@@ -103,12 +84,27 @@ impl From<&str> for RedemptionStatus {
     }
 }
 
-// In models.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedemptionSettings {
     pub reward_id: String,
     pub title: String,
     pub cost: u32,
     pub action_config: RedemptionActionConfig,
-    pub active: bool, // Add this line
+    pub active: bool,
+}
+
+// Add this new struct for the coin game state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoinGameState {
+    pub current_price: u32,
+    pub last_redemption: Option<Redemption>,
+}
+
+impl CoinGameState {
+    pub fn new(initial_price: u32) -> Self {
+        Self {
+            current_price: initial_price,
+            last_redemption: None,
+        }
+    }
 }
