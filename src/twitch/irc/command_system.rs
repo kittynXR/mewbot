@@ -61,6 +61,24 @@ pub const COMMANDS: &[Command] = &[
         required_role: UserRole::Moderator, // Or UserRole::Broadcaster, depending on your preference
         handler: |msg, client, channel, api_client, _, _, redeem_manager, params|
         Box::pin(commands::handle_add_redeem(msg, client, channel, api_client, redeem_manager, params)),
-        description: "Adds a new channel point redemption",
+        description: "Adds a new channel point redemption. Usage: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce]",
+    },
+    Command {
+        name: "!setactivegames",
+        required_role: UserRole::Moderator,
+        handler: |msg, client, channel, _, _, _, redeem_manager, params| Box::pin(commands::handle_set_active_games(msg, client, channel, redeem_manager, params)),
+        description: "Sets the games for which a redeem is active",
+    },
+    Command {
+        name: "!toggleredeem",
+        required_role: UserRole::Moderator,
+        handler: |msg, client, channel, _, _, _, redeem_manager, params| Box::pin(commands::handle_toggle_redeem(msg, client, channel, redeem_manager, params)),
+        description: "Toggles a channel point redeem on or off",
+    },
+    Command {
+        name: "!setofflineredeem",
+        required_role: UserRole::Moderator,
+        handler: |msg, client, channel, _, _, _, redeem_manager, params| Box::pin(commands::handle_set_offline_redeem(msg, client, channel, redeem_manager, params)),
+        description: "Sets whether a redeem is available in offline chat",
     },
 ];

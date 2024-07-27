@@ -281,6 +281,25 @@ impl TwitchAPIClient {
         Ok(json)
     }
 
+    pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+
+        let response = self.client
+            .get(&format!("https://api.twitch.tv/helix/streams?user_id={}", user_id))
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(format!("Failed to get stream info. Status: {}", response.status()).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        Ok(body)
+    }
+
     pub async fn get_client_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.read().await;
         config.twitch_client_id.clone().ok_or_else(|| "Twitch client ID not set".into())
@@ -414,6 +433,8 @@ impl TwitchAPIClient {
         title: &str,
         cost: u32,
         is_user_input_required: bool,
+        cooldown: u32,  // Add this parameter
+        prompt: &str,  // Add this parameter
     ) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
         let client_id = self.get_client_id().await?;
@@ -424,11 +445,14 @@ impl TwitchAPIClient {
             .header("Client-ID", client_id)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
-            "title": title,
-            "cost": cost,
-            "is_user_input_required": is_user_input_required,
-            "is_enabled": true
-        }))
+                "title": title,
+                "cost": cost,
+                "is_user_input_required": is_user_input_required,
+                "is_enabled": true,
+                "is_global_cooldown_enabled": cooldown > 0,
+                "global_cooldown_seconds": cooldown,
+                "prompt": prompt  // Add this line
+            }))
             .send()
             .await?;
 
@@ -444,12 +468,14 @@ impl TwitchAPIClient {
         Ok(reward)
     }
 
-    pub async fn update_custom_reward(
+    pub(crate) async fn update_custom_reward(
         &self,
         reward_id: &str,
         title: &str,
         cost: u32,
         is_enabled: bool,
+        cooldown: u32,  // Add this parameter
+        prompt: &str,  // Add this parameter
     ) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
         let client_id = self.get_client_id().await?;
@@ -460,10 +486,13 @@ impl TwitchAPIClient {
             .header("Client-ID", client_id)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
-            "title": title,
-            "cost": cost,
-            "is_enabled": is_enabled
-        }))
+                "title": title,
+                "cost": cost,
+                "is_enabled": is_enabled,
+                "is_global_cooldown_enabled": cooldown > 0,
+                "global_cooldown_seconds": cooldown,
+                "prompt": prompt  // Add this line
+            }))
             .send()
             .await?;
 

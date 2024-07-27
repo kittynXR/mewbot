@@ -24,8 +24,9 @@ impl AIClient {
         history.push_str(message);
         history.push_str("\n");
 
-        // Implement token limit here (e.g., 50k tokens)
-        while Self::count_tokens(&history) > 50000 {
+        // Increase the token limit to maintain a larger context window
+        // This is an approximation; adjust based on your needs and the model's capabilities
+        while Self::count_tokens(&history) > 100000 {
             if let Some(newline_pos) = history.find('\n') {
                 history.drain(..=newline_pos);
             } else {

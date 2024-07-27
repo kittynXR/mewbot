@@ -23,7 +23,7 @@ pub async fn handle_add_redeem(
         match full_command[1..].split_once('"') {
             Some((title, rest)) => (title.to_string(), rest.trim_start()),
             None => {
-                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> [queued] [announce]".to_string()).await?;
+                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...".to_string()).await?;
                 return Ok(());
             }
         }
@@ -31,7 +31,7 @@ pub async fn handle_add_redeem(
         match full_command.split_once(' ') {
             Some((title, rest)) => (title.to_string(), rest),
             None => {
-                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> [queued] [announce]".to_string()).await?;
+                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...".to_string()).await?;
                 return Ok(());
             }
         }
@@ -56,8 +56,37 @@ pub async fn handle_add_redeem(
         }
     };
 
+    let cooldown = match parts.next() {
+        Some(c) => c.parse::<u32>().map_err(|_| "Invalid cooldown")?,
+        None => {
+            client.say(channel.to_string(), "Missing cooldown parameter".to_string()).await?;
+            return Ok(());
+        }
+    };
+
+    // Parse the prompt (which might be quoted)
+    let prompt = if rest.trim_start().starts_with('"') {
+        match rest.trim_start()[1..].split_once('"') {
+            Some((prompt, rest)) => {
+                parts = rest.trim_start().split_whitespace();
+                prompt.to_string()
+            }
+            None => {
+                client.say(channel.to_string(), "Invalid prompt format. Prompt should be enclosed in quotes.".to_string()).await?;
+                return Ok(());
+            }
+        }
+    } else {
+        client.say(channel.to_string(), "Missing prompt parameter. Prompt should be enclosed in quotes.".to_string()).await?;
+        return Ok(());
+    };
+
     let queued = parts.next().map_or(false, |v| v == "true");
     let announce = parts.next().map_or(false, |v| v == "true");
+    let offline_chat_redeem = parts.next().map_or(false, |v| v == "true");
+
+    // Parse active games (optional)
+    let active_games: Vec<String> = parts.map(|s| s.to_string()).collect();
 
     let action_config = match action_type {
         "ai" => RedemptionActionConfig {
@@ -85,7 +114,16 @@ pub async fn handle_add_redeem(
     };
 
     let mut redeem_manager = redeem_manager.write().await;
-    match redeem_manager.add_redeem_at_runtime(title.clone(), cost, action_config, None).await {
+    match redeem_manager.add_redeem_at_runtime(
+        title.clone(),
+        cost,
+        action_config,
+        None,
+        cooldown,
+        prompt,
+        active_games,
+        offline_chat_redeem
+    ).await {
         Ok(_) => {
             client.say(channel.to_string(), format!("New redeem '{}' added successfully!", title)).await?;
         }

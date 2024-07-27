@@ -34,6 +34,7 @@ pub struct BotClients {
     pub discord: Option<()>, // Replace with DiscordClient when implemented
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
     pub ai_client: Option<Arc<AIClient>>,
+    pub eventsub_client: Arc<Mutex<TwitchEventSubClient>>,
 }
 
 impl BotClients {
@@ -127,9 +128,9 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     };
 
     let config_read = config.read().await;
-    let ai_client = if config_read.openai_secret.is_some() || config_read.anthropic_secret.is_some() {
+    let ai_client = if let Some(openai_secret) = &config_read.openai_secret {
         Some(Arc::new(AIClient::new(
-            config_read.openai_secret.clone(),
+            Some(openai_secret.clone()),
             config_read.anthropic_secret.clone(),
         )))
     } else {
@@ -138,20 +139,12 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     drop(config_read);
 
     let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
-        ai_client.clone(), // Pass the AI client
+        ai_client.clone(),
         None, // OSC client
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
     )));
 
-    let mut clients = BotClients {
-        twitch_irc: None,
-        twitch_api,
-        vrchat: None,
-        discord: None,
-        redeem_manager: redeem_manager.clone(),
-        ai_client, // Add this field to BotClients struct
-    };
-
+    let mut twitch_irc = None;
     if config.read().await.is_twitch_irc_configured() {
         println!("Initializing Twitch IRC client...");
 
@@ -179,41 +172,61 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         client.join(channel.clone())?;
         println!("Successfully joined channel: {}", channel);
 
-        clients.twitch_irc = Some((client, incoming_messages));
+        twitch_irc = Some((client, incoming_messages));
         println!("Twitch IRC client initialized successfully.");
     } else {
         println!("Twitch IRC is not configured. Skipping initialization.");
     }
 
-    if config.read().await.is_twitch_api_configured() {
-        let twitch_api_client = TwitchAPIClient::new(config.clone()).await?;
-        twitch_api_client.authenticate().await?;
-        clients.twitch_api = Some(Arc::from(twitch_api_client));
-        println!("Twitch API client initialized and authenticated successfully.");
-    }
-
-    match VRChatClient::new(config.clone()).await {
+    let vrchat = match VRChatClient::new(config.clone()).await {
         Ok(vrchat_client) => {
-            clients.vrchat = Some(vrchat_client);
             println!("VRChat client initialized successfully.");
+            Some(vrchat_client)
         }
         Err(e) => {
             eprintln!("Failed to initialize VRChat client: {}. VRChat functionality will be disabled.", e);
+            None
         }
-    }
+    };
 
-    if config.read().await.discord_token.is_some() {
-        println!("Discord client initialization not yet implemented.");
-    }
+    let eventsub_client = if let (Some(ref irc_client), Some(ref api_client)) = (twitch_irc.as_ref(), &twitch_api) {
+        let channel = config.read().await.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
+        Arc::new(Mutex::new(TwitchEventSubClient::new(
+            config.clone(),
+            Arc::clone(api_client),
+            Arc::clone(&irc_client.0),
+            channel,
+            redeem_manager.clone(),
+            ai_client.clone(),
+            None
+        )))
+    } else {
+        return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
+    };
+
+    let clients = BotClients {
+        twitch_irc,
+        twitch_api,
+        vrchat,
+        discord: None,
+        redeem_manager,
+        ai_client,
+        eventsub_client,
+    };
 
     if clients.twitch_irc.is_none() && clients.vrchat.is_none() && clients.discord.is_none() {
         return Err("Bot requires at least one of Twitch IRC, VRChat, or Discord to be configured.".into());
     }
 
+    // Reset coin game and update redeems based on stream status
+    clients.redeem_manager.write().await.reset_coin_game().await?;
+    clients.redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
+
+
     Ok(clients)
 }
 
-pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let world_info = Arc::new(Mutex::new(None::<World>));
     let mut handles = vec![];
 
@@ -223,7 +236,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         eprintln!("Failed to initialize channel point redeems: {}. Some redeems may not be available.", e);
     }
 
-    if let (Some((irc_client, incoming_messages)), Some(api_client)) = (clients.twitch_irc.take(), clients.twitch_api.take()) {
+    if let (Some((irc_client, incoming_messages)), Some(api_client)) = (clients.twitch_irc, clients.twitch_api) {
         println!("Setting up Twitch IRC message handling...");
 
         let world_info_clone = Arc::clone(&world_info);
@@ -252,40 +265,33 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let handler_count = clients.redeem_manager.read().await.get_handler_count().await;
         println!("Number of initialized handlers: {}", handler_count);
         println!("Twitch IRC handler started.");
-
-        let config_clone = Arc::clone(&config);
-
-        let eventsub_client = Arc::new(TwitchEventSubClient::new(
-            config_clone,
-            Arc::clone(&api_client),
-            irc_client.clone(),
-            channel.clone(),
-            clients.ai_client.clone(), // Pass the AI client
-            None, // OSC client
-            Arc::clone(&clients.redeem_manager)
-        ));
-
-        let eventsub_client_clone = Arc::clone(&eventsub_client);
-        let eventsub_handle = tokio::spawn(async move {
-            println!("Debug: Starting EventSub client");
-            if let Err(e) = eventsub_client_clone.connect_and_listen().await {
-                eprintln!("EventSub client error: {:?}", e);
-            }
-            Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
-        });
-
-        let eventsub_client_clone = Arc::clone(&eventsub_client);
-        tokio::spawn(async move {
-            eventsub_client_clone.refresh_token_periodically().await;
-        });
-
-        handles.push(eventsub_handle);
-        println!("EventSub client started.");
-    } else {
-        println!("Twitch IRC client or API client not initialized. Skipping Twitch handlers setup.");
     }
 
-    if let Some(vrchat_client) = clients.vrchat.take() {
+    // EventSub client handling
+    let eventsub_client = clients.eventsub_client.clone();
+    let eventsub_handle = tokio::spawn(async move {
+        println!("Debug: Starting EventSub client");
+        if let Err(e) = eventsub_client.lock().await.connect_and_listen().await {
+            eprintln!("EventSub client error: {:?}", e);
+        }
+        Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
+    });
+
+    handles.push(eventsub_handle);
+    println!("EventSub client started.");
+
+    // Start the token refresh task
+    let eventsub_client_clone = clients.eventsub_client.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await; // 1 hour
+            if let Err(e) = eventsub_client_clone.lock().await.refresh_token_periodically().await {
+                eprintln!("Failed to refresh token: {:?}", e);
+            }
+        }
+    });
+
+    if let Some(vrchat_client) = clients.vrchat {
         let current_user_id = vrchat_client.get_current_user_id().await?;
         let auth_cookie = vrchat_client.get_auth_cookie().await;
         let vrchat_handle = tokio::spawn(async move {

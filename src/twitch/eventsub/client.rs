@@ -1,12 +1,13 @@
+use std::error::Error;
 use crate::config::Config;
 use crate::twitch::TwitchAPIClient;
 use crate::ai::AIClient;
 use crate::osc::VRChatOSC;
 use futures_util::StreamExt;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::sync::{Mutex, RwLock};
+use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use twitch_irc::SecureTCPTransport;
@@ -17,6 +18,15 @@ use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use std::time::Duration;
 use crate::twitch::redeems::{Redemption, RedeemManager, RedemptionResult, RedemptionStatus};
 use crate::twitch::irc::client::TwitchIRCClientType;
+use tokio::time::timeout;
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::SinkExt;
+use serde::ser::StdError;
+use std::fmt;
+
+type BoxedError = Box<dyn StdError + Send + Sync>;
+type WebSocketTx = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
+type WebSocketRx = SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>;
 
 pub struct TwitchEventSubClient {
     config: Arc<RwLock<Config>>,
@@ -24,20 +34,25 @@ pub struct TwitchEventSubClient {
     irc_client: Arc<TwitchIRCClientType>,
     http_client: Client,
     channel: String,
-    redeem_manager: Arc<RwLock<RedeemManager>>,
+    pub(crate) redeem_manager: Arc<RwLock<RedeemManager>>,
+    ws_tx: Mutex<Option<WebSocketTx>>,
+    ws_rx: Mutex<Option<WebSocketRx>>,
+    ai_client: Option<Arc<AIClient>>,
+    osc_client: Option<Arc<VRChatOSC>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct WebSocketResponse {
-    metadata: WebSocketMetadata,
-    payload: serde_json::Value,
+#[derive(Debug)]
+pub struct TwitchEventSubError {
+    pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct WebSocketMetadata {
-    message_type: String,
-    message_id: String,
+impl fmt::Display for TwitchEventSubError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
 }
+
+impl Error for TwitchEventSubError {}
 
 impl TwitchEventSubClient {
     pub fn new(
@@ -45,9 +60,9 @@ impl TwitchEventSubClient {
         api_client: Arc<TwitchAPIClient>,
         irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
         channel: String,
+        redeem_manager: Arc<RwLock<RedeemManager>>,
         ai_client: Option<Arc<AIClient>>,
         osc_client: Option<Arc<VRChatOSC>>,
-        redeem_manager: Arc<RwLock<RedeemManager>>,
     ) -> Self {
         println!("Debug: Creating new TwitchEventSubClient");
         Self {
@@ -57,23 +72,24 @@ impl TwitchEventSubClient {
             http_client: Client::new(),
             channel,
             redeem_manager,
+            ws_tx: Mutex::new(None),
+            ws_rx: Mutex::new(None),
+            ai_client,
+            osc_client,
         }
     }
 
-    pub async fn connect_and_listen(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut url = "wss://eventsub.wss.twitch.tv/ws".to_string();
+    pub async fn connect_and_listen(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        let url = "wss://eventsub.wss.twitch.tv/ws".to_string();
         let mut reconnect_attempt = 0;
         let max_reconnect_attempts = 5;
 
         loop {
             match self.connect_websocket(&url).await {
-                Ok(reconnect_url) => {
-                    if let Some(new_url) = reconnect_url {
-                        println!("Reconnecting to new URL: {}", new_url);
-                        url = new_url;
-                        reconnect_attempt = 0; // Reset reconnect attempt count on successful connection
-                    } else {
-                        println!("WebSocket closed normally. Exiting.");
+                Ok(()) => {
+                    reconnect_attempt = 0;
+                    if let Err(e) = self.listen_for_messages().await {
+                        eprintln!("Error in message handling: {:?}", e);
                         break;
                     }
                 }
@@ -94,71 +110,59 @@ impl TwitchEventSubClient {
         Ok(())
     }
 
-    fn calculate_backoff(&self, attempt: u32) -> Duration {
-        let base_delay = 1;
-        let max_delay = 60;
-        let delay = base_delay * 2u64.pow(attempt - 1);
-        Duration::from_secs(delay.min(max_delay))
-    }
-
-    async fn connect_websocket(&self, url: &str) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn connect_websocket(&self, url: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let (ws_stream, _) = connect_async(url).await?;
         println!("EventSub WebSocket connected to {}", url);
+        let (ws_tx, ws_rx) = ws_stream.split();
+        *self.ws_tx.lock().await = Some(ws_tx);
+        *self.ws_rx.lock().await = Some(ws_rx);
+        Ok(())
+    }
 
-        let (_, mut read) = ws_stream.split();
+    async fn listen_for_messages(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        let mut ws_rx = self.ws_rx.lock().await.take().expect("WebSocket receive stream not initialized");
 
-        let mut session_id = String::new();
-        let mut subscriptions_created = false;
-
-        while let Some(message) = read.next().await {
+        while let Some(message) = ws_rx.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    let response: WebSocketResponse = serde_json::from_str(&text)?;
-                    match response.metadata.message_type.as_str() {
-                        "session_welcome" => {
-                            if let Some(session) = response.payload.get("session") {
-                                session_id = session["id"].as_str().unwrap_or("").to_string();
-                                println!("EventSub session established. Session ID: {}", session_id);
-                                if !subscriptions_created {
-                                    self.create_eventsub_subscription(&session_id).await?;
-                                    subscriptions_created = true;
-                                }
-                            }
+                    let response: Value = serde_json::from_str(&text)?;
+                    match response["metadata"]["message_type"].as_str() {
+                        Some("session_welcome") => {
+                            self.handle_welcome_message(&response).await?;
                         }
-                        "session_keepalive" => {
-                            let config = self.config.clone();
-                            log_verbose!(config, "Received EventSub keepalive: {}", text);
+                        Some("session_keepalive") => {
+                            self.handle_keepalive_message(&response).await?;
                         }
-                        "session_reconnect" => {
-                            if let Some(new_url) = response.payload["session"]["reconnect_url"].as_str() {
+                        Some("session_reconnect") => {
+                            if let Some(new_url) = response["payload"]["session"]["reconnect_url"].as_str() {
                                 println!("Received reconnect message. New URL: {}", new_url);
-                                return Ok(Some(new_url.to_string()));
+                                self.handle_reconnect(new_url.to_string()).await?;
+                                return Ok(());
                             }
                         }
-                        "notification" => {
-                            println!("Received notification: {}", text);
-                            handlers::handle_message(&text, &self.irc_client, &self.channel, &self.api_client, self).await?;
+                        Some("notification") => {
+                            self.handle_notification(&response).await?;
                         }
-                        "revocation" => {
-                            println!("Received revocation: {}", text);
-                            // Handle revocation (e.g., remove the subscription from our list)
+                        Some("revocation") => {
+                            self.handle_revocation(&response).await?;
                         }
                         _ => {
-                            println!("Received unhandled message type: {}", response.metadata.message_type);
+                            println!("Received unhandled message type: {}", response["metadata"]["message_type"]);
                         }
                     }
                 }
                 Ok(Message::Close(frame)) => {
                     println!("EventSub WebSocket closed with frame: {:?}", frame);
-                    return Ok(None);
+                    return Ok(());
                 }
-                Ok(Message::Ping(_)) => {
-                    // Respond with a Pong message
-                    // Note: The WebSocket library might handle this automatically
+                Ok(Message::Ping(data)) => {
+                    if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
+                        ws_tx.send(Message::Pong(data)).await?;
+                    }
                 }
                 Err(e) => {
                     eprintln!("EventSub WebSocket error: {:?}", e);
-                    return Err(Box::new(e));
+                    return Err(Box::new(e) as Box<dyn StdError + Send + Sync>);
                 }
                 _ => {
                     let config = self.config.clone();
@@ -167,7 +171,106 @@ impl TwitchEventSubClient {
             }
         }
 
-        Ok(None)
+        Ok(())
+    }
+
+    async fn handle_reconnect(&self, reconnect_url: String) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        println!("Handling reconnect to URL: {}", reconnect_url);
+
+        // Start a 30-second timer
+        let reconnect_result = timeout(Duration::from_secs(30), async {
+            // Close the old connection
+            if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
+                ws_tx.close().await?;
+            }
+
+            // Connect to the new URL
+            self.connect_websocket(&reconnect_url).await
+        }).await;
+
+        match reconnect_result {
+            Ok(Ok(())) => {
+                println!("Successfully reconnected to new URL");
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error during reconnection: {:?}", e);
+                Err(e)
+            }
+            Err(_) => {
+                eprintln!("Reconnection timed out");
+                Err(Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Reconnection timed out")))
+            }
+        }
+    }
+
+    async fn handle_welcome_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        println!("Received welcome message: {:?}", response);
+        if let Some(session) = response["payload"]["session"].as_object() {
+            if let Some(session_id) = session["id"].as_str() {
+                self.create_eventsub_subscription(session_id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        let config = self.config.clone();
+        log_verbose!(config, "Received EventSub keepalive: {:?}", response);
+        Ok(())
+    }
+
+    async fn handle_notification(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        println!("Received notification: {:?}", response);
+
+        let message = serde_json::to_string(response)?;
+        handlers::handle_message(
+            &message,
+            &self.irc_client,
+            &self.channel,
+            &self.api_client,
+            self
+        ).await?;
+
+        Ok(())
+    }
+
+    async fn handle_revocation(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        println!("Received revocation: {:?}", response);
+        // Implement revocation handling logic here
+        Ok(())
+    }
+
+
+    pub async fn refresh_token_periodically(&self) -> Result<(), BoxedError> {
+        if let Err(e) = self.api_client.refresh_token().await {
+            eprintln!("Failed to refresh token: {:?}", e);
+            return Err(e.into());
+        }
+        Ok(())
+    }
+
+    fn calculate_backoff(&self, attempt: u32) -> Duration {
+        let base_delay = 1;
+        let max_delay = 60;
+        let delay = base_delay * 2u64.pow(attempt - 1);
+        Duration::from_secs(delay.min(max_delay))
+    }
+
+    pub async fn check_current_stream_status(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let channel_id = self.get_channel_id().await?;
+        let stream_info = self.api_client.get_stream_info(&channel_id).await?;
+
+        let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
+        let game_name = if is_live {
+            stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
+        } else {
+            "".to_string()
+        };
+
+        self.redeem_manager.write().await.update_stream_status(is_live, game_name).await;
+
+        Ok(())
     }
 
     async fn create_eventsub_subscription(&self, session_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -383,18 +486,6 @@ impl TwitchEventSubClient {
 
         if let Err(e) = self.irc_client.say(self.channel.clone(), message).await {
             eprintln!("Failed to announce redemption in chat: {}", e);
-        }
-    }
-
-
-
-    pub(crate) async fn refresh_token_periodically(&self) {
-        let refresh_interval = Duration::from_secs(3600); // 1 hour in seconds
-        loop {
-            tokio::time::sleep(refresh_interval).await;
-            if let Err(e) = self.api_client.refresh_token().await {
-                eprintln!("Failed to refresh token: {:?}", e);
-            }
         }
     }
 }

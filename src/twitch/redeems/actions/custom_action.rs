@@ -40,14 +40,33 @@ pub async fn handle_coin_game(
     let current_price = state.current_price;
     let new_price = (current_price as f64 * multiplier).round() as u32;
 
+    // Get the cooldown and prompt from the settings
+    let (cooldown, mut prompt) = {
+        let handlers = redeem_manager.handlers_by_name.read().await;
+        handlers.get(&redemption.reward_id)
+            .map(|settings| (settings.cooldown, settings.prompt.clone()))
+            .unwrap_or((0, "Enter the coin game!".to_string()))
+    };
+
+    // Generate AI message
+    let ai_prompt = format!("Create a short, fun message (max 50 characters) about {} entering the coin game.", redemption.user_name);
+    let ai_message = match redeem_manager.ai_client.as_ref().unwrap().generate_response_without_history(&ai_prompt).await {
+        Ok(message) => message,
+        Err(_) => "has entered the coin game!".to_string(),  // Fallback message
+    };
+
+    // Update the prompt with the user's name and AI-generated message
+    prompt = format!("{} {} New is {} pawmarks!", redemption.user_name, ai_message, new_price);
+
+
     if let Some(previous_redemption) = state.last_redemption.take() {
         // Refund the previous redemption
         if let Err(e) = api_client.refund_channel_points(&previous_redemption.reward_id, &previous_redemption.id).await {
             eprintln!("Failed to refund previous coin game redemption: {}", e);
         } else {
             let refund_message = format!(
-                "{} has been refunded {} points for the previous coin game!",
-                previous_redemption.user_name, current_price
+                "{} is cute!",
+                previous_redemption.user_name
             );
             if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
                 eprintln!("Failed to send refund message to chat: {}", e);
@@ -55,19 +74,19 @@ pub async fn handle_coin_game(
         }
     }
 
-    // Update the reward cost
-    if let Err(e) = api_client.update_custom_reward(&redemption.reward_id, &redemption.reward_title, new_price, true).await {
-        eprintln!("Failed to update reward cost: {}", e);
+    // Update the reward cost and prompt
+    if let Err(e) = api_client.update_custom_reward(&redemption.reward_id, &redemption.reward_title, new_price, true, cooldown, &prompt).await {
+        eprintln!("Failed to update reward: {}", e);
         return RedemptionResult {
             success: false,
-            message: Some("Failed to update reward cost".to_string()),
+            message: Some("Failed to update reward".to_string()),
             queue_number: redemption.queue_number,
         };
     }
 
     // Send a message to the chat
     let chat_message = format!(
-        "{} spent {} points on the coin game! The new price is {} points! Who's next?",
+        "{} spent {} pawmarks! The new price is {} pawmarks! Who's next?",
         redemption.user_name, current_price, new_price
     );
     if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
@@ -80,7 +99,7 @@ pub async fn handle_coin_game(
 
     RedemptionResult {
         success: true,
-        message: Some(format!("Coin game! The new price is {} points", new_price)),
+        message: Some(format!("Coin game! {}  {}", new_price, prompt)),
         queue_number: redemption.queue_number,
     }
 }

@@ -46,6 +46,22 @@ impl AIResponseManager {
         }
     }
 
+    pub fn initialize_ai_responses(&mut self) {
+        self.add_config(
+            "mao mao".to_string(),
+            AIResponseConfig {
+                provider: AIProvider::OpenAI,
+                model: "gpt-4o-mini".to_string(),
+                prompt: "You are an entertaining chatbot in a cute and funny catgirl named kittyn's twitch channel".to_string(),
+                max_tokens: 150,
+                temperature: 0.7,
+                response_type: AIResponseType::WithHistory,
+            }
+        );
+
+        // Add other AI response configs here as needed
+    }
+
     pub fn add_config(&mut self, redeem_id: String, config: AIResponseConfig) {
         self.configs.insert(redeem_id, config);
     }
@@ -56,6 +72,7 @@ impl AIResponseManager {
 
     pub async fn handle_ai_response(&self, redemption: &Redemption, ai_client: &AIClient) -> RedemptionResult {
         let config = match self.configs.get(&redemption.reward_id) {
+
             Some(config) => config,
             None => return RedemptionResult {
                 success: false,
@@ -141,28 +158,54 @@ impl AIResponseManager {
 }
 
 pub struct AIResponseAction;
+
 #[async_trait]
 impl RedeemAction for AIResponseAction {
     async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(ai_client) = ai_client {
-            let result = redeem_manager.handle_ai_response(redemption, ai_client).await;
+            let config = match redeem_manager.ai_response_manager.get_config(&redemption.reward_title) {
+                Some(config) => config,
+                None => return RedemptionResult {
+                    success: false,
+                    message: Some("AI response configuration not found".to_string()),
+                    queue_number: redemption.queue_number,
+                },
+            };
 
-            if result.success {
-                // Mark the redemption as complete
-                if let Err(e) = api_client.update_redemption_status(&redemption.reward_id, &redemption.id, "FULFILLED").await {
-                    eprintln!("Failed to mark redemption as complete: {}", e);
-                }
+            let user_input = redemption.user_input.clone().unwrap_or_default();
+            let full_prompt = format!("{}\n{}", config.prompt, user_input);
 
-                // Send the AI response to chat
-                if let Some(message) = &result.message {
-                    let chat_message = format!("@{}: {}", redemption.user_name, message);
+            let result = match config.response_type {
+                AIResponseType::WithHistory => ai_client.generate_response_with_history(&full_prompt).await,
+                AIResponseType::WithoutHistory => ai_client.generate_response_without_history(&full_prompt).await,
+                AIResponseType::Standard => ai_client.generate_openai_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await,
+            };
+
+            match result {
+                Ok(response) => {
+                    // Mark the redemption as complete
+                    if let Err(e) = api_client.update_redemption_status(&redemption.reward_id, &redemption.id, "FULFILLED").await {
+                        eprintln!("Failed to mark redemption as complete: {}", e);
+                    }
+
+                    // Send the AI response to chat
+                    let chat_message = format!("@{}: {}", redemption.user_name, response);
                     if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
                         eprintln!("Failed to send message to chat: {}", e);
                     }
-                }
-            }
 
-            result
+                    RedemptionResult {
+                        success: true,
+                        message: Some(response),
+                        queue_number: redemption.queue_number,
+                    }
+                },
+                Err(e) => RedemptionResult {
+                    success: false,
+                    message: Some(format!("Failed to generate AI response: {}", e)),
+                    queue_number: redemption.queue_number,
+                },
+            }
         } else {
             RedemptionResult {
                 success: false,

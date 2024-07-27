@@ -44,6 +44,8 @@ pub struct RedemptionActionConfig {
     pub requires_manual_completion: bool,
 }
 
+
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum RedemptionActionType {
     AIResponse,
@@ -91,6 +93,10 @@ pub struct RedemptionSettings {
     pub cost: u32,
     pub action_config: RedemptionActionConfig,
     pub active: bool,
+    pub cooldown: u32,
+    pub prompt: String,
+    pub active_games: Vec<String>,  // Add this line
+    pub offline_chat_redeem: bool,  // Add this line
 }
 
 // Add this new struct for the coin game state
