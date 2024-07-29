@@ -1,4 +1,4 @@
-use super::models::{Redemption, RedemptionActionType, RedemptionActionConfig, RedemptionResult, RedemptionStatus, RedemptionSettings, CoinGameState};
+use super::models::{Redemption, RedemptionActionType, RedemptionActionConfig, RedemptionResult, RedemptionStatus, RedemptionSettings, CoinGameState, OSCConfig};
 use crate::ai::AIClient;
 use crate::osc::VRChatOSC;
 use crate::twitch::api::TwitchAPIClient;
@@ -208,10 +208,9 @@ impl RedeemManager {
             }
         }
 
-        // Ensure the coin game reward is registered
         if !handlers_by_name.contains_key("coin game") {
             let coin_game_setting = RedemptionSettings {
-                reward_id: String::new(), // This will be filled in when created
+                reward_id: String::new(),
                 title: "coin game".to_string(),
                 cost: 20,
                 action_config: RedemptionActionConfig {
@@ -224,7 +223,8 @@ impl RedeemManager {
                 cooldown: 0,
                 prompt: "Enter the coin game! The price changes with each redemption.".to_string(),
                 active_games: vec![],
-                offline_chat_redeem: false, // Add this line
+                offline_chat_redeem: false,
+                osc_config: None, // Add this line
             };
 
             match self.api_client.create_custom_reward(
@@ -252,65 +252,7 @@ impl RedeemManager {
         Ok(())
     }
 
-    pub async fn handle_redemption(&self, redemption: Redemption, irc_client: Arc<TwitchIRCClientType>, channel: String) -> RedemptionResult {
-        let mut processed = self.processed_redemptions.lock().await;
-        if processed.contains(&redemption.id) {
-            println!("Skipping already processed redemption: {:?}", redemption);
-            return RedemptionResult {
-                success: true,
-                message: Some("Redemption already processed".to_string()),
-                queue_number: None,
-            };
-        }
-        processed.insert(redemption.id.clone());
-        drop(processed);
-        println!("Handling redemption: {:?}", redemption);
 
-        let handlers_by_id = self.handlers_by_id.read().await;
-        let handlers_by_name = self.handlers_by_name.read().await;
-
-        let settings = handlers_by_id.get(&redemption.reward_id)
-            .or_else(|| handlers_by_name.get(&redemption.reward_title));
-
-        if let Some(settings) = settings {
-            println!("Found handler for reward: {:?}", settings);
-
-            let result = if settings.title == "coin game" {
-                println!("Processing coin game redemption");
-                self.handle_coin_game(&redemption, &irc_client, &channel).await
-            } else {
-                println!("Processing regular redemption");
-                self.execute_action(&redemption, &settings.action_config, &irc_client, &channel).await
-            };
-
-            // Only update redemption status for non-coin game redeems
-            if settings.title != "coin game" {
-                let status = if result.success {
-                    RedemptionStatus::Fulfilled
-                } else {
-                    RedemptionStatus::Canceled
-                };
-                self.update_redemption_status(&redemption, status).await;
-            }
-
-            // Send the response to chat
-            if let Some(message) = &result.message {
-                let chat_message = format!("@{}: {}", redemption.user_name, message);
-                if let Err(e) = irc_client.say(channel, chat_message).await {
-                    eprintln!("Failed to send message to chat: {}", e);
-                }
-            }
-
-            result
-        } else {
-            println!("No handler found for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title);
-            RedemptionResult {
-                success: false,
-                message: Some(format!("No handler registered for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title)),
-                queue_number: None,
-            }
-        }
-    }
 
     pub async fn manually_update_redemption_status(&self, redemption_id: &str, status: RedemptionStatus) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let status_str = match status {
@@ -323,132 +265,7 @@ impl RedeemManager {
         Ok(())
     }
 
-    pub async fn handle_coin_game(&self, redemption: &Redemption, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
-        println!("Executing CoinGameAction for redemption: {:?}", redemption);
 
-        let mut state = self.coin_game_state.write().await;
-        let current_price = state.current_price;
-        let new_price = (current_price as f64 * (1.5 + rand::random::<f64>())).round() as u32;
-
-        if let Some(previous_redemption) = state.last_redemption.take() {
-            // Refund the previous redemption
-            if let Err(e) = self.api_client.refund_channel_points(&previous_redemption.reward_id, &previous_redemption.id).await {
-                eprintln!("Failed to refund previous coin game redemption: {}", e);
-            } else {
-                let refund_message = format!(
-                    "{} is cute!",
-                    previous_redemption.user_name
-                );
-                if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
-                    eprintln!("Failed to send refund message to chat: {}", e);
-                }
-            }
-        }
-
-        let handlers_by_id = self.handlers_by_id.read().await;
-        let settings = match handlers_by_id.get(&redemption.reward_id) {
-            Some(s) => s,
-            None => {
-                eprintln!("No handler found for reward ID: {}", redemption.reward_id);
-                return RedemptionResult {
-                    success: false,
-                    message: Some("Failed to process coin game: reward not found".to_string()),
-                    queue_number: redemption.queue_number,
-                };
-            }
-        };
-
-        // Generate AI message
-        let ai_prompt = format!("Create a short, fun message (max 50 characters) about {} entering the coin game on twitch.", redemption.user_name);
-        let ai_message = if let Some(ai_client) = &self.ai_client {
-            match ai_client.generate_response_without_history(&ai_prompt).await {
-                Ok(message) => message,
-                Err(e) => {
-                    eprintln!("Failed to generate AI message: {}", e);
-                    "joins coin game!".to_string() // Fallback message
-                }
-            }
-        } else {
-            "hjoins coin game!".to_string() // Fallback message if AI client is not available
-        };
-
-        // Generate new prompt
-        let new_prompt = format!("{} {}! Cost is {} pawmarks!", redemption.user_name, ai_message, new_price);
-
-        // Update the reward cost and prompt
-        if let Err(e) = self.api_client.update_custom_reward(
-            &redemption.reward_id,
-            &redemption.reward_title,
-            new_price,
-            true,
-            settings.cooldown,
-            &new_prompt
-        ).await {
-            eprintln!("Failed to update reward: {}", e);
-            return RedemptionResult {
-                success: false,
-                message: Some("Failed to update reward".to_string()),
-                queue_number: redemption.queue_number,
-            };
-        }
-
-        // Send a message to the chat
-        let chat_message = format!(
-            "{} {}! Uploaded {} pawmarks. Cost is now {} pawmarks! Who's next?",
-            redemption.user_name, ai_message, current_price, new_price
-        );
-        if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
-            eprintln!("Failed to send message to chat: {}", e);
-        }
-
-        // Update the state
-        state.current_price = new_price;
-        state.last_redemption = Some(redemption.clone());
-
-        RedemptionResult {
-            success: true,
-            message: Some(format!("Coin game! {}. Cost is now {} points", ai_message, new_price)),
-            queue_number: redemption.queue_number,
-        }
-    }
-
-    pub async fn reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut state = self.coin_game_state.write().await;
-        if let Some(last_redeemer) = state.last_redemption.take() {
-            println!("Resetting coin game state. Last redeemer: {}", last_redeemer.user_name);
-
-            // Refund the last redeemer
-            if let Err(e) = self.api_client.refund_channel_points(&last_redeemer.reward_id, &last_redeemer.id).await {
-                eprintln!("Failed to refund last coin game redeemer: {}", e);
-            }
-        }
-
-        // Reset the cost to the initial value
-        state.current_price = 20;
-
-        // Update the reward cost on Twitch
-        if let Some(reward_id) = self.get_coin_game_reward_id().await {
-            let handlers = self.handlers_by_id.read().await;
-            if let Some(settings) = handlers.get(&reward_id) {
-                let new_prompt = "Enter the coin game! The price starts at 20 pawmarks!";
-                self.api_client.update_custom_reward(
-                    &reward_id,
-                    "coin game",
-                    state.current_price,
-                    true,
-                    settings.cooldown,
-                    new_prompt  // Add the new prompt here
-                ).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn get_coin_game_reward_id(&self) -> Option<String> {
-        let handlers_by_name = self.handlers_by_name.read().await;
-        handlers_by_name.get("coin game").map(|settings| settings.reward_id.clone())
-    }
 
     pub(crate) async fn execute_action(&self, redemption: &Redemption, config: &RedemptionActionConfig, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
         match &config.action {
@@ -471,7 +288,25 @@ impl RedeemManager {
             },
             RedemptionActionType::OSCMessage => {
                 if let Some(osc_client) = &self.osc_client {
-                    actions::osc_message::handle_osc_message(redemption, osc_client)
+                    // Fetch the OSCConfig from the redemption settings
+                    let handlers = self.handlers_by_id.read().await;
+                    if let Some(settings) = handlers.get(&redemption.reward_id) {
+                        if let Some(osc_config) = &settings.osc_config {
+                            actions::osc_message::handle_osc_message(redemption, osc_client, osc_config)
+                        } else {
+                            RedemptionResult {
+                                success: false,
+                                message: Some("OSC config not found for this redemption".to_string()),
+                                queue_number: redemption.queue_number,
+                            }
+                        }
+                    } else {
+                        RedemptionResult {
+                            success: false,
+                            message: Some("Redemption settings not found".to_string()),
+                            queue_number: redemption.queue_number,
+                        }
+                    }
                 } else {
                     RedemptionResult {
                         success: false,
@@ -511,7 +346,8 @@ impl RedeemManager {
             cooldown,
             prompt,
             active_games: vec![],
-            offline_chat_redeem: false, // Add this line
+            offline_chat_redeem: false,
+            osc_config: None, // Add this line
         };
         handlers_by_id.insert(reward.id.clone(), settings.clone());
         handlers_by_name.insert(reward.title.clone(), settings);
@@ -655,6 +491,7 @@ impl RedeemManager {
         prompt: String,
         active_games: Vec<String>,
         offline_chat_redeem: bool,
+        osc_config: Option<OSCConfig>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Create the reward on Twitch
         let new_reward = self.api_client.create_custom_reward(
@@ -676,6 +513,7 @@ impl RedeemManager {
             prompt,
             active_games,
             offline_chat_redeem,
+            osc_config,
         };
 
         // Add to handlers
@@ -812,6 +650,145 @@ impl RedeemManager {
         self.ai_response_manager.add_config(redeem_id, config);
     }
 
+
+}
+
+struct DefaultCustomAction;
+
+#[async_trait]
+impl RedeemAction for DefaultCustomAction {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+        RedemptionResult {
+            success: true,
+            message: Some("Custom redemption executed".to_string()),
+            queue_number: redemption.queue_number,
+        }
+    }
+}
+
+impl RedeemManager {
+    pub async fn handle_redemption(&self, redemption: Redemption, irc_client: Arc<TwitchIRCClientType>, channel: String) -> RedemptionResult {
+        let mut processed = self.processed_redemptions.lock().await;
+        if processed.contains(&redemption.id) {
+            println!("Skipping already processed redemption: {:?}", redemption);
+            return RedemptionResult {
+                success: true,
+                message: Some("Redemption already processed".to_string()),
+                queue_number: None,
+            };
+        }
+        processed.insert(redemption.id.clone());
+        drop(processed);
+        println!("Handling redemption: {:?}", redemption);
+
+        let handlers_by_id = self.handlers_by_id.read().await;
+        let handlers_by_name = self.handlers_by_name.read().await;
+
+        let settings = handlers_by_id.get(&redemption.reward_id)
+            .or_else(|| handlers_by_name.get(&redemption.reward_title));
+
+        if let Some(settings) = settings {
+            println!("Found handler for reward: {:?}", settings);
+
+            let result = if let Some(osc_config) = &settings.osc_config {
+                if osc_config.uses_osc {
+                    self.handle_osc_redemption(&redemption, osc_config).await
+                } else {
+                    self.execute_action(&redemption, &settings.action_config, &irc_client, &channel).await
+                }
+            } else {
+                self.execute_action(&redemption, &settings.action_config, &irc_client, &channel).await
+            };
+
+            let result = if settings.title == "coin game" {
+                println!("Processing coin game redemption");
+                self.handle_coin_game(&redemption, &irc_client, &channel).await
+            } else {
+                println!("Processing regular redemption");
+                self.execute_action(&redemption, &settings.action_config, &irc_client, &channel).await
+            };
+
+            // Only update redemption status for non-coin game redeems
+            if settings.title != "coin game" {
+                let status = if result.success {
+                    RedemptionStatus::Fulfilled
+                } else {
+                    RedemptionStatus::Canceled
+                };
+                self.update_redemption_status(&redemption, status).await;
+            }
+
+            // Send the response to chat
+            if let Some(message) = &result.message {
+                let chat_message = format!("@{}: {}", redemption.user_name, message);
+                if let Err(e) = irc_client.say(channel, chat_message).await {
+                    eprintln!("Failed to send message to chat: {}", e);
+                }
+            }
+
+            result
+        } else {
+            println!("No handler found for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title);
+            RedemptionResult {
+                success: false,
+                message: Some(format!("No handler registered for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title)),
+                queue_number: None,
+            }
+        }
+    }
+
+    async fn handle_osc_redemption(&self, redemption: &Redemption, osc_config: &OSCConfig) -> RedemptionResult {
+        if let Some(osc_client) = &self.osc_client {
+            actions::osc_message::handle_osc_message(redemption, osc_client, osc_config)
+        } else {
+            RedemptionResult {
+                success: false,
+                message: Some("OSC client not initialized".to_string()),
+                queue_number: redemption.queue_number,
+            }
+        }
+    }
+
+    pub async fn handle_ai_response(&self, redemption: &Redemption, ai_client: &AIClient) -> RedemptionResult {
+        println!("title: {}", &redemption.reward_title);
+        let config = match self.ai_response_manager.get_config(&redemption.reward_title) {
+            Some(config) => config,
+            None => return RedemptionResult {
+                success: false,
+                message: Some("AI response configuration not found".to_string()),
+                queue_number: redemption.queue_number,
+            },
+        };
+
+        let user_input = redemption.user_input.clone().unwrap_or_default();
+        let full_prompt = format!("{}\n{}", config.prompt, user_input);
+
+        let result = match &config.provider {
+            AIProvider::OpenAI => {
+                ai_client.generate_openai_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
+            }
+            AIProvider::Anthropic => {
+                ai_client.generate_anthropic_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
+            }
+            AIProvider::Local => {
+                ai_client.generate_local_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
+            }
+        };
+
+        match result {
+            Ok(response) => RedemptionResult {
+                success: true,
+                message: Some(response),
+                queue_number: redemption.queue_number,
+            },
+            Err(e) => RedemptionResult {
+                success: false,
+                message: Some(format!("Failed to generate AI response: {}", e)),
+                queue_number: redemption.queue_number,
+            },
+        }
+    }
+
     async fn handle_ai_response_with_history(&self, redemption: &Redemption) -> RedemptionResult {
         if let Some(ai_client) = &self.ai_client {
             let user_input = redemption.user_input.clone().unwrap_or_default();
@@ -857,61 +834,6 @@ impl RedeemManager {
                 message: Some("AI client not initialized".to_string()),
                 queue_number: redemption.queue_number,
             }
-        }
-    }
-}
-
-struct DefaultCustomAction;
-
-#[async_trait]
-impl RedeemAction for DefaultCustomAction {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
-        RedemptionResult {
-            success: true,
-            message: Some("Custom redemption executed".to_string()),
-            queue_number: redemption.queue_number,
-        }
-    }
-}
-
-impl RedeemManager {
-    pub async fn handle_ai_response(&self, redemption: &Redemption, ai_client: &AIClient) -> RedemptionResult {
-        println!("title: {}", &redemption.reward_title);
-        let config = match self.ai_response_manager.get_config(&redemption.reward_title) {
-            Some(config) => config,
-            None => return RedemptionResult {
-                success: false,
-                message: Some("AI response configuration not found".to_string()),
-                queue_number: redemption.queue_number,
-            },
-        };
-
-        let user_input = redemption.user_input.clone().unwrap_or_default();
-        let full_prompt = format!("{}\n{}", config.prompt, user_input);
-
-        let result = match &config.provider {
-            AIProvider::OpenAI => {
-                ai_client.generate_openai_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
-            }
-            AIProvider::Anthropic => {
-                ai_client.generate_anthropic_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
-            }
-            AIProvider::Local => {
-                ai_client.generate_local_response(&config.model, &full_prompt, config.max_tokens, config.temperature).await
-            }
-        };
-
-        match result {
-            Ok(response) => RedemptionResult {
-                success: true,
-                message: Some(response),
-                queue_number: redemption.queue_number,
-            },
-            Err(e) => RedemptionResult {
-                success: false,
-                message: Some(format!("Failed to generate AI response: {}", e)),
-                queue_number: redemption.queue_number,
-            },
         }
     }
 
@@ -1013,5 +935,130 @@ impl RedeemManager {
 }
 
 impl RedeemManager {
+    pub async fn handle_coin_game(&self, redemption: &Redemption, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
+        println!("Executing CoinGameAction for redemption: {:?}", redemption);
 
+        let mut state = self.coin_game_state.write().await;
+        let current_price = state.current_price;
+        let new_price = (current_price as f64 * (1.5 + rand::random::<f64>())).round() as u32;
+
+        if let Some(previous_redemption) = state.last_redemption.take() {
+            // Refund the previous redemption
+            if let Err(e) = self.api_client.refund_channel_points(&previous_redemption.reward_id, &previous_redemption.id).await {
+                eprintln!("Failed to refund previous coin game redemption: {}", e);
+            } else {
+                let refund_message = format!(
+                    "{} is cute!",
+                    previous_redemption.user_name
+                );
+                if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
+                    eprintln!("Failed to send refund message to chat: {}", e);
+                }
+            }
+        }
+
+        let handlers_by_id = self.handlers_by_id.read().await;
+        let settings = match handlers_by_id.get(&redemption.reward_id) {
+            Some(s) => s,
+            None => {
+                eprintln!("No handler found for reward ID: {}", redemption.reward_id);
+                return RedemptionResult {
+                    success: false,
+                    message: Some("Failed to process coin game: reward not found".to_string()),
+                    queue_number: redemption.queue_number,
+                };
+            }
+        };
+
+        // Generate AI message
+        let ai_prompt = format!("Create a short, fun message (max 50 characters) about {} entering the coin game on twitch.", redemption.user_name);
+        let ai_message = if let Some(ai_client) = &self.ai_client {
+            match ai_client.generate_response_without_history(&ai_prompt).await {
+                Ok(message) => message,
+                Err(e) => {
+                    eprintln!("Failed to generate AI message: {}", e);
+                    "joins coin game!".to_string() // Fallback message
+                }
+            }
+        } else {
+            "hjoins coin game!".to_string() // Fallback message if AI client is not available
+        };
+
+        // Generate new prompt
+        let new_prompt = format!("{} {}! Cost is {} pawmarks!", redemption.user_name, ai_message, new_price);
+
+        // Update the reward cost and prompt
+        if let Err(e) = self.api_client.update_custom_reward(
+            &redemption.reward_id,
+            &redemption.reward_title,
+            new_price,
+            true,
+            settings.cooldown,
+            &new_prompt
+        ).await {
+            eprintln!("Failed to update reward: {}", e);
+            return RedemptionResult {
+                success: false,
+                message: Some("Failed to update reward".to_string()),
+                queue_number: redemption.queue_number,
+            };
+        }
+
+        // Send a message to the chat
+        let chat_message = format!(
+            "{} {}! Uploaded {} pawmarks. Cost is now {} pawmarks! Who's next?",
+            redemption.user_name, ai_message, current_price, new_price
+        );
+        if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
+            eprintln!("Failed to send message to chat: {}", e);
+        }
+
+        // Update the state
+        state.current_price = new_price;
+        state.last_redemption = Some(redemption.clone());
+
+        RedemptionResult {
+            success: true,
+            message: Some(format!("Coin game! {}. Cost is now {} points", ai_message, new_price)),
+            queue_number: redemption.queue_number,
+        }
+    }
+
+    pub async fn reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.coin_game_state.write().await;
+        if let Some(last_redeemer) = state.last_redemption.take() {
+            println!("Resetting coin game state. Last redeemer: {}", last_redeemer.user_name);
+
+            // Refund the last redeemer
+            if let Err(e) = self.api_client.refund_channel_points(&last_redeemer.reward_id, &last_redeemer.id).await {
+                eprintln!("Failed to refund last coin game redeemer: {}", e);
+            }
+        }
+
+        // Reset the cost to the initial value
+        state.current_price = 20;
+
+        // Update the reward cost on Twitch
+        if let Some(reward_id) = self.get_coin_game_reward_id().await {
+            let handlers = self.handlers_by_id.read().await;
+            if let Some(settings) = handlers.get(&reward_id) {
+                let new_prompt = "Enter the coin game! The price starts at 20 pawmarks!";
+                self.api_client.update_custom_reward(
+                    &reward_id,
+                    "coin game",
+                    state.current_price,
+                    true,
+                    settings.cooldown,
+                    new_prompt  // Add the new prompt here
+                ).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn get_coin_game_reward_id(&self) -> Option<String> {
+        let handlers_by_name = self.handlers_by_name.read().await;
+        handlers_by_name.get("coin game").map(|settings| settings.reward_id.clone())
+    }
 }

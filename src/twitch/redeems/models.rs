@@ -15,6 +15,13 @@ pub struct Redemption {
     pub announce_in_chat: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OSCConfig {
+    pub uses_osc: bool,
+    pub osc_endpoint: String,
+    // Add any other OSC-specific configuration parameters here
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RedemptionCompletion {
     NotApplicable,
@@ -97,6 +104,7 @@ pub struct RedemptionSettings {
     pub prompt: String,
     pub active_games: Vec<String>,  // Add this line
     pub offline_chat_redeem: bool,  // Add this line
+    pub osc_config: Option<OSCConfig>,
 }
 
 // Add this new struct for the coin game state

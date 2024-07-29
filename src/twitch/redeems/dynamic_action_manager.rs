@@ -8,7 +8,7 @@ use crate::ai::AIClient;
 use crate::osc::VRChatOSC;
 use crate::twitch::irc::client::TwitchIRCClientType;
 use crate::twitch::redeems::RedeemManager;
-use crate::twitch::redeems::actions::handle_coin_game;
+use crate::twitch::redeems::actions::{handle_coin_game, osc_message};
 
 #[async_trait]
 pub trait RedeemAction: Send + Sync {
@@ -78,17 +78,21 @@ impl RedeemAction for AIResponseAction {
 }
 
 pub struct OSCMessageAction;
+
 #[async_trait]
 impl RedeemAction for OSCMessageAction {
-    async fn execute(&self, redemption: &Redemption, _api_client: &TwitchAPIClient, _irc_client: &Arc<TwitchIRCClientType>, _channel: &str, _ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, _redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, _api_client: &TwitchAPIClient, _irc_client: &Arc<TwitchIRCClientType>, _channel: &str, _ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(osc_client) = osc_client {
-            crate::twitch::redeems::actions::handle_osc_message(redemption, osc_client)
-        } else {
-            RedemptionResult {
-                success: false,
-                message: Some("OSC client not initialized".to_string()),
-                queue_number: redemption.queue_number,
+            if let Some(settings) = redeem_manager.handlers_by_id.read().await.get(&redemption.reward_id) {
+                if let Some(osc_config) = &settings.osc_config {
+                    return osc_message::handle_osc_message(redemption, osc_client, osc_config);
+                }
             }
+        }
+        RedemptionResult {
+            success: false,
+            message: Some("OSC client not initialized or OSC config not found".to_string()),
+            queue_number: redemption.queue_number,
         }
     }
 }

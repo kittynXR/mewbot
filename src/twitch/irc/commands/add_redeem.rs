@@ -1,4 +1,4 @@
-use crate::twitch::redeems::{RedeemManager, RedemptionActionConfig, RedemptionActionType};
+use crate::twitch::redeems::{RedeemManager, RedemptionActionConfig, RedemptionActionType, OSCConfig};
 use crate::twitch::api::TwitchAPIClient;
 use twitch_irc::message::PrivmsgMessage;
 use twitch_irc::TwitchIRCClient;
@@ -122,7 +122,11 @@ pub async fn handle_add_redeem(
         cooldown,
         prompt,
         active_games,
-        offline_chat_redeem
+        offline_chat_redeem,
+        Some(OSCConfig {
+            uses_osc: false,
+            osc_endpoint: String::new(),
+        })
     ).await {
         Ok(_) => {
             client.say(channel.to_string(), format!("New redeem '{}' added successfully!", title)).await?;
