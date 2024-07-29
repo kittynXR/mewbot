@@ -1,5 +1,5 @@
 pub mod ai_response;
-mod osc_message;
+pub(crate) mod osc_message;
 mod custom_action;
 
 pub use ai_response::AIResponseManager;
