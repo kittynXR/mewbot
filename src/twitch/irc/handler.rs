@@ -13,9 +13,11 @@ use crate::twitch::roles::{UserRole, get_user_role};
 use super::command_system::COMMANDS;
 use super::commands;
 use crate::twitch::redeems::RedeemManager;
+use crate::osc::vrchat::VRChatOSC;
 
 lazy_static! {
     static ref SHOUTOUT_COOLDOWNS: Arc<Mutex<commands::ShoutoutCooldown>> = Arc::new(Mutex::new(commands::ShoutoutCooldown::new()));
+    static ref VRCHAT_OSC: Mutex<Option<VRChatOSC>> = Mutex::new(None);  // Add this line
 }
 
 pub async fn handle_twitch_message(
@@ -25,6 +27,7 @@ pub async fn handle_twitch_message(
     api_client: Arc<Arc<TwitchAPIClient>>,
     config: Arc<RwLock<Config>>,
     redemption_manager: Arc<RwLock<RedeemManager>>,
+    vrchat_osc: Option<Arc<VRChatOSC>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let user_role = get_user_role(msg);
     println!("Handling Twitch message: {:?}", msg);
@@ -35,12 +38,27 @@ pub async fn handle_twitch_message(
         .filter(|&c| c.is_ascii_graphic() || c.is_ascii_whitespace())
         .collect::<String>()
         .trim()
-        .to_lowercase();
+        .to_string();
 
     println!("Cleaned message: '{}'", cleaned_message);
 
-    // Split the message into command and parameters
-    let mut parts = cleaned_message.split_whitespace();
+    // Check if the message starts with a backslash and the sender is the broadcaster
+    if cleaned_message.starts_with('\\') && user_role == UserRole::Broadcaster {
+        if let Some(osc) = vrchat_osc.as_ref() {
+            let vrchat_message = &cleaned_message[1..];  // Remove the backslash
+            osc.send_chatbox_message(vrchat_message, true, true)?;
+            println!("Sent message to VRChat: {}", vrchat_message);
+            return Ok(());
+        } else {
+            println!("VRChatOSC not initialized");
+        }
+    }
+
+    // Create a lowercase version of the cleaned message for command matching
+    let lowercase_message = cleaned_message.to_lowercase();
+
+    // Split the lowercase message into command and parameters
+    let mut parts = lowercase_message.split_whitespace();
     let command = parts.next();
     let params: Vec<&str> = parts.collect();
 

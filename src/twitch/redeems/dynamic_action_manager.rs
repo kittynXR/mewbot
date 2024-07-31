@@ -85,7 +85,7 @@ impl RedeemAction for OSCMessageAction {
         if let Some(osc_client) = osc_client {
             if let Some(settings) = redeem_manager.handlers_by_id.read().await.get(&redemption.reward_id) {
                 if let Some(osc_config) = &settings.osc_config {
-                    return osc_message::handle_osc_message(redemption, osc_client, osc_config);
+                    return osc_message::handle_osc_message(redemption, osc_client, osc_config).await;
                 }
             }
         }

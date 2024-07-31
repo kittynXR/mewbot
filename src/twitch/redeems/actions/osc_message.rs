@@ -1,23 +1,20 @@
-// File: src/twitch/redeems/actions/osc_message.rs
+use super::super::models::{Redemption, OSCConfig, RedemptionResult};
+use crate::osc::vrchat::VRChatOSC;
 
-use crate::twitch::redeems::models::{Redemption, RedemptionResult, OSCConfig};
-use crate::osc::VRChatOSC;
-use rosc::OscType;
-
-pub fn handle_osc_message(redemption: &Redemption, osc_client: &VRChatOSC, osc_config: &OSCConfig) -> RedemptionResult {
-    let value = redemption.user_input.clone().unwrap_or_default();
-
-    // Convert the value to OscType (you might want to add more type conversions)
-    let osc_value = if let Ok(f) = value.parse::<f32>() {
-        OscType::Float(f)
-    } else {
-        OscType::String(value)
+pub async fn handle_osc_message(
+    redemption: &Redemption,
+    osc_client: &VRChatOSC,
+    osc_config: &OSCConfig
+) -> RedemptionResult {
+    let message = match &redemption.user_input {
+        Some(input) => input.clone(),
+        None => redemption.reward_title.clone(),
     };
 
-    match osc_client.send_message(&osc_config.osc_endpoint, osc_value) {
+    match osc_client.send_chatbox_message(&message, true, true) {
         Ok(_) => RedemptionResult {
             success: true,
-            message: Some("OSC message sent successfully".to_string()),
+            message: Some(format!("OSC message sent successfully for redemption: {}", redemption.reward_title)),
             queue_number: redemption.queue_number,
         },
         Err(e) => RedemptionResult {

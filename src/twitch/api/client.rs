@@ -300,6 +300,12 @@ impl TwitchAPIClient {
         Ok(body)
     }
 
+
+    pub async fn is_stream_live(&self, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let stream_info = self.get_stream_info(user_id).await?;
+        Ok(!stream_info["data"].as_array().unwrap_or(&vec![]).is_empty())
+    }
+
     pub async fn get_client_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.read().await;
         config.twitch_client_id.clone().ok_or_else(|| "Twitch client ID not set".into())

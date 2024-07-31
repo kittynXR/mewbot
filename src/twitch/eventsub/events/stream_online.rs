@@ -7,6 +7,7 @@ use crate::twitch::redeems::RedeemManager;
 use tokio::sync::RwLock;
 
 // In stream_online.rs
+
 pub async fn handle(
     event: &Value,
     irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
@@ -21,7 +22,10 @@ pub async fn handle(
         irc_client.say(channel.to_string(), message).await?;
 
         // Update stream status
-        redeem_manager.write().await.update_stream_status(true, "".to_string()).await;
+        let mut manager = redeem_manager.write().await;
+        if let Err(e) = manager.set_stream_live(true).await {
+            eprintln!("Failed to set stream as live: {}", e);
+        }
     }
 
     Ok(())

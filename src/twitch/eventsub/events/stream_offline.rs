@@ -17,11 +17,17 @@ pub async fn handle(
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let broadcaster_user_name = payload["broadcaster_user_name"].as_str().unwrap_or("Unknown");
 
-        let message = format!("{} has ended the stream. Thanks for watching!", broadcaster_user_name);
+        let message = format!("{} ended strem!  mao  Stay amazing and cute! mao", broadcaster_user_name);
+        irc_client.say(channel.to_string(), message).await?;
+
+        let message = format!("bark bark bark bark bark bark bark bark bark");
         irc_client.say(channel.to_string(), message).await?;
 
         // Update stream status
-        redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
+        let mut manager = redeem_manager.write().await;
+        if let Err(e) = manager.set_stream_live(false).await {
+            eprintln!("Failed to set stream as offline: {}", e);
+        }
     }
 
     Ok(())

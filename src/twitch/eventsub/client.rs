@@ -268,7 +268,7 @@ impl TwitchEventSubClient {
             "".to_string()
         };
 
-        self.redeem_manager.write().await.update_stream_status(is_live, game_name).await;
+        self.redeem_manager.write().await.update_stream_status(game_name).await;
 
         Ok(())
     }

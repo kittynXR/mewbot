@@ -1,5 +1,6 @@
 mod models;
 mod client;
-mod vrchat;
+pub(crate) mod vrchat;
+mod event_handler;
 
 pub use vrchat::VRChatOSC;

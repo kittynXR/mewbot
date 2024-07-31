@@ -31,11 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let clients = init(Arc::clone(&config)).await?;
 
-    // Update stream status (assuming offline at startup)
-    clients.redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
+    // Initialize the RedeemManager with current status
+    clients.redeem_manager.write().await.initialize_with_current_status().await?;
 
     // Check current stream status
-    clients.eventsub_client.lock().await.check_current_stream_status().await?;
+    // clients.eventsub_client.lock().await.check_current_stream_status().await?;
 
     run(clients, config).await?;
 

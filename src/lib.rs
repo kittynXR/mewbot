@@ -25,6 +25,7 @@ use crate::ai::AIClient;
 //use crate::osc::VRChatOSC;
 use std::time::Duration;
 use tokio::time::timeout;
+use crate::osc::VRChatOSC;
 
 
 pub struct BotClients {
@@ -35,6 +36,7 @@ pub struct BotClients {
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
     pub ai_client: Option<Arc<AIClient>>,
     pub eventsub_client: Arc<Mutex<TwitchEventSubClient>>,
+    pub vrchat_osc: Option<Arc<VRChatOSC>>,
 }
 
 impl BotClients {
@@ -138,9 +140,20 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     };
     drop(config_read);
 
+    let vrchat_osc = match VRChatOSC::new("127.0.0.1:9000") {
+        Ok(osc) => {
+            println!("VRChatOSC initialized successfully.");
+            Some(Arc::new(osc))
+        },
+        Err(e) => {
+            eprintln!("Failed to initialize VRChatOSC: {}. OSC functionality will be disabled.", e);
+            None
+        }
+    };
+
     let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
         ai_client.clone(),
-        None, // OSC client
+        vrchat_osc.clone(),
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
     )));
 
@@ -198,7 +211,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
             channel,
             redeem_manager.clone(),
             ai_client.clone(),
-            None
+            vrchat_osc.clone()
         )))
     } else {
         return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
@@ -212,6 +225,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         redeem_manager,
         ai_client,
         eventsub_client,
+        vrchat_osc,  // Add this field to BotClients struct
     };
 
     if clients.twitch_irc.is_none() && clients.vrchat.is_none() && clients.discord.is_none() {
@@ -219,8 +233,9 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     }
 
     // Reset coin game and update redeems based on stream status
+
     clients.redeem_manager.write().await.reset_coin_game().await?;
-    clients.redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
+    // clients.redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
 
 
     Ok(clients)
@@ -235,6 +250,7 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
     if let Err(e) = clients.redeem_manager.write().await.initialize_redeems().await {
         eprintln!("Failed to initialize channel point redeems: {}. Some redeems may not be available.", e);
     }
+
 
     if let (Some((irc_client, incoming_messages)), Some(api_client)) = (clients.twitch_irc, clients.twitch_api) {
         println!("Setting up Twitch IRC message handling...");
@@ -256,8 +272,17 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
             let api_client_clone = Arc::clone(&api_client);
             let config_clone = Arc::clone(&config);
             let redeem_manager_clone = Arc::clone(&clients.redeem_manager);
+            let vrchat_osc_clone = clients.vrchat_osc.clone();
             async move {
-                handle_twitch_messages(irc_client_for_messages, incoming_messages, world_info_clone, api_client_clone, config_clone, redeem_manager_clone).await
+                handle_twitch_messages(
+                    irc_client_for_messages,
+                    incoming_messages,
+                    world_info_clone,
+                    api_client_clone,
+                    config_clone,
+                    redeem_manager_clone,
+                    vrchat_osc_clone,
+                ).await
             }
         });
         handles.push(twitch_handler);
@@ -326,6 +351,7 @@ async fn handle_twitch_messages(
     api_client: Arc<Arc<TwitchAPIClient>>,
     config: Arc<RwLock<Config>>,
     redeem_manager: Arc<RwLock<RedeemManager>>,
+    vrchat_osc: Option<Arc<VRChatOSC>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
     while let Some(message) = incoming_messages.recv().await {
@@ -339,6 +365,7 @@ async fn handle_twitch_messages(
                 let api_client_clone = Arc::clone(&api_client);
                 let config_clone = Arc::clone(&config);
                 let redeem_manager_clone = Arc::clone(&redeem_manager);
+                let vrchat_osc_clone = vrchat_osc.clone();
                 let msg_clone = msg.clone();
 
                 tokio::spawn(async move {
@@ -348,7 +375,8 @@ async fn handle_twitch_messages(
                         world_info_clone,
                         api_client_clone,
                         config_clone,
-                        redeem_manager_clone
+                        redeem_manager_clone,
+                        vrchat_osc_clone,
                     ).await {
                         eprintln!("Error handling Twitch message: {:?}", e);
                     }
