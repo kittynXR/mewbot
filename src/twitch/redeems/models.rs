@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::osc::models::OSCConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Redemption {
@@ -15,12 +16,7 @@ pub struct Redemption {
     pub announce_in_chat: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OSCConfig {
-    pub uses_osc: bool,
-    pub osc_endpoint: String,
-    // Add any other OSC-specific configuration parameters here
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RedemptionCompletion {
@@ -97,13 +93,14 @@ impl From<&str> for RedemptionStatus {
 pub struct RedemptionSettings {
     pub reward_id: String,
     pub title: String,
+    pub auto_complete: bool,
     pub cost: u32,
     pub action_config: RedemptionActionConfig,
     pub active: bool,
     pub cooldown: u32,
     pub prompt: String,
-    pub active_games: Vec<String>,  // Add this line
-    pub offline_chat_redeem: bool,  // Add this line
+    pub active_games: Vec<String>,
+    pub offline_chat_redeem: bool,
     pub osc_config: Option<OSCConfig>,
 }
 

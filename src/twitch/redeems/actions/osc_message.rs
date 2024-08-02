@@ -1,17 +1,16 @@
-use super::super::models::{Redemption, OSCConfig, RedemptionResult};
+use super::super::models::{Redemption, RedemptionResult};
+use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 use crate::osc::vrchat::VRChatOSC;
+
 
 pub async fn handle_osc_message(
     redemption: &Redemption,
     osc_client: &VRChatOSC,
     osc_config: &OSCConfig
 ) -> RedemptionResult {
-    let message = match &redemption.user_input {
-        Some(input) => input.clone(),
-        None => redemption.reward_title.clone(),
-    };
+    let result = osc_client.send_osc_message_with_reset(osc_config).await;
 
-    match osc_client.send_chatbox_message(&message, true, true) {
+    match result {
         Ok(_) => RedemptionResult {
             success: true,
             message: Some(format!("OSC message sent successfully for redemption: {}", redemption.reward_title)),

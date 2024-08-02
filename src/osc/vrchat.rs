@@ -1,6 +1,7 @@
 use std::net::UdpSocket;
 use rosc::{OscPacket, OscMessage, OscType};
-use super::models::{EventType, EventMessage};
+use super::models::{OSCConfig, OSCMessageType, OSCValue};
+
 
 pub struct VRChatOSC {
     socket: UdpSocket,
@@ -68,5 +69,48 @@ impl VRChatOSC {
                 Err(e)
             }
         }
+    }
+
+    pub fn send_osc_message(&self, endpoint: &str, message_type: &OSCMessageType, value: &OSCValue) -> std::io::Result<()> {
+        let osc_type = match message_type {
+            OSCMessageType::Boolean => match value {
+                OSCValue::Boolean(b) => OscType::Bool(*b),
+                _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Mismatched OSC type and value")),
+            },
+            OSCMessageType::Integer => match value {
+                OSCValue::Integer(i) => OscType::Int(*i),
+                _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Mismatched OSC type and value")),
+            },
+            OSCMessageType::Float => match value {
+                OSCValue::Float(f) => OscType::Float(*f),
+                _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Mismatched OSC type and value")),
+            },
+            OSCMessageType::String => match value {
+                OSCValue::String(s) => OscType::String(s.clone()),
+                _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Mismatched OSC type and value")),
+            },
+        };
+
+        let packet = OscPacket::Message(OscMessage {
+            addr: endpoint.to_string(),
+            args: vec![osc_type],
+        });
+
+        let encoded = rosc::encoder::encode(&packet)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        self.socket.send(&encoded)?;
+        Ok(())
+    }
+
+    pub async fn send_osc_message_with_reset(&self, config: &OSCConfig) -> std::io::Result<()> {
+        self.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value)?;
+
+        if let Some(duration) = config.execution_duration {
+            tokio::time::sleep(duration).await;
+            self.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value)?;
+        }
+
+        Ok(())
     }
 }

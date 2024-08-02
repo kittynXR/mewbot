@@ -8,6 +8,7 @@ use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::api::requests::shoutout::send_shoutout;
+use serde_json::Value;
 
 pub struct ShoutoutCooldown {
     global: Instant,
@@ -36,13 +37,12 @@ pub async fn handle_shoutout(
     params: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if params.is_empty() {
-        client.say(channel.to_string(), "Usage: !so <username>".to_string()).await?;
+        client.say(channel.to_string(), "Please specify a user to shoutout!".to_string()).await?;
         return Ok(());
     }
 
-    let target_username = strip_at_symbol(params[0]);
-    let broadcaster_id = api_client.get_broadcaster_id().await?;
-    let moderator_id = msg.sender.id.clone();
+    let target = strip_at_symbol(params[0]);
+    println!("Shoutout target: {}", target);
 
     let mut cooldowns = cooldowns.lock().await;
     let now = Instant::now();
@@ -55,26 +55,38 @@ pub async fn handle_shoutout(
     }
 
     // Check per-user cooldown
-    if let Some(last_use) = cooldowns.per_user.get(target_username) {
+    if let Some(last_use) = cooldowns.per_user.get(target) {
         if now.duration_since(*last_use) < Duration::from_secs(3600) {
             let remaining = Duration::from_secs(3600) - now.duration_since(*last_use);
-            client.say(channel.to_string(), format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target_username, remaining.as_secs() / 60)).await?;
+            client.say(channel.to_string(), format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target, remaining.as_secs() / 60)).await?;
             return Ok(());
         }
     }
 
-    // Get target user ID
-    let user_info = api_client.get_user_info(target_username).await?;
-    let to_broadcaster_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
+    // Perform shoutout
+    match api_client.get_user_info(target).await {
+        Ok(user_info) => {
+            let to_broadcaster_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
+            let broadcaster_id = api_client.get_broadcaster_id().await?;
+            let moderator_id = msg.sender.id.clone();
 
-    // Send shoutout
-    send_shoutout(api_client, &broadcaster_id, &moderator_id, &to_broadcaster_id).await?;
+            send_shoutout(api_client, &broadcaster_id, &moderator_id, &to_broadcaster_id).await?;
 
-    // Update cooldowns
-    cooldowns.global = now;
-    cooldowns.per_user.insert(target_username.to_string(), now);
+            let message = format!("Go check out @{}! They were last streaming something awesome. Give them a follow at https://twitch.tv/{}",
+                                  target,
+                                  target
+            );
+            client.say(channel.to_string(), message).await?;
 
-    // Message will be sent by EventSub handler upon confirmation
+            // Update cooldowns
+            cooldowns.global = now;
+            cooldowns.per_user.insert(target.to_string(), now);
+        },
+        Err(e) => {
+            println!("Error getting user info for shoutout target: {}", e);
+            client.say(channel.to_string(), format!("Sorry, I couldn't find information for user {}.", target)).await?;
+        }
+    }
 
     Ok(())
 }

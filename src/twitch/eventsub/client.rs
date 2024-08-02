@@ -23,6 +23,8 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
+use crate::osc::models::OSCConfig;
+use crate::osc::osc_config::OSCConfigurations;
 
 type BoxedError = Box<dyn StdError + Send + Sync>;
 type WebSocketTx = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -39,6 +41,7 @@ pub struct TwitchEventSubClient {
     ws_rx: Mutex<Option<WebSocketRx>>,
     ai_client: Option<Arc<AIClient>>,
     osc_client: Option<Arc<VRChatOSC>>,
+    osc_configs: Arc<RwLock<OSCConfigurations>>,
 }
 
 #[derive(Debug)]
@@ -63,8 +66,8 @@ impl TwitchEventSubClient {
         redeem_manager: Arc<RwLock<RedeemManager>>,
         ai_client: Option<Arc<AIClient>>,
         osc_client: Option<Arc<VRChatOSC>>,
+        osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
-        println!("Debug: Creating new TwitchEventSubClient");
         Self {
             config,
             api_client,
@@ -76,6 +79,7 @@ impl TwitchEventSubClient {
             ws_rx: Mutex::new(None),
             ai_client,
             osc_client,
+            osc_configs,
         }
     }
 
@@ -448,35 +452,47 @@ impl TwitchEventSubClient {
             eprintln!("Failed to handle redemption: {:?}", result);
         }
 
-        // Only update the status if it's not a coin game redemption
-        if redemption.reward_title != "coin game" {
-            let status = if result.success { "FULFILLED" } else { "CANCELED" };
-            if let Err(e) = self.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
-                eprintln!("Failed to update redemption status: {:?}", e);
+        // Check if the redemption should be auto-completed
+        let settings = redeem_manager.get_redemption_settings(&redemption.reward_id).await;
+        if let Some(settings) = settings {
+            if settings.auto_complete {
+                let status = if result.success { "FULFILLED" } else { "CANCELED" };
+                if let Err(e) = self.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
+                    eprintln!("Failed to update redemption status: {:?}", e);
+                }
+            } else {
+                println!("Redemption is not set to auto-complete. Leaving status as UNFULFILLED.");
             }
+        } else {
+            eprintln!("Failed to get redemption settings for reward ID: {}", redemption.reward_id);
         }
 
         Ok(())
     }
 
     pub async fn handle_channel_point_redemption_update(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let redemption_id = event["id"].as_str().unwrap_or("");
-        let status: RedemptionStatus = event["status"].as_str().unwrap_or("").into();
+        println!("Received channel point redemption update: {:?}", event);
+        self.redeem_manager.read().await.handle_redemption_update(event).await
+    }
 
-        match status {
-            RedemptionStatus::Canceled => {
-                println!("Redemption {} canceled", redemption_id);
-                if let Err(e) = self.redeem_manager.write().await.cancel_redemption(redemption_id).await {
-                    eprintln!("Error canceling redemption: {}", e);
-                }
-            },
-            _ => {
-                println!("Unhandled redemption update status: {:?} for redemption {}", status, redemption_id);
-            },
+    pub async fn handle_osc_event(&self, event_type: &str, event_data: &Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let configs = self.osc_configs.read().await;
+        if let Some(osc_config) = configs.get_config(event_type) {
+            if let Some(osc_client) = &self.osc_client {
+                osc_client.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value)?;
+                println!("Sent OSC message for event: {}", event_type);
+            }
         }
-
         Ok(())
     }
+
+    pub async fn add_osc_config(&self, event_type: String, config: OSCConfig) {
+        let mut configs = self.osc_configs.write().await;
+        configs.add_config(event_type, config);
+        configs.save("osc_config.json").unwrap_or_else(|e| eprintln!("Failed to save OSC configs: {}", e));
+    }
+
+
 
     async fn announce_redemption(&self, redemption: &Redemption, result: &RedemptionResult) {
         let message = match &result.message {

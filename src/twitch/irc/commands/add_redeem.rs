@@ -1,10 +1,12 @@
-use crate::twitch::redeems::{RedeemManager, RedemptionActionConfig, RedemptionActionType, OSCConfig};
+use crate::twitch::redeems::{RedeemManager, RedemptionActionConfig, RedemptionActionType};
+use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::api::TwitchAPIClient;
 use twitch_irc::message::PrivmsgMessage;
 use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 pub async fn handle_add_redeem(
@@ -84,6 +86,7 @@ pub async fn handle_add_redeem(
     let queued = parts.next().map_or(false, |v| v == "true");
     let announce = parts.next().map_or(false, |v| v == "true");
     let offline_chat_redeem = parts.next().map_or(false, |v| v == "true");
+    let auto_complete = parts.next().map_or(false, |v| v == "true");  // Add this line
 
     // Parse active games (optional)
     let active_games: Vec<String> = parts.map(|s| s.to_string()).collect();
@@ -126,7 +129,13 @@ pub async fn handle_add_redeem(
         Some(OSCConfig {
             uses_osc: false,
             osc_endpoint: String::new(),
-        })
+            osc_type: OSCMessageType::Boolean,
+            osc_value: OSCValue::Boolean(false),
+            default_value: OSCValue::Integer(0),
+            execution_duration: Some(Duration::from_secs(3)),
+            send_chat_message: false,
+        }),
+        auto_complete,  // Add this line
     ).await {
         Ok(_) => {
             client.say(channel.to_string(), format!("New redeem '{}' added successfully!", title)).await?;

@@ -117,7 +117,7 @@ impl TwitchAPIClient {
 
         let config = self.config.read().await;
         let auth_url = format!(
-            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions",
+            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions channel:manage:vips moderation:read",
             config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
         drop(config);
@@ -280,6 +280,8 @@ impl TwitchAPIClient {
 
         Ok(json)
     }
+
+
 
     pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
@@ -506,5 +508,61 @@ impl TwitchAPIClient {
         let reward: ChannelPointReward = serde_json::from_value(body["data"][0].clone())?;
 
         Ok(reward)
+    }
+}
+
+impl TwitchAPIClient {
+    pub async fn check_user_mod(&self, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "https://api.twitch.tv/helix/moderation/moderators?broadcaster_id={}&user_id={}",
+            broadcaster_id, user_id
+        );
+        let response = self.send_authenticated_request(&url).await?;
+        let data: serde_json::Value = response.json().await?;
+        Ok(!data["data"].as_array().unwrap_or(&vec![]).is_empty())
+    }
+
+    pub async fn check_user_vip(&self, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "https://api.twitch.tv/helix/channels/vips?broadcaster_id={}&user_id={}",
+            broadcaster_id, user_id
+        );
+        let response = self.send_authenticated_request(&url).await?;
+        let data: serde_json::Value = response.json().await?;
+        Ok(!data["data"].as_array().unwrap_or(&vec![]).is_empty())
+    }
+
+    pub async fn check_user_subscription(&self, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "https://api.twitch.tv/helix/subscriptions?broadcaster_id={}&user_id={}",
+            broadcaster_id, user_id
+        );
+        let response = self.send_authenticated_request(&url).await?;
+        let data: serde_json::Value = response.json().await?;
+        Ok(!data["data"].as_array().unwrap_or(&vec![]).is_empty())
+    }
+
+    async fn send_authenticated_request(&self, url: &str) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
+        let config = self.config.read().await;
+        let access_token = config.twitch_access_token.clone().ok_or("Twitch access token not set")?;
+        let client_id = config.twitch_client_id.clone().ok_or("Twitch client ID not set")?;
+        drop(config);
+
+        let client = reqwest::Client::new();
+        let response = client.get(url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Client-Id", client_id)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await?;
+            println!("API request failed. Status: {}, URL: {}", status, url);
+            println!("Response body: {:?}", error_body);
+            return Err(format!("API request failed. Status: {}, Body: {}", status, error_body).into());
+        }
+
+        Ok(response)
     }
 }

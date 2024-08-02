@@ -3,8 +3,9 @@ pub mod irc;
 pub mod eventsub;
 pub mod utils;
 pub mod redeems;
+pub mod role_cache;
 
-mod roles;
+pub(crate) mod roles;
 
 pub use api::TwitchAPIClient;
 pub use irc::TwitchIRCClient;
