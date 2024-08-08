@@ -6,6 +6,11 @@ pub mod logging;
 pub mod ai;
 pub mod osc;
 pub mod storage;
+pub mod web_ui;
+mod bot_status;
+
+use bot_status::BotStatus;
+
 use crate::twitch::role_cache::RoleCache;
 
 use std::sync::Arc;
@@ -16,6 +21,7 @@ use twitch_irc::TwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::ClientConfig;
+use crate::twitch::irc::TwitchIRCClient as CustomTwitchIRCClient;
 
 use crate::config::Config;
 use crate::twitch::api::TwitchAPIClient;
@@ -26,7 +32,11 @@ use crate::twitch::redeems::RedeemManager;
 use crate::ai::AIClient;
 //use crate::osc::VRChatOSC;
 use std::time::Duration;
+// use tokio::io::AsyncWriteExt;
+use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::timeout;
+use crate::discord::UserLinks;
+use crate::logging::{LogLevel, Logger};
 use crate::osc::VRChatOSC;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
@@ -36,13 +46,16 @@ pub struct BotClients {
     pub twitch_irc: Option<(Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>, UnboundedReceiver<ServerMessage>)>,
     pub twitch_api: Option<Arc<TwitchAPIClient>>,
     pub vrchat: Option<VRChatClient>,  // Make sure this is the correct type
-    pub discord: Option<()>, // Replace with DiscordClient when implemented
+    pub discord: Option<Arc<discord::DiscordClient>>,
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
     pub ai_client: Option<Arc<AIClient>>,
     pub eventsub_client: Arc<Mutex<TwitchEventSubClient>>,
     pub vrchat_osc: Option<Arc<VRChatOSC>>,
     pub storage: Arc<RwLock<storage::StorageClient>>,
     pub role_cache: Arc<RwLock<RoleCache>>,
+    pub user_links: Arc<UserLinks>,
+    pub logger: Arc<Logger>,
+    pub bot_status: Arc<RwLock<BotStatus>>,
 }
 
 impl BotClients {
@@ -96,6 +109,7 @@ impl BotClients {
         }
 
         println!("Shutdown complete.");
+        self.bot_status.write().await.set_online(false);
         Ok(())
     }
 
@@ -127,6 +141,8 @@ impl BotClients {
 }
 
 pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std::error::Error + Send + Sync>> {
+    let bot_status = BotStatus::new();
+
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
         api_client.authenticate().await?;
@@ -220,6 +236,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     };
 
     let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
+    let logger = Arc::new(Logger::new(config.clone()));
 
     let eventsub_client = if let (Some(ref irc_client), Some(ref api_client)) = (twitch_irc.as_ref(), &twitch_api) {
         let channel = config.read().await.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
@@ -232,25 +249,42 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
             ai_client.clone(),
             vrchat_osc.clone(),
             osc_configs.clone(),
+            logger.clone(),
         )))
     } else {
         return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
     };
 
     let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
-    let role_cache = Arc::new(RwLock::new(RoleCache::new())); // Add this line
+    let user_links = Arc::new(UserLinks::new());
+
+    let discord = if config.read().await.is_discord_configured() {
+        Some(Arc::new(discord::DiscordClient::new(
+            config.clone(),
+            storage.clone(),
+            user_links.clone()
+        ).await?))
+    } else {
+        None
+    };
+
+    let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
+    let role_cache = Arc::new(RwLock::new(RoleCache::new()));
 
     let clients = BotClients {
         twitch_irc,
         twitch_api,
         vrchat,
-        discord: None,
+        discord,
         redeem_manager,
         ai_client,
-        eventsub_client,
+        eventsub_client: eventsub_client.clone(),
         vrchat_osc,
         storage,
-        role_cache, // Add this line
+        role_cache,
+        user_links,
+        logger: logger.clone(),
+        bot_status,
     };
 
     if clients.twitch_irc.is_none() && clients.vrchat.is_none() && clients.discord.is_none() {
@@ -261,14 +295,44 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     clients.redeem_manager.write().await.reset_coin_game().await?;
     // clients.redeem_manager.write().await.update_stream_status(false, "".to_string()).await;
+    let eventsub_client_clone = eventsub_client.clone();
+    tokio::spawn(async move {
+        let client = eventsub_client_clone.lock().await;
+        if let Err(e) = client.check_current_stream_status().await {
+            eprintln!("Failed to check current stream status: {:?}", e);
+        }
+    });
 
+    clients.bot_status.write().await.set_online(true);
 
     Ok(clients)
 }
 
 pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut handles: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> = vec![];
+
+    let web_ui = Arc::new(web_ui::WebUI::new(
+        config.clone(),
+        clients.storage.clone(),
+        clients.logger.clone(),
+        clients.bot_status.clone(),
+        clients.twitch_irc.as_ref().map(|(client, _)| {
+            Arc::new(CustomTwitchIRCClient {
+                client: client.clone(),
+                message_receiver: tokio::sync::mpsc::unbounded_channel().1, // Create a dummy receiver
+            })
+        }).unwrap_or_else(|| panic!("Twitch IRC client not initialized")),
+        clients.vrchat_osc.clone(),
+    ));
+    let web_ui_clone = web_ui.clone();
+
+    let web_ui_handle = tokio::spawn(async move {
+        web_ui_clone.run().await;
+    });
+
+
     let world_info = Arc::new(Mutex::new(None::<World>));
-    let mut handles = vec![];
+    // let mut handles = vec![];
 
     // Initialize redeems
     println!("Initializing channel point redeems...");
@@ -298,7 +362,9 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
             let redeem_manager_clone = Arc::clone(&clients.redeem_manager);
             let vrchat_osc_clone = clients.vrchat_osc.clone();
             let storage_clone = Arc::clone(&clients.storage);
-            let role_cache_clone = Arc::clone(&clients.role_cache); // Add this line
+            let role_cache_clone = Arc::clone(&clients.role_cache);
+            let user_links_clone = Arc::clone(&clients.user_links);
+            let logger_clone = clients.logger.clone(); // Use clients.logger here
             async move {
                 handle_twitch_messages(
                     irc_client_for_messages,
@@ -309,7 +375,9 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
                     redeem_manager_clone,
                     vrchat_osc_clone,
                     storage_clone,
-                    role_cache_clone, // Add this line
+                    role_cache_clone,
+                    user_links_clone,
+                    logger_clone,
                 ).await
             }
         });
@@ -319,6 +387,25 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
         let handler_count = clients.redeem_manager.read().await.get_handler_count().await;
         println!("Number of initialized handlers: {}", handler_count);
         println!("Twitch IRC handler started.");
+    }
+
+    if let Some(discord_client) = clients.discord {
+        let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn(async move {
+            match Arc::try_unwrap(discord_client) {
+                Ok(client) => {
+                    if let Err(e) = client.start().await {
+                        eprintln!("Discord client error: {:?}", e);
+                        return Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+                    }
+                },
+                Err(_) => {
+                    eprintln!("Failed to unwrap Arc, Discord client is still in use elsewhere");
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to unwrap Arc")) as Box<dyn std::error::Error + Send + Sync>);
+                }
+            }
+            Ok(())
+        });
+        handles.push(discord_handle);
     }
 
     // EventSub client handling
@@ -369,6 +456,7 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
         }
     }
 
+    web_ui_handle.await?;
     println!("Bot has shut down.");
     Ok(())
 }
@@ -382,14 +470,13 @@ async fn handle_twitch_messages(
     redeem_manager: Arc<RwLock<RedeemManager>>,
     vrchat_osc: Option<Arc<VRChatOSC>>,
     storage_client: Arc<RwLock<StorageClient>>,
-    role_cache: Arc<RwLock<RoleCache>>, // Add this line
+    role_cache: Arc<RwLock<RoleCache>>,
+    user_links: Arc<UserLinks>,
+    logger: Arc<Logger>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
     while let Some(message) = incoming_messages.recv().await {
         match &message {
-            ServerMessage::Ping(_) | ServerMessage::Pong(_) => {
-                log_verbose!(config, "Received IRC message: {:?}", message);
-            }
             ServerMessage::Privmsg(msg) => {
                 let client_clone = Arc::clone(&client);
                 let world_info_clone = Arc::clone(&world_info);
@@ -399,10 +486,12 @@ async fn handle_twitch_messages(
                 let vrchat_osc_clone = vrchat_osc.clone();
                 let msg_clone = msg.clone();
                 let storage_clone = storage_client.clone();
-                let role_cache_clone = role_cache.clone(); // Add this line
+                let role_cache_clone = role_cache.clone();
+                let user_links_clone = user_links.clone();
+                let logger_clone = logger.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = crate::twitch::irc::handler::handle_twitch_message(
+                    let handle_result = crate::twitch::irc::handler::handle_twitch_message(
                         &msg_clone,
                         client_clone,
                         world_info_clone,
@@ -411,13 +500,19 @@ async fn handle_twitch_messages(
                         redeem_manager_clone,
                         vrchat_osc_clone,
                         storage_clone,
-                        role_cache_clone, // Add this line
-                    ).await {
-                        eprintln!("Error handling Twitch message: {:?}", e);
+                        role_cache_clone,
+                        user_links_clone,
+                        logger_clone.clone(), // Clone here
+                    ).await;
+
+                    if let Err(e) = handle_result {
+                        log_error!(logger_clone, "Error handling Twitch message: {:?}", e);
                     }
                 });
             }
-            _ => println!("Received other IRC message: {:?}", message),
+            _ => {
+                log_debug!(logger, "Received other IRC message: {:?}", message);
+            }
         }
     }
     println!("Twitch message handling ended.");

@@ -10,7 +10,7 @@ use lru_cache::LruCache;
 use crate::twitch::roles::UserRole;
 
 pub struct StorageClient {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
     statement_cache: Arc<RwLock<LruCache<String, String>>>,
 }
 
@@ -61,12 +61,51 @@ impl StorageClient {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS verification_codes (
+                user_id TEXT PRIMARY KEY,
+                code INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
         println!("Database schema created or updated successfully");
 
         Ok(StorageClient {
             conn: Arc::new(Mutex::new(conn)),
             statement_cache: Arc::new(RwLock::new(LruCache::new(100))),
         })
+    }
+
+    // Add these new methods
+
+    pub async fn store_verification_code(&self, user_id: &str, code: u32) -> Result<(), rusqlite::Error> {
+        let query = "INSERT OR REPLACE INTO verification_codes (user_id, code, created_at) VALUES (?1, ?2, ?3)";
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(query)?;
+        stmt.execute(params![user_id, code, Utc::now().timestamp()])?;
+        Ok(())
+    }
+
+    pub async fn get_verification_code(&self, user_id: &str) -> Result<Option<u32>, rusqlite::Error> {
+        let query = "SELECT code FROM verification_codes WHERE user_id = ?1";
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(query)?;
+        let result = stmt.query_row([user_id], |row| row.get(0));
+        match result {
+            Ok(code) => Ok(Some(code)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn remove_verification_code(&self, user_id: &str) -> Result<(), rusqlite::Error> {
+        let query = "DELETE FROM verification_codes WHERE user_id = ?1";
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(query)?;
+        stmt.execute([user_id])?;
+        Ok(())
     }
 
     pub fn add_message(&self, user_id: &str, message: &str) -> Result<()> {

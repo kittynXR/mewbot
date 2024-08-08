@@ -2,6 +2,8 @@ use std::path::Path;
 use std::fs;
 use std::io::{self, Write};
 use serde::{Deserialize, Serialize};
+use serenity::all::standard::Reason::Log;
+use crate::logging::LogLevel;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -15,10 +17,13 @@ pub struct Config {
     pub twitch_refresh_token: Option<String>,
     pub vrchat_auth_cookie: Option<String>,
     pub discord_token: Option<String>,
+    pub discord_client_id: Option<String>,
+    pub discord_guild_id: Option<String>,
     pub openai_secret: Option<String>,
     pub anthropic_secret: Option<String>,
     #[serde(default)]
-    pub verbose_logging: bool,
+    pub log_level: LogLevel,
+    pub web_ui_port: Option<u16>,
 }
 
 impl Config {
@@ -69,6 +74,16 @@ impl Config {
             self.anthropic_secret = Some(Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?);
         }
 
+        if self.discord_token.is_none() {
+            self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token: ")?);
+        }
+        if self.discord_client_id.is_none() {
+            self.discord_client_id = Some(Self::prompt_input("Enter your Discord Application ID: ")?);
+        }
+        if self.discord_guild_id.is_none() {
+            self.discord_guild_id = Some(Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?);
+        }
+
         self.save()?;
         Ok(())
     }
@@ -113,9 +128,37 @@ impl Config {
         let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
         let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
 
+        println!("\nNow, let's set up your Discord bot.");
+        println!("Please follow these steps:");
+        println!("1. Go to https://discord.com/developers/applications");
+        println!("2. Click on 'New Application' and give it a name");
+        println!("3. After creating, go to the 'Bot' tab and click 'Add Bot'");
+        println!("4. Under the bot's username, you'll see the Application ID - copy this");
+        println!("5. Click on 'Reset Token' to generate a new token, then copy it");
+        println!("6. Go to the 'OAuth2' tab, then 'URL Generator'");
+        println!("7. Select 'bot' and 'applications.commands' scopes");
+        println!("8. Select the necessary bot permissions (e.g., Send Messages, Manage Roles, etc.)");
+        println!("9. Copy the generated URL and use it to invite the bot to your server");
+        println!("10. In Discord, enable Developer Mode (User Settings > Advanced)");
+        println!("11. Right-click on your server and select 'Copy ID' to get the Guild ID");
+        println!("\nPress Enter when you're ready to continue...");
+        let mut buffer = String::new();
+        io::stdin().read_line(&mut buffer)?;
+
+        let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
+        let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
+        let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
+
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
         let anthropic_secret = Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?;
+
+        let web_ui_port = Self::prompt_input("Enter the port for the Web UI (default is 3000): ")?;
+        let web_ui_port = if web_ui_port.is_empty() {
+            Some(3000)
+        } else {
+            Some(web_ui_port.parse().unwrap_or(3000))
+        };
 
         let config = Config {
             twitch_bot_username: Some(twitch_bot_username),
@@ -127,10 +170,13 @@ impl Config {
             twitch_refresh_token: None,
             twitch_user_id: None,
             vrchat_auth_cookie: None,
-            discord_token: None,
-            verbose_logging: false,
+            discord_token: Some(discord_token),
+            discord_client_id: Some(discord_client_id),
+            discord_guild_id: Some(discord_guild_id),
             openai_secret: if openai_secret.is_empty() { None } else { Some(openai_secret) },
             anthropic_secret: if anthropic_secret.is_empty() { None } else { Some(anthropic_secret) },
+            log_level: LogLevel::INFO,
+            web_ui_port: web_ui_port,
         };
 
         config.save()?;
@@ -182,12 +228,14 @@ impl Config {
     }
 
     pub fn is_discord_configured(&self) -> bool {
-        self.discord_token.is_some()
+        self.discord_token.is_some() &&
+            self.discord_client_id.is_some() &&
+            self.discord_guild_id.is_some()
     }
 
-    pub fn toggle_verbose_logging(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.verbose_logging = !self.verbose_logging;
-        println!("Debug: Verbose logging toggled to {}", self.verbose_logging);
+    pub fn set_log_level(&mut self, level: LogLevel) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.log_level = level;
+        println!("Log level set to {:?}", self.log_level);
         self.save()?;
         Ok(())
     }

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use super::handlers;
-use crate::log_verbose;
+use crate::{log_debug, log_verbose};
 use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use std::time::Duration;
 use crate::twitch::redeems::{Redemption, RedeemManager, RedemptionResult, RedemptionStatus};
@@ -25,6 +25,7 @@ use serde::ser::StdError;
 use std::fmt;
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
+use crate::logging::{LogLevel, Logger};
 
 type BoxedError = Box<dyn StdError + Send + Sync>;
 type WebSocketTx = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -42,6 +43,7 @@ pub struct TwitchEventSubClient {
     ai_client: Option<Arc<AIClient>>,
     osc_client: Option<Arc<VRChatOSC>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
+    logger: Arc<Logger>,
 }
 
 #[derive(Debug)]
@@ -67,6 +69,7 @@ impl TwitchEventSubClient {
         ai_client: Option<Arc<AIClient>>,
         osc_client: Option<Arc<VRChatOSC>>,
         osc_configs: Arc<RwLock<OSCConfigurations>>,
+        logger: Arc<Logger>,
     ) -> Self {
         Self {
             config,
@@ -80,6 +83,7 @@ impl TwitchEventSubClient {
             ai_client,
             osc_client,
             osc_configs,
+            logger,
         }
     }
 
@@ -170,7 +174,7 @@ impl TwitchEventSubClient {
                 }
                 _ => {
                     let config = self.config.clone();
-                    log_verbose!(config, "Received non-text message: {:?}", message);
+                    log_debug!(self.logger, "Received non-text message: {:?}", message);
                 }
             }
         }
@@ -220,7 +224,7 @@ impl TwitchEventSubClient {
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let config = self.config.clone();
-        log_verbose!(config, "Received EventSub keepalive: {:?}", response);
+        log_debug!(self.logger, "Received EventSub keepalive: {:?}", response);
         Ok(())
     }
 

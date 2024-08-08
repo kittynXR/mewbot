@@ -8,6 +8,9 @@ use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use crate::storage::StorageClient;
+use crate::discord::UserLinks;
+
 
 pub async fn handle_add_redeem(
     msg: &PrivmsgMessage,
@@ -15,6 +18,8 @@ pub async fn handle_add_redeem(
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     redeem_manager: &Arc<RwLock<RedeemManager>>,
+    _storage: &Arc<RwLock<StorageClient>>,
+    _user_links: &Arc<UserLinks>,
     params: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Join all parameters and then split them properly

@@ -46,7 +46,7 @@ pub fn get_default_redeems() -> Vec<RedemptionSettings> {
             cooldown: 0,
             prompt: "Enter the coin game! The price changes with each redemption.".to_string(),
             active_games: vec![], // Empty vec means active for all games
-            offline_chat_redeem: true,
+            offline_chat_redeem: false,
             osc_config: Some(OSCConfig {
                 uses_osc: false,
                 osc_endpoint: "".to_string(),
@@ -72,7 +72,7 @@ pub fn get_default_redeems() -> Vec<RedemptionSettings> {
             cooldown: 0,
             prompt: "toss comfi pillo to see if stremer can catch it!".to_string(),
             active_games: vec!["VRChat".to_string()],
-            offline_chat_redeem: true,
+            offline_chat_redeem: false,
             osc_config: Some(OSCConfig {
                 uses_osc: true,
                 osc_endpoint: "/avatar/parameters/twitch".to_string(),

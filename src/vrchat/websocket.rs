@@ -2,6 +2,7 @@ use crate::vrchat::models::{VRChatError, World};
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
@@ -94,8 +95,6 @@ fn create_request(auth_token: &str) -> Result<Request<()>, VRChatError> {
 }
 
 fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Result<Option<World>, VRChatError> {
-    // println!("Received JSON: {}", json_message);
-
     let message: serde_json::Value = serde_json::from_str(json_message)
         .map_err(|e| VRChatError(format!("Failed to parse JSON: {}", e)))?;
 
@@ -105,24 +104,32 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
 
         if let Some(user_id) = content.get("userId") {
             let user_id_str = user_id.as_str().unwrap_or("");
-            // println!("Message for user ID: {}", user_id_str);
             if user_id_str != current_user_id {
-                // println!("Message not for current user. Current user ID: {}", current_user_id);
                 return Ok(None);
             }
         } else {
-            // println!("No userId found in message");
             return Ok(None);
         }
 
         if let Some(location) = content.get("location") {
             if location.as_str() == Some("private") {
-                // println!("User is in a private world");
                 return Ok(None);
             }
         }
 
         if let Some(world) = content.get("world") {
+            let created_at = world.get("created_at")
+                .and_then(|d| d.as_str())
+                .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|| Utc::now());
+
+            let updated_at = world.get("updated_at")
+                .and_then(|d| d.as_str())
+                .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(|| Utc::now());
+
             let world = World {
                 id: world.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string(),
                 name: world.get("name").and_then(|name| name.as_str()).unwrap_or("Unknown").to_string(),
@@ -130,12 +137,13 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
                 capacity: world.get("capacity").and_then(|c| c.as_i64()).unwrap_or(0) as i32,
                 description: world.get("description").and_then(|d| d.as_str()).unwrap_or("No description").to_string(),
                 release_status: world.get("releaseStatus").and_then(|r| r.as_str()).unwrap_or("Unknown").to_string(),
+                created_at,
+                updated_at,
             };
             println!("Current user changed world: {:?}", world);
             return Ok(Some(world));
         }
     }
 
-    // println!("Received a message, but it's not world info for the current user.");
     Ok(None)
 }

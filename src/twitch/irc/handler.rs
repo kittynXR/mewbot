@@ -1,4 +1,3 @@
-
 use lazy_static::lazy_static;
 use crate::vrchat::models::World;
 use std::sync::Arc;
@@ -15,15 +14,16 @@ use super::commands;
 use crate::twitch::redeems::RedeemManager;
 use crate::osc::vrchat::VRChatOSC;
 use crate::storage::StorageClient;
-use crate::twitch::role_cache::{RoleCache};
+use crate::twitch::role_cache::RoleCache;
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::discord::UserLinks;
+use crate::logging::Logger;
 
 lazy_static! {
     static ref SHOUTOUT_COOLDOWNS: Arc<Mutex<commands::ShoutoutCooldown>> = Arc::new(Mutex::new(commands::ShoutoutCooldown::new()));
     static ref VRCHAT_OSC: Mutex<Option<VRChatOSC>> = Mutex::new(None);
     static ref BROADCASTER_ID: AtomicU64 = AtomicU64::new(0);
 }
-
 
 pub async fn handle_twitch_message(
     msg: &PrivmsgMessage,
@@ -35,6 +35,8 @@ pub async fn handle_twitch_message(
     vrchat_osc: Option<Arc<VRChatOSC>>,
     storage: Arc<RwLock<StorageClient>>,
     role_cache: Arc<RwLock<RoleCache>>,
+    user_links: Arc<UserLinks>,
+    logger: Arc<Logger>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Handling message: {:?}", msg.message_text);
 
@@ -55,7 +57,6 @@ pub async fn handle_twitch_message(
         }
     };
     println!("User role for {}: {:?}", msg.sender.name, user_role);
-
 
     // Clean the message: remove invisible characters and trim
     let cleaned_message = msg.message_text
@@ -81,7 +82,21 @@ pub async fn handle_twitch_message(
             println!("Matched command: {}", command.name);
             if user_role >= command.required_role {
                 println!("User has sufficient permissions. Executing command.");
-                let result = (command.handler)(msg, &client, &msg.channel_login, &api_client, &world_info, &SHOUTOUT_COOLDOWNS, &redemption_manager, &role_cache, &params).await;
+                let result = (command.handler)(
+                    msg,
+                    &client,
+                    &msg.channel_login,
+                    &api_client,
+                    &world_info,
+                    &SHOUTOUT_COOLDOWNS,
+                    &redemption_manager,
+                    &role_cache,
+                    &storage,
+                    &user_links,
+                    &params,
+                    &config,
+                    &logger
+                ).await;
                 println!("Command execution result: {:?}", result);
                 return result;
             } else {

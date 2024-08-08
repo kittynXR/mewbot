@@ -9,14 +9,20 @@ use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::RwLock;
+use crate::storage::StorageClient;
+use crate::discord::UserLinks;
+
 
 pub fn handle_complete_redemption<'a>(
     msg: &'a PrivmsgMessage,
     client: &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &'a str,
     redeem_manager: &'a Arc<RwLock<RedeemManager>>,
+    _storage: &'a Arc<RwLock<StorageClient>>,
+    _user_links: &'a Arc<UserLinks>,
     params: &'a [&'a str],
 ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>> {
+
     Box::pin(async move {
         println!("Handling complete redemption command. Sender: {}, Params: {:?}", msg.sender.name, params);
 

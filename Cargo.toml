@@ -44,6 +44,7 @@ rusqlite = { version = "^0.32.1", features = ["chrono", "bundled"] }
 cc = "^1.1.7"
 parking_lot = "0.12.3"
 lru-cache = "0.1.2"
+colored = "2.1.0"
 
 
 [dependencies.tokio]

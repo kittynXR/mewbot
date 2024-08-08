@@ -1,11 +1,24 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::PrivmsgMessage;
+use twitch_irc::{SecureTCPTransport, TwitchIRCClient};
 use crate::twitch::irc::client::TwitchIRCClientType;
 use crate::twitch::redeems::RedeemManager;
+use crate::storage::StorageClient;
+use crate::discord::UserLinks;
 
-pub async fn handle_toggle_redeem(msg: &PrivmsgMessage, client: &Arc<TwitchIRCClientType>, channel: &str, redeem_manager: &Arc<RwLock<RedeemManager>>, params: &[&str]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if params.is_empty() {
+
+
+pub async fn handle_toggle_redeem(
+    msg: &PrivmsgMessage,
+    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    channel: &str,
+    redeem_manager: &Arc<RwLock<RedeemManager>>,
+    _storage: &Arc<RwLock<StorageClient>>,
+    _user_links: &Arc<UserLinks>,
+    params: &[&str],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {    if params.is_empty() {
         client.say(channel.to_string(), "Usage: !toggleredeem <redeem_name>".parse().unwrap()).await?;
         return Ok(());
     }

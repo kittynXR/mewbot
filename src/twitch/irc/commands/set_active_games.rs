@@ -1,11 +1,23 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
+use twitch_irc::{SecureTCPTransport, TwitchIRCClient};
+use twitch_irc::login::StaticLoginCredentials;
 use crate::twitch::irc::client::TwitchIRCClientType;
 use crate::twitch::redeems::RedeemManager;
+use crate::storage::StorageClient;
+use crate::discord::UserLinks;
 
-pub async fn handle_set_active_games(msg: &PrivmsgMessage, client: &Arc<TwitchIRCClientType>, channel: &str, redeem_manager: &Arc<RwLock<RedeemManager>>, params: &[&str]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if params.len() < 2 {
+
+pub async fn handle_set_active_games(
+    msg: &PrivmsgMessage,
+    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    channel: &str,
+    redeem_manager: &Arc<RwLock<RedeemManager>>,
+    _storage: &Arc<RwLock<StorageClient>>,
+    _user_links: &Arc<UserLinks>,
+    params: &[&str],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {    if params.len() < 2 {
         client.say(channel.to_string(), "Usage: !setactivegames <redeem_name> <game1> [game2] [game3] ...".parse().unwrap()).await?;
         return Ok(());
     }

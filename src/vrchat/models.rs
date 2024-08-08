@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug)]
 pub struct VRChatError(pub String);
@@ -29,6 +30,10 @@ pub struct World {
     pub description: String,
     #[serde(rename = "releaseStatus")]
     pub release_status: String,
+    #[serde(rename = "created_at")]
+    pub created_at: DateTime<Utc>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
