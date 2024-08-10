@@ -1,72 +1,86 @@
-use crate::config::Config;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, broadcast};
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::ServerMessage;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-use crate::CustomTwitchIRCClient;
 
-pub type TwitchIRCClientType = ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>;
+pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
-pub struct TwitchIRCClient {
+pub struct IRCClient {
     pub client: Arc<TwitchIRCClientType>,
-    pub message_receiver: mpsc::UnboundedReceiver<ServerMessage>,
 }
 
-impl From<&CustomTwitchIRCClient> for TwitchIRCClient {
-    fn from(custom_client: &CustomTwitchIRCClient) -> Self {
-        TwitchIRCClient {
-            client: custom_client.client.clone(),
-            message_receiver: tokio::sync::mpsc::unbounded_channel().1, // Create a new dummy receiver
+pub struct TwitchIRCManager {
+    clients: RwLock<HashMap<String, IRCClient>>,
+    message_sender: broadcast::Sender<ServerMessage>,
+}
+
+impl TwitchIRCManager {
+    pub fn new() -> Self {
+        let (message_sender, _) = broadcast::channel(100); // Adjust buffer size as needed
+        TwitchIRCManager {
+            clients: RwLock::new(HashMap::new()),
+            message_sender,
         }
     }
-}
 
-impl TwitchIRCClient {
-    pub async fn new(config: Arc<RwLock<Config>>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let config = config.read().await;
-
-        let username = config.twitch_bot_username.clone().ok_or("Twitch IRC username not set")?;
-        let oauth_token = config.twitch_irc_oauth_token.clone().ok_or("Twitch IRC OAuth token not set")?;
-        let channel = config.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
-
-        println!("Twitch IRC username: {}", username);
-        println!("Twitch IRC OAuth token (first 10 chars): {}...", &oauth_token[..10]);
-        println!("Twitch channel to join: {}", channel);
-
+    pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client_config = ClientConfig::new_simple(
-            StaticLoginCredentials::new(username, Some(oauth_token))
+            StaticLoginCredentials::new(username.clone(), Some(oauth_token))
         );
 
-        let (incoming_messages, client) =
-            TwitchIRC::<SecureTCPTransport, StaticLoginCredentials>::new(client_config);
+        let (incoming_messages, client) = TwitchIRC::<SecureTCPTransport, StaticLoginCredentials>::new(client_config);
 
         let client = Arc::new(client);
 
-        // Join the channel
-        client.join(channel)?;
+        for channel in channels {
+            client.join(channel)?;
+        }
 
-        Ok(TwitchIRCClient {
-            client,
-            message_receiver: incoming_messages,
-        })
+        let irc_client = IRCClient {
+            client: client.clone(),
+        };
+
+        self.clients.write().await.insert(username.clone(), irc_client);
+
+        // Spawn a task to handle incoming messages for this client
+        let message_sender = self.message_sender.clone();
+        tokio::spawn(async move {
+            Self::handle_client_messages(username, incoming_messages, message_sender).await;
+        });
+
+        Ok(())
     }
 
-    /// Sends a message to the specified Twitch channel.
-    ///
-    /// # Arguments
-    ///
-    /// * `channel` - The name of the channel to send the message to.
-    /// * `message` - The content of the message to send.
-    ///
-    /// # Returns
-    ///
-    /// Returns a Result indicating success or failure of sending the message.
-    pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.client.say(channel.to_string(), message.to_string()).await?;
-        Ok(())
+    async fn handle_client_messages(
+        username: String,
+        mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
+        message_sender: broadcast::Sender<ServerMessage>,
+    ) {
+        while let Some(message) = incoming_messages.recv().await {
+            if let Err(e) = message_sender.send(message) {
+                eprintln!("Failed to broadcast message for {}: {:?}", username, e);
+            }
+        }
+    }
+
+    pub async fn get_client(&self, username: &str) -> Option<Arc<TwitchIRCClientType>> {
+        self.clients.read().await.get(username).map(|client| client.client.clone())
+    }
+
+    pub async fn send_message(&self, username: &str, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(client) = self.get_client(username).await {
+            client.say(channel.to_string(), message.to_string()).await?;
+            Ok(())
+        } else {
+            Err("Client not found".into())
+        }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
+        self.message_sender.subscribe()
     }
 }

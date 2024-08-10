@@ -1,8 +1,6 @@
 use crate::twitch::utils::get_stream_uptime;
-use crate::twitch::TwitchAPIClient;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
+use crate::twitch::api::TwitchAPIClient;
+use crate::twitch::irc::client::TwitchIRCClientType;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
@@ -11,7 +9,7 @@ use crate::storage::StorageClient;
 
 pub async fn handle_uptime(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchIRCClientType>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     _storage: &Arc<RwLock<StorageClient>>,

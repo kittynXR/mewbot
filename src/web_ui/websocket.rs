@@ -126,7 +126,7 @@ async fn handle_ws_message(
                     }
                     if destinations["twitchChat"].as_bool().unwrap_or(false) {
                         if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                            if let Some(twitch_client) = dashboard_state.get_twitch_client() {
+                            if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
                                 if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
                                     log_error!(logger, "Error sending message to Twitch chat: {:?}", e);
                                 }
@@ -149,7 +149,7 @@ async fn handle_ws_message(
             if let Some(world) = &dashboard_state.vrchat_world {
                 let world_info = format!("Current VRChat World: {} by {}", world.name, world.author_name);
                 if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                    if let Some(twitch_client) = dashboard_state.get_twitch_client() {
+                    if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
                         if let Err(e) = twitch_client.send_message(&twitch_channel, &world_info).await {
                             log_error!(logger, "Error sending world info to Twitch chat: {:?}", e);
                         }

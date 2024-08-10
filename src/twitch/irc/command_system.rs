@@ -1,5 +1,3 @@
-// src/twitch/irc/command_system.rs
-
 use crate::twitch::roles::UserRole;
 use crate::vrchat::models::World;
 use crate::twitch::api::TwitchAPIClient;
@@ -17,6 +15,7 @@ use crate::twitch::redeems::RedeemManager;
 use crate::twitch::role_cache::RoleCache;
 use crate::config::Config;
 use crate::logging::Logger;
+use crate::twitch::irc::client::TwitchIRCClientType;
 use super::commands;
 
 pub struct Command {
@@ -24,7 +23,7 @@ pub struct Command {
     pub required_role: UserRole,
     pub handler: for<'a> fn(
         &'a PrivmsgMessage,
-        &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+        &'a Arc<TwitchIRCClientType>,
         &'a str,
         &'a Arc<TwitchAPIClient>,
         &'a Arc<Mutex<Option<World>>>,
@@ -129,3 +128,36 @@ pub const COMMANDS: &[Command] = &[
         description: "Manages logging levels. Usage: !debug [verbose|debug|status]",
     },
 ];
+
+pub async fn execute_command(
+    command: &Command,
+    msg: &PrivmsgMessage,
+    client: &Arc<TwitchIRCClientType>,
+    channel: &str,
+    api_client: &Arc<TwitchAPIClient>,
+    world_info: &Arc<Mutex<Option<World>>>,
+    cooldowns: &Arc<Mutex<commands::ShoutoutCooldown>>,
+    redeem_manager: &Arc<RwLock<RedeemManager>>,
+    role_cache: &Arc<RwLock<RoleCache>>,
+    storage: &Arc<RwLock<StorageClient>>,
+    user_links: &Arc<UserLinks>,
+    params: &[&str],
+    config: &Arc<RwLock<Config>>,
+    logger: &Arc<Logger>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    (command.handler)(
+        msg,
+        client,
+        channel,
+        api_client,
+        world_info,
+        cooldowns,
+        redeem_manager,
+        role_cache,
+        storage,
+        user_links,
+        params,
+        config,
+        logger
+    ).await
+}

@@ -6,7 +6,7 @@ use futures_util::SinkExt;
 use serde_json::json;
 use crate::config::Config;
 use crate::vrchat::models::World;
-use crate::twitch::irc::TwitchIRCClient;
+use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient};
 use crate::storage::StorageClient;
 use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
@@ -26,7 +26,7 @@ pub struct DashboardState {
     pub(crate) obs_status: bool,
     recent_messages: Vec<String>,
     config: Arc<RwLock<Config>>,
-    twitch_client: Option<Arc<TwitchIRCClient>>,
+    twitch_irc_manager: Option<Arc<TwitchIRCManager>>,
     vrchat_osc: Option<Arc<VRChatOSC>>,
     pub(crate) tx: broadcast::Sender<WebSocketMessage>,
     pub(crate) rx: broadcast::Receiver<WebSocketMessage>,
@@ -36,20 +36,20 @@ impl DashboardState {
     pub fn new(
         bot_status: Arc<RwLock<BotStatus>>,
         config: Arc<RwLock<Config>>,
-        twitch_client: Option<Arc<TwitchIRCClient>>,
+        twitch_irc_manager: Option<Arc<TwitchIRCManager>>,
         vrchat_osc: Option<Arc<VRChatOSC>>,
     ) -> Self {
         let (tx, rx) = broadcast::channel::<WebSocketMessage>(100);
         Self {
             bot_status,
             vrchat_world: None,
-            twitch_status: twitch_client.is_some(),
+            twitch_status: twitch_irc_manager.is_some(),
             discord_status: false,
             vrchat_status: vrchat_osc.is_some(),
             obs_status: false,
             recent_messages: Vec::new(),
             config,
-            twitch_client,
+            twitch_irc_manager,
             vrchat_osc,
             tx,
             rx,
@@ -66,8 +66,14 @@ impl DashboardState {
             .ok_or_else(|| "Twitch channel not set".into())
     }
 
-    pub fn get_twitch_client(&self) -> Option<Arc<TwitchIRCClient>> {
-        self.twitch_client.clone()
+    pub async fn get_twitch_bot_client(&self) -> Option<TwitchBotClient> {
+        let config = self.config.read().await;
+        self.twitch_irc_manager.as_ref().map(|manager| {
+            TwitchBotClient::new(
+                config.twitch_bot_username.clone().unwrap(),
+                manager.clone(),
+            )
+        })
     }
 
     pub fn get_vrchat_osc(&self) -> Option<Arc<VRChatOSC>> {
@@ -138,7 +144,7 @@ pub async fn handle_ws_client(ws: WebSocket, state: Arc<RwLock<DashboardState>>,
                     Some(Ok(msg)) => {
                         if let Ok(text) = msg.to_str() {
                             if let Ok(parsed_message) = serde_json::from_str::<WebSocketMessage>(text) {
-                                handle_ws_message(&parsed_message, &state, &storage, &logger).await;
+                                handle_ws_message(&parsed_message, &state, &logger).await;
                             } else {
                                 log_error!(logger, "Failed to parse WebSocket message");
                             }
@@ -158,7 +164,6 @@ pub async fn handle_ws_client(ws: WebSocket, state: Arc<RwLock<DashboardState>>,
 async fn handle_ws_message(
     message: &WebSocketMessage,
     dashboard_state: &Arc<RwLock<DashboardState>>,
-    storage: &Arc<RwLock<StorageClient>>,
     logger: &Arc<Logger>
 ) {
     let dashboard_state = dashboard_state.read().await;
@@ -169,8 +174,8 @@ async fn handle_ws_message(
             if let Some(world) = &dashboard_state.vrchat_world {
                 let world_info = format!("Current VRChat World: {} by {}", world.name, world.author_name);
                 if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                    if let Some(twitch_client) = dashboard_state.get_twitch_client() {
-                        if let Err(e) = twitch_client.send_message(&twitch_channel, &world_info).await {
+                    if let Some(twitch_bot_client) = dashboard_state.get_twitch_bot_client().await {
+                        if let Err(e) = twitch_bot_client.send_message(&twitch_channel, &world_info).await {
                             log_error!(logger, "Error sending world info to Twitch chat: {:?}", e);
                         }
                     }
@@ -199,8 +204,8 @@ async fn handle_ws_message(
                     }
                     if destinations["twitchChat"].as_bool().unwrap_or(false) {
                         if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                            if let Some(twitch_client) = dashboard_state.get_twitch_client() {
-                                if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
+                            if let Some(twitch_bot_client) = dashboard_state.get_twitch_bot_client().await {
+                                if let Err(e) = twitch_bot_client.send_message(&twitch_channel, chat_msg).await {
                                     log_error!(logger, "Error sending message to Twitch chat: {:?}", e);
                                 }
                             }
@@ -275,7 +280,7 @@ pub async fn update_dashboard_state(
                     "obs_status": state.obs_status,
                 })),
             }
-        }; // The state lock is released here
+        };
         // Send the update to all connected clients
         {
             let state = state.read().await;
@@ -283,6 +288,6 @@ pub async fn update_dashboard_state(
                 Ok(_) => log_info!(logger, "Broadcast update message successfully"),
                 Err(e) => log_error!(logger, "Failed to broadcast update message: {:?}", e),
             }
-        } // The state lock is released here
+        }
     }
 }

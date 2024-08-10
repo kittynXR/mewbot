@@ -10,12 +10,11 @@ use crate::LogLevel;
 use crate::storage::StorageClient;
 use crate::logging::Logger;
 use crate::osc::VRChatOSC;
-use crate::twitch::TwitchIRCClient;
+use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient}; // Updated import
 use crate::web_ui::websocket_server;
 use crate::web_ui::websocket_server::{DashboardState, update_dashboard_state};
 use super::websocket::{handle_websocket, WebSocketMessage};
 use super::api_routes::{api_routes, with_storage, with_logger};
-use crate::CustomTwitchIRCClient;
 use crate::discord::DiscordClient;
 
 pub struct WebUI {
@@ -32,14 +31,14 @@ impl WebUI {
         storage: Arc<RwLock<StorageClient>>,
         logger: Arc<Logger>,
         bot_status: Arc<RwLock<BotStatus>>,
-        twitch_client: Arc<CustomTwitchIRCClient>,
+        twitch_irc_manager: Arc<TwitchIRCManager>, // Updated parameter
         vrchat_osc: Option<Arc<VRChatOSC>>,
         discord_client: Option<Arc<DiscordClient>>,
     ) -> Self {
         let dashboard_state = Arc::new(RwLock::new(DashboardState::new(
             bot_status,
             config.clone(),
-            Some(Arc::new(TwitchIRCClient::from(twitch_client.as_ref()))),
+            Some(twitch_irc_manager), // Pass TwitchIRCManager instead of TwitchIRCClient
             vrchat_osc,
         )));
 
@@ -145,7 +144,7 @@ impl WebUI {
         log_info!(self.logger, "Starting web UI server on {}:{}", host, port);
 
         // Create a broadcast channel for WebSocket messages
-        let (tx, _) = broadcast::channel::<WebSocketMessage>(100);
+        let (_tx, _rx) = broadcast::channel::<WebSocketMessage>(100); // Changed to _tx to avoid unused variable warning
 
         // Start the periodic update task
         let update_task = tokio::spawn(update_dashboard_state(

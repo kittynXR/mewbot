@@ -1,4 +1,3 @@
-// src/discord/events/handler.rs
 use serenity::async_trait;
 use serenity::model::prelude::*;
 use serenity::prelude::*;

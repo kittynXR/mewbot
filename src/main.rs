@@ -1,7 +1,6 @@
 use clap::Parser;
 use mewbot::{config::Config, init, run};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use mewbot::logging::LogLevel;
 
@@ -49,7 +48,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize the RedeemManager with current status
     clients.redeem_manager.write().await.initialize_with_current_status().await?;
-    // clients.eventsub_client.check_current_stream_status().await?;
 
     run(clients, config).await?;
 
