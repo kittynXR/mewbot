@@ -23,7 +23,14 @@ pub struct Config {
     pub anthropic_secret: Option<String>,
     #[serde(default)]
     pub log_level: LogLevel,
+    pub web_ui_host: Option<String>,
     pub web_ui_port: Option<u16>,
+    #[serde(default = "default_additional_streams")]
+    pub additional_streams: Vec<String>,
+}
+
+fn default_additional_streams() -> Vec<String> {
+    vec!["".to_string(); 4]
 }
 
 impl Config {
@@ -84,12 +91,40 @@ impl Config {
             self.discord_guild_id = Some(Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?);
         }
 
+        if self.web_ui_host.is_none() {
+            self.web_ui_host = Some(Self::prompt_input("Enter the host for the Web UI (default is localhost): ")?);
+            if self.web_ui_host.as_ref().unwrap().is_empty() {
+                self.web_ui_host = Some("localhost".to_string());
+            }
+        }
+
+        if self.web_ui_port.is_none() {
+            let port_input = Self::prompt_input("Enter the port for the Web UI (default is 3333): ")?;
+            self.web_ui_port = Some(if port_input.is_empty() {
+                3333
+            } else {
+                port_input.parse().unwrap_or(3333)
+            });
+        }
+
+        if self.additional_streams.is_empty() {
+            println!("Enter up to 4 additional Twitch streams to embed (leave empty to skip):");
+            for i in 0..4 {
+                let stream = Self::prompt_input(&format!("Additional stream {}: ", i + 1))?;
+                if !stream.is_empty() {
+                    self.additional_streams.push(stream);
+                } else {
+                    break;
+                }
+            }
+        }
+
         self.save()?;
         Ok(())
     }
 
     fn initial_setup() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        println!("Welcome to MewBot! Let's set up your configuration.");
+        println!("Welcome to MewBot! Let's set up your initial configuration.");
 
         // Twitch Developer Console instructions
         println!("First, you'll need to create a Twitch application to get your Client ID and Client Secret.");
@@ -153,12 +188,32 @@ impl Config {
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
         let anthropic_secret = Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?;
 
-        let web_ui_port = Self::prompt_input("Enter the port for the Web UI (default is 3000): ")?;
-        let web_ui_port = if web_ui_port.is_empty() {
-            Some(3000)
+        let web_ui_host = Self::prompt_input("Enter the host for the Web UI (default is localhost): ")?;
+        let web_ui_host = if web_ui_host.is_empty() {
+            Some("localhost".to_string())
         } else {
-            Some(web_ui_port.parse().unwrap_or(3000))
+            Some(web_ui_host)
         };
+
+        let web_ui_port = Self::prompt_input("Enter the port for the Web UI (default is 3333): ")?;
+        let web_ui_port = if web_ui_port.is_empty() {
+            Some(3333)
+        } else {
+            Some(web_ui_port.parse().unwrap_or(3333))
+        };
+
+        let mut additional_streams = vec!["".to_string(); 4];
+
+        println!("Enter up to 4 additional Twitch streams to embed (leave empty to skip):");
+
+        for i in 0..4 {
+            let stream = Self::prompt_input(&format!("Additional stream {}: ", i + 1))?;
+            if !stream.is_empty() {
+                additional_streams[i] = stream;
+            } else {
+                break;
+            }
+        }
 
         let config = Config {
             twitch_bot_username: Some(twitch_bot_username),
@@ -176,7 +231,9 @@ impl Config {
             openai_secret: if openai_secret.is_empty() { None } else { Some(openai_secret) },
             anthropic_secret: if anthropic_secret.is_empty() { None } else { Some(anthropic_secret) },
             log_level: LogLevel::INFO,
-            web_ui_port: web_ui_port,
+            web_ui_host,
+            web_ui_port,
+            additional_streams,
         };
 
         config.save()?;
