@@ -100,7 +100,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), logger.clone()));
 
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
@@ -149,7 +149,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
     )));
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
+
     let mut twitch_bot_client = None;
     let mut twitch_broadcaster_client = None;
 

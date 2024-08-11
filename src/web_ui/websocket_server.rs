@@ -249,6 +249,22 @@ async fn handle_ws_message(
                 }
             }
         }
+        "twitch_message" => {
+            if let (Some(chat_msg), Some(user_id)) = (&message.message, &message.user_id) {
+                log_info!(logger, "Received Twitch message from {}: {}", user_id, chat_msg);
+                let broadcast_msg = WebSocketMessage {
+                    message_type: "twitch_message".to_string(),
+                    message: Some(chat_msg.clone()),
+                    user_id: Some(user_id.clone()),
+                    destination: None,
+                    world: None,
+                    additional_streams: None,
+                };
+                if let Err(e) = dashboard_state.tx.send(broadcast_msg) {
+                    log_error!(logger, "Failed to broadcast Twitch message: {:?}", e);
+                }
+            }
+        }
         _ => {
             log_error!(logger, "Unknown message type: {}", message.message_type);
         }

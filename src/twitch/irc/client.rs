@@ -7,7 +7,7 @@ use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
-use crate::log_info;
+use crate::{log_error, log_info};
 use crate::logging::Logger;
 use crate::LogLevel;
 use crate::web_ui::websocket::WebSocketMessage;
@@ -22,19 +22,23 @@ pub struct TwitchIRCManager {
     clients: RwLock<HashMap<String, IRCClient>>,
     message_sender: broadcast::Sender<ServerMessage>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
+    logger: Arc<Logger>,
 }
 
 impl TwitchIRCManager {
-    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>) -> Self {
+    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>, logger: Arc<Logger>) -> Self {
         let (message_sender, _) = broadcast::channel(1000);
         TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
             message_sender,
             websocket_sender,
+            logger,
         }
     }
 
     pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        log_info!(self.logger, "Adding Twitch IRC client for user: {}", username);
+
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
 
         let client_config = ClientConfig::new_simple(
@@ -45,8 +49,9 @@ impl TwitchIRCManager {
 
         let client = Arc::new(client);
 
-        for channel in channels {
-            client.join(channel)?;
+        for channel in channels.iter() {
+            log_info!(self.logger, "Joining channel: {}", channel);
+            client.join(channel.clone())?;
         }
 
         let irc_client = IRCClient {
@@ -58,10 +63,13 @@ impl TwitchIRCManager {
         // Spawn a task to handle incoming messages for this client
         let message_sender = self.message_sender.clone();
         let websocket_sender = self.websocket_sender.clone();
+        let logger = self.logger.clone();
+        let username_clone = username.clone();  // Clone username for the spawned task
         tokio::spawn(async move {
-            Self::handle_client_messages(username, incoming_messages, message_sender, websocket_sender).await;
+            Self::handle_client_messages(username_clone, incoming_messages, message_sender, websocket_sender, logger).await;
         });
 
+        log_info!(self.logger, "Successfully added Twitch IRC client for user: {}", username);
         Ok(())
     }
 
@@ -70,12 +78,12 @@ impl TwitchIRCManager {
         mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
         message_sender: broadcast::Sender<ServerMessage>,
         websocket_sender: mpsc::Sender<WebSocketMessage>,
+        logger: Arc<Logger>,
     ) {
         while let Some(message) = incoming_messages.recv().await {
-            // Log the message regardless of whether it's broadcasted successfully
+            log_info!(logger, "Received message in TwitchIRCManager: {:?}", message);
             Self::log_message(&username, &message);
 
-            // Send the message to WebSocket clients
             if let ServerMessage::Privmsg(msg) = &message {
                 let websocket_message = WebSocketMessage {
                     message_type: "twitch_message".to_string(),
@@ -86,22 +94,17 @@ impl TwitchIRCManager {
                     additional_streams: None,
                 };
                 if let Err(e) = websocket_sender.send(websocket_message).await {
-                    eprintln!("Failed to send message to WebSocket: {:?}", e);
+                    log_error!(logger, "Failed to send message to WebSocket: {:?}", e);
+                } else {
+                    log_info!(logger, "Successfully sent message to WebSocket");
                 }
             }
 
-            match message_sender.send(message) {
-                Ok(_) => {},
-                Err(_) => {
-                    if message_sender.receiver_count() == 0 {
-                        eprintln!("All receivers have been dropped for {}", username);
-                        break;
-                    } else {
-                        eprintln!("Failed to broadcast message for {}: No receivers were ready to receive", username);
-                    }
-                }
+            if let Err(e) = message_sender.send(message) {
+                log_error!(logger, "Failed to broadcast message: {:?}", e);
             }
         }
+        log_info!(logger, "Exiting handle_client_messages for {}", username);
     }
 
     fn log_message(username: &str, message: &ServerMessage) {

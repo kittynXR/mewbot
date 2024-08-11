@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
 use twitch_irc::message::ServerMessage;
+use crate::{log_error, log_info};
+use crate::LogLevel;
 use crate::twitch::irc::TwitchBotClient;
 
 pub struct MessageHandler {
@@ -52,10 +54,10 @@ impl MessageHandler {
     pub async fn handle_messages(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut receiver = self.irc_client.subscribe();
 
-        while let Ok(result) = timeout(Duration::from_secs(1), receiver.recv()).await {
-            match result {
-                Ok(message) => self.handle_message(message).await?,
-                Err(e) => eprintln!("Error receiving message: {:?}", e),
+        while let Ok(message) = receiver.recv().await {
+            log_info!(self.logger, "Received Twitch message: {:?}", message);
+            if let Err(e) = self.handle_message(message).await {
+                log_error!(self.logger, "Error handling message: {:?}", e);
             }
         }
 
