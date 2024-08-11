@@ -4,9 +4,6 @@ use crate::twitch::api::TwitchAPIClient;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use std::future::Future;
@@ -15,7 +12,7 @@ use crate::twitch::redeems::RedeemManager;
 use crate::twitch::role_cache::RoleCache;
 use crate::config::Config;
 use crate::logging::Logger;
-use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use super::commands;
 
 pub struct Command {
@@ -23,7 +20,7 @@ pub struct Command {
     pub required_role: UserRole,
     pub handler: for<'a> fn(
         &'a PrivmsgMessage,
-        &'a Arc<TwitchIRCClientType>,
+        &'a Arc<TwitchBotClient>,
         &'a str,
         &'a Arc<TwitchAPIClient>,
         &'a Arc<Mutex<Option<World>>>,
@@ -73,7 +70,7 @@ pub const COMMANDS: &[Command] = &[
         required_role: UserRole::Broadcaster,
         handler: |_msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, role_cache, _storage, _user_links, _params, _config, _logger| Box::pin(async move {
             role_cache.write().await.clear();
-            client.say(channel.to_string(), "Role cache has been cleared.".to_string()).await?;
+            client.send_message(channel, "Role cache has been cleared.").await?;
             Ok(())
         }),
         description: "Clears the role cache",
@@ -132,7 +129,7 @@ pub const COMMANDS: &[Command] = &[
 pub async fn execute_command(
     command: &Command,
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClientType>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     world_info: &Arc<Mutex<Option<World>>>,

@@ -2,19 +2,16 @@ use crate::twitch::redeems::{RedeemManager, RedemptionActionConfig, RedemptionAc
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::api::TwitchAPIClient;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
-
+use crate::twitch::irc::TwitchBotClient;
 
 pub async fn handle_add_redeem(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     redeem_manager: &Arc<RwLock<RedeemManager>>,
@@ -30,7 +27,7 @@ pub async fn handle_add_redeem(
         match full_command[1..].split_once('"') {
             Some((title, rest)) => (title.to_string(), rest.trim_start()),
             None => {
-                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...".to_string()).await?;
+                client.send_message(channel, "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...").await?;
                 return Ok(());
             }
         }
@@ -38,7 +35,7 @@ pub async fn handle_add_redeem(
         match full_command.split_once(' ') {
             Some((title, rest)) => (title.to_string(), rest),
             None => {
-                client.say(channel.to_string(), "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...".to_string()).await?;
+                client.send_message(channel, "Invalid command format. Use: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce] [offline_chat_redeem] [game1] [game2] ...").await?;
                 return Ok(());
             }
         }
@@ -50,7 +47,7 @@ pub async fn handle_add_redeem(
     let cost = match parts.next() {
         Some(c) => c.parse::<u32>().map_err(|_| "Invalid cost")?,
         None => {
-            client.say(channel.to_string(), "Missing cost parameter".to_string()).await?;
+            client.send_message(channel, "Missing cost parameter").await?;
             return Ok(());
         }
     };
@@ -58,7 +55,7 @@ pub async fn handle_add_redeem(
     let action_type = match parts.next() {
         Some(a) => a,
         None => {
-            client.say(channel.to_string(), "Missing action type parameter".to_string()).await?;
+            client.send_message(channel, "Missing action type parameter").await?;
             return Ok(());
         }
     };
@@ -66,7 +63,7 @@ pub async fn handle_add_redeem(
     let cooldown = match parts.next() {
         Some(c) => c.parse::<u32>().map_err(|_| "Invalid cooldown")?,
         None => {
-            client.say(channel.to_string(), "Missing cooldown parameter".to_string()).await?;
+            client.send_message(channel, "Missing cooldown parameter").await?;
             return Ok(());
         }
     };
@@ -79,12 +76,12 @@ pub async fn handle_add_redeem(
                 prompt.to_string()
             }
             None => {
-                client.say(channel.to_string(), "Invalid prompt format. Prompt should be enclosed in quotes.".to_string()).await?;
+                client.send_message(channel, "Invalid prompt format. Prompt should be enclosed in quotes.").await?;
                 return Ok(());
             }
         }
     } else {
-        client.say(channel.to_string(), "Missing prompt parameter. Prompt should be enclosed in quotes.".to_string()).await?;
+        client.send_message(channel, "Missing prompt parameter. Prompt should be enclosed in quotes.").await?;
         return Ok(());
     };
 
@@ -116,7 +113,7 @@ pub async fn handle_add_redeem(
             requires_manual_completion: false,
         },
         _ => {
-            client.say(channel.to_string(), "Invalid action type. Use 'ai', 'osc', or 'custom'.".to_string()).await?;
+            client.send_message(channel, "Invalid action type. Use 'ai', 'osc', or 'custom'.").await?;
             return Ok(());
         }
     };
@@ -143,10 +140,10 @@ pub async fn handle_add_redeem(
         auto_complete,  // Add this line
     ).await {
         Ok(_) => {
-            client.say(channel.to_string(), format!("New redeem '{}' added successfully!", title)).await?;
+            client.send_message(channel, &format!("New redeem '{}' added successfully!", title)).await?;
         }
         Err(e) => {
-            client.say(channel.to_string(), format!("Failed to add new redeem: {}", e)).await?;
+            client.send_message(channel, &format!("Failed to add new redeem: {}", e)).await?;
         }
     }
 

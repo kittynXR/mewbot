@@ -2,8 +2,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::{SecureTCPTransport, TwitchIRCClient};
-use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::redeems::RedeemManager;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
@@ -12,14 +11,14 @@ use crate::discord::UserLinks;
 
 pub async fn handle_toggle_redeem(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     redeem_manager: &Arc<RwLock<RedeemManager>>,
     _storage: &Arc<RwLock<StorageClient>>,
     _user_links: &Arc<UserLinks>,
     params: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {    if params.is_empty() {
-        client.say(channel.to_string(), "Usage: !toggleredeem <redeem_name>".parse().unwrap()).await?;
+    client.send_message(channel, "Usage: !toggleredeem <redeem_name>").await?;
         return Ok(());
     }
 
@@ -40,9 +39,9 @@ pub async fn handle_toggle_redeem(
     if updated {
         manager.update_twitch_redeems().await?;
         let status = if new_status { "enabled" } else { "disabled" };
-        client.say(channel.to_string(), format!("Redeem '{}' has been {}", redeem_name, status)).await?;
+        client.send_message(channel, &format!("Redeem '{}' has been {}", redeem_name, status)).await?;
     } else {
-        client.say(channel.to_string(), format!("Redeem '{}' not found", redeem_name)).await?;
+        client.send_message(channel, &format!("Redeem '{}' not found", redeem_name)).await?;
     }
 
     Ok(())

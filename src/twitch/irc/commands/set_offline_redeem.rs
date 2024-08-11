@@ -1,24 +1,22 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::{SecureTCPTransport, TwitchIRCClient};
-use twitch_irc::login::StaticLoginCredentials;
-use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::redeems::RedeemManager;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 
 pub async fn handle_set_offline_redeem(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     redeem_manager: &Arc<RwLock<RedeemManager>>,
     _storage: &Arc<RwLock<StorageClient>>,
     _user_links: &Arc<UserLinks>,
     params: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {    if params.len() != 2 {
-        client.say(channel.to_string(), "Usage: !setofflineredeem <redeem_name> <true/false>".parse().unwrap()).await?;
-        return Ok(());
+    client.send_message(channel, "Usage: !setofflineredeem <redeem_name> <true/false>").await?;
+    return Ok(());
     }
 
     let redeem_name = params[0];
@@ -38,9 +36,9 @@ pub async fn handle_set_offline_redeem(
     if updated {
         manager.save_settings().await?;
         manager.update_twitch_redeems().await?;
-        client.say(channel.to_string(), format!("Offline chat status for '{}' set to: {}", redeem_name, offline_status)).await?;
+        client.send_message(channel, &format!("Offline chat status for '{}' set to: {}", redeem_name, offline_status)).await?;
     } else {
-        client.say(channel.to_string(), format!("Redeem '{}' not found", redeem_name)).await?;
+        client.send_message(channel, &format!("Redeem '{}' not found", redeem_name)).await?;
     }
 
     Ok(())

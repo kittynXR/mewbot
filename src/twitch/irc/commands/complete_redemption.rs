@@ -2,9 +2,7 @@
 
 use crate::twitch::redeems::RedeemManager;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
+use crate::twitch::irc::TwitchBotClient;
 use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
@@ -15,7 +13,7 @@ use crate::discord::UserLinks;
 
 pub fn handle_complete_redemption<'a>(
     msg: &'a PrivmsgMessage,
-    client: &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &'a Arc<TwitchBotClient>,
     channel: &'a str,
     redeem_manager: &'a Arc<RwLock<RedeemManager>>,
     _storage: &'a Arc<RwLock<StorageClient>>,
@@ -28,7 +26,7 @@ pub fn handle_complete_redemption<'a>(
 
         if params.is_empty() {
             println!("No redemption ID provided");
-            client.say(channel.to_string(), "Usage: !complete <redemption_id>".to_string()).await?;
+            client.send_message(channel, "Usage: !complete <redemption_id>").await?;
             return Ok(());
         }
 
@@ -41,11 +39,11 @@ pub fn handle_complete_redemption<'a>(
         match redeem_manager.complete_redemption(redemption_id).await {
             Ok(_) => {
                 println!("Redemption {} completed successfully", redemption_id);
-                client.say(channel.to_string(), format!("Redemption {} marked as complete", redemption_id)).await?;
+                client.send_message(channel, &format!("Redemption {} marked as complete", redemption_id)).await?;
             },
             Err(e) => {
                 println!("Error completing redemption {}: {}", redemption_id, e);
-                client.say(channel.to_string(), format!("Error completing redemption: {}", e)).await?;
+                client.send_message(channel, &format!("Error completing redemption: {}", e)).await?;
             }
         }
 

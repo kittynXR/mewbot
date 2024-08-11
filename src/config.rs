@@ -12,7 +12,8 @@ pub struct Config {
     pub twitch_channel_to_join: Option<String>,
     pub twitch_client_id: Option<String>,
     pub twitch_client_secret: Option<String>,
-    pub twitch_irc_oauth_token: Option<String>,
+    pub twitch_bot_oauth_token: Option<String>,
+    pub twitch_broadcaster_oauth_token: Option<String>,
     pub twitch_access_token: Option<String>,
     pub twitch_refresh_token: Option<String>,
     pub vrchat_auth_cookie: Option<String>,
@@ -51,9 +52,14 @@ impl Config {
         if self.twitch_bot_username.is_none() {
             self.twitch_bot_username = Some(Self::prompt_input("Enter your Twitch IRC username: ")?);
         }
-        if self.twitch_irc_oauth_token.is_none() {
-            self.twitch_irc_oauth_token = Some(Self::prompt_input("Enter your Twitch IRC OAuth Token: ")?);
+        if self.twitch_bot_oauth_token.is_none() {
+            self.twitch_bot_oauth_token = Some(Self::prompt_input("Enter your Twitch Bot OAuth Token: ")?);
         }
+
+        if self.twitch_broadcaster_oauth_token.is_none() {
+            self.twitch_broadcaster_oauth_token = Some(Self::prompt_input("Enter your Twitch Bot OAuth Token: ")?);
+        }
+
         if self.twitch_channel_to_join.is_none() {
             self.twitch_channel_to_join = Some(Self::prompt_input("Enter the Twitch channel to join: ")?);
         }
@@ -155,9 +161,10 @@ impl Config {
         println!("\nPress Enter when you're ready to continue...");
         io::stdin().read_line(&mut buffer)?;
 
-        let twitch_irc_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
         let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
+        let twitch_bot_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
         let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
+        let twitch_broadcaster_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
 
         let twitch_irc_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
         let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
@@ -220,7 +227,8 @@ impl Config {
             twitch_channel_to_join: Some(twitch_channel_to_join),
             twitch_client_id: Some(twitch_client_id),
             twitch_client_secret: Some(twitch_client_secret),
-            twitch_irc_oauth_token: Some(twitch_irc_oauth_token),
+            twitch_bot_oauth_token: Some(twitch_bot_oauth_token),
+            twitch_broadcaster_oauth_token: Some(twitch_broadcaster_oauth_token),
             twitch_access_token: None,
             twitch_refresh_token: None,
             twitch_user_id: None,
@@ -238,7 +246,8 @@ impl Config {
 
         config.save()?;
         println!("Configuration saved successfully!");
-
+        println!("Bot token from config: {}...", &config.twitch_bot_oauth_token.as_ref().unwrap_or(&String::new())[..14]);
+        println!("Broadcaster token from config: {}...", &config.twitch_broadcaster_oauth_token.as_ref().unwrap_or(&String::new())[..14]);
         Ok(config)
     }
 
@@ -271,8 +280,9 @@ impl Config {
 
     pub fn is_twitch_irc_configured(&self) -> bool {
         self.twitch_bot_username.is_some() &&
-            self.twitch_irc_oauth_token.is_some() &&
-            self.twitch_channel_to_join.is_some()
+            self.twitch_bot_oauth_token.is_some() &&
+            self.twitch_channel_to_join.is_some() &&
+            self.twitch_broadcaster_oauth_token.is_some()
     }
 
     pub fn is_twitch_api_configured(&self) -> bool {

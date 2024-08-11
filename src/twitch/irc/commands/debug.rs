@@ -1,8 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::{SecureTCPTransport, TwitchIRCClient};
-use twitch_irc::login::StaticLoginCredentials;
+use crate::twitch::irc::TwitchBotClient;
 use crate::config::Config;
 use crate::logging::Logger;
 use crate::{log_info, log_debug, log_error, log_verbose};
@@ -12,7 +11,7 @@ use crate::LogLevel;
 
 pub fn handle_debug<'a>(
     msg: &'a PrivmsgMessage,
-    client: &'a Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &'a Arc<TwitchBotClient>,
     channel: &'a str,
     config: &'a Arc<RwLock<Config>>,
     logger: &'a Arc<Logger>,
@@ -66,7 +65,7 @@ pub fn handle_debug<'a>(
         log_debug!(logger, "This is a debug message");
         log_verbose!(logger, "This is a verbose message");
 
-        client.say(channel.to_string(), format!("@{}, {}", msg.sender.name, response.trim())).await?;
+        client.send_message(channel, &format!("@{}, {}", msg.sender.name, response.trim())).await?;
 
         Ok(())
     })

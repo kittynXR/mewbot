@@ -3,9 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::api::requests::shoutout::send_shoutout;
 use crate::twitch::redeems::RedeemManager;
@@ -37,7 +35,7 @@ async fn is_user_moderator(api_client: &TwitchAPIClient, broadcaster_id: &str, u
 
 pub async fn handle_shoutout(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     cooldowns: &Arc<Mutex<ShoutoutCooldown>>,
@@ -47,7 +45,7 @@ pub async fn handle_shoutout(
     _user_links: &Arc<UserLinks>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if params.is_empty() {
-        client.say(channel.to_string(), "Please specify a user to shoutout!".to_string()).await?;
+        client.send_message(channel, "Please specify a user to shoutout!").await?;
         return Ok(());
     }
 
@@ -57,7 +55,7 @@ pub async fn handle_shoutout(
     // Check if the user is trying to shout themselves out
     if target.to_lowercase() == msg.sender.name.to_lowercase() {
         let self_shoutout_message = format!("@{}, you're already awesome! No need to shout yourself out! pepeStepBro pepeStepBro ", msg.sender.name);
-        client.say(channel.to_string(), self_shoutout_message).await?;
+        client.send_message(channel, &self_shoutout_message).await?;
         return Ok(());
     }
 
@@ -65,7 +63,7 @@ pub async fn handle_shoutout(
     // Check if the target is the broadcaster
     if target.to_lowercase() == channel.to_lowercase() {
         let broadcaster_shoutout_message = format!("@{}, 推し～！ Cannot shout out our oshi {}! They're already here blessing us with their sugoi presence! ٩(◕‿◕｡)۶", msg.sender.name, channel);
-        client.say(channel.to_string(), broadcaster_shoutout_message).await?;
+        client.send_message(channel, &broadcaster_shoutout_message).await?;
         return Ok(());
     }
 
@@ -75,7 +73,7 @@ pub async fn handle_shoutout(
     // Check global cooldown
     if now.duration_since(cooldowns.global) < Duration::from_secs(120) {
         let remaining = Duration::from_secs(120) - now.duration_since(cooldowns.global);
-        client.say(channel.to_string(), format!("Shoutout is on global cooldown. Please wait {} seconds.", remaining.as_secs())).await?;
+        client.send_message(channel, &format!("Shoutout is on global cooldown. Please wait {} seconds.", remaining.as_secs())).await?;
         return Ok(());
     }
 
@@ -83,7 +81,7 @@ pub async fn handle_shoutout(
     if let Some(last_use) = cooldowns.per_user.get(target) {
         if now.duration_since(*last_use) < Duration::from_secs(3600) {
             let remaining = Duration::from_secs(3600) - now.duration_since(*last_use);
-            client.say(channel.to_string(), format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target, remaining.as_secs() / 60)).await?;
+            client.send_message(channel, &format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target, remaining.as_secs() / 60)).await?;
             return Ok(());
         }
     }
@@ -92,7 +90,7 @@ pub async fn handle_shoutout(
     let redeem_manager_read = redeem_manager.read().await;
     let stream_status = redeem_manager_read.stream_status.read().await;
     if !stream_status.is_live {
-        client.say(channel.to_string(), format!("Sorry, @{}, shoutouts can only be given when the stream is live.", msg.sender.name)).await?;
+        client.send_message(channel, &format!("Sorry, @{}, shoutouts can only be given when the stream is live.", msg.sender.name)).await?;
         return Ok(());
     }
     drop(stream_status);
@@ -119,7 +117,7 @@ pub async fn handle_shoutout(
                                           target,
                                           target
                     );
-                    client.say(channel.to_string(), message).await?;
+                    client.send_message(channel, &message).await?;
 
                     // Update cooldowns
                     cooldowns.global = now;
@@ -127,13 +125,13 @@ pub async fn handle_shoutout(
                 },
                 Err(e) => {
                     eprintln!("Error sending shoutout: {}", e);
-                    client.say(channel.to_string(), format!("Sorry, @{}, I couldn't send a shoutout to {}. There was an API error.", msg.sender.name, target)).await?;
+                    client.send_message(channel, &format!("Sorry, @{}, I couldn't send a shoutout to {}. There was an API error.", msg.sender.name, target)).await?;
                 }
             }
         },
         Err(e) => {
             println!("Error getting user info for shoutout target: {}", e);
-            client.say(channel.to_string(), format!("Sorry, I couldn't find information for user {}.", target)).await?;
+            client.send_message(channel, &format!("Sorry, I couldn't find information for user {}.", target)).await?;
         }
     }
 

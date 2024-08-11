@@ -1,6 +1,6 @@
 use crate::twitch::utils::get_stream_uptime;
 use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
@@ -9,7 +9,7 @@ use crate::storage::StorageClient;
 
 pub async fn handle_uptime(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClientType>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     _storage: &Arc<RwLock<StorageClient>>,
@@ -26,11 +26,11 @@ pub async fn handle_uptime(
                 ),
                 None => "Stream is currently offline.".to_string(),
             };
-            client.say(channel.to_string(), response).await?;
+            client.send_message(channel, &response).await?;
         },
         Err(e) => {
             eprintln!("Error getting stream uptime: {:?}", e);
-            client.say(channel.to_string(), "Sorry, I couldn't retrieve the stream uptime. Please try again later.".to_string()).await?;
+            client.send_message(channel, "Sorry, I couldn't retrieve the stream uptime. Please try again later.").await?;
         }
     }
     Ok(())

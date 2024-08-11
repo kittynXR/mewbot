@@ -2,15 +2,13 @@ use crate::vrchat::models::World;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use twitch_irc::message::PrivmsgMessage;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
+use crate::twitch::irc::TwitchBotClient;
 use crate::discord::UserLinks;
 use crate::storage::StorageClient;
 
 pub async fn handle_world(
     msg: &PrivmsgMessage,
-    client: &Arc<TwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    client: &Arc<TwitchBotClient>,
     channel: &str,
     world_info: &Arc<Mutex<Option<World>>>,
     storage: &Arc<RwLock<StorageClient>>,
@@ -24,7 +22,7 @@ pub async fn handle_world(
                 "Current World: {} | Author: {} | Capacity: {} | Description: {} | Status: {}",
                 world.name, world.author_name, world.capacity, world.description, world.release_status
             );
-            client.say(channel.to_string(), first_message).await?;
+            client.send_message(channel, &first_message).await?;
 
             // Second message with dates and world link
             let world_link = format!("https://vrchat.com/home/world/{}", world.id);
@@ -34,10 +32,10 @@ pub async fn handle_world(
                 world.updated_at.format("%Y-%m-%d"),
                 world_link
             );
-            client.say(channel.to_string(), second_message).await?;
+            client.send_message(channel, &second_message).await?;
         },
         None => {
-            client.say(channel.to_string(), "No world information available yet.".to_string()).await?;
+            client.send_message(channel, "No world information available yet.").await?;
         }
     }
     Ok(())

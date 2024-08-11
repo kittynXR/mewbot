@@ -16,7 +16,9 @@ impl TwitchBroadcasterClient {
     }
 
     pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.manager.send_message(&self.username, channel, message).await
+        let client = self.get_client().await.ok_or("Client not initialized")?;
+        client.say(channel.to_string(), message.to_string()).await?;
+        Ok(())
     }
 
     // Add more broadcaster-specific methods here

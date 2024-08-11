@@ -2,7 +2,7 @@ use super::client::TwitchIRCManager;
 use super::command_system::COMMANDS;
 use crate::config::Config;
 use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::roles::{get_user_role, UserRole};
+use crate::twitch::roles::get_user_role;
 use crate::twitch::redeems::RedeemManager;
 use crate::storage::StorageClient;
 use crate::twitch::role_cache::RoleCache;
@@ -11,9 +11,10 @@ use crate::logging::Logger;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use twitch_irc::message::ServerMessage;
+use crate::twitch::irc::TwitchBotClient;
 
 pub struct MessageHandler {
-    irc_manager: Arc<TwitchIRCManager>,
+    irc_client: Arc<TwitchBotClient>,
     config: Arc<RwLock<Config>>,
     api_client: Arc<TwitchAPIClient>,
     redeem_manager: Arc<RwLock<RedeemManager>>,
@@ -25,7 +26,7 @@ pub struct MessageHandler {
 
 impl MessageHandler {
     pub fn new(
-        irc_manager: Arc<TwitchIRCManager>,
+        irc_client: Arc<TwitchBotClient>,
         config: Arc<RwLock<Config>>,
         api_client: Arc<TwitchAPIClient>,
         redeem_manager: Arc<RwLock<RedeemManager>>,
@@ -35,7 +36,7 @@ impl MessageHandler {
         logger: Arc<Logger>,
     ) -> Self {
         MessageHandler {
-            irc_manager,
+            irc_client,
             config,
             api_client,
             redeem_manager,
@@ -47,7 +48,7 @@ impl MessageHandler {
     }
 
     pub async fn handle_messages(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut receiver = self.irc_manager.subscribe();
+        let mut receiver = self.irc_client.subscribe();
 
         while let Ok(message) = receiver.recv().await {
             self.handle_message(message).await?;
@@ -76,10 +77,9 @@ impl MessageHandler {
             if let Some(cmd) = command {
                 if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
                     if user_role >= command.required_role {
-                        let client = self.irc_manager.get_client(&self.config.read().await.twitch_bot_username.clone().unwrap()).await.unwrap();
                         (command.handler)(
                             &msg,
-                            &client,
+                            &self.irc_client,  // Pass the TwitchBotClient directly
                             &msg.channel_login,
                             &self.api_client,
                             &Arc::new(Mutex::new(None)), // world_info is not used in this example
@@ -94,7 +94,7 @@ impl MessageHandler {
                         ).await?;
                     } else {
                         let response = format!("@{}, this command is only available to {:?}s and above.", msg.sender.name, command.required_role);
-                        self.irc_manager.send_message(&self.config.read().await.twitch_bot_username.clone().unwrap(), &msg.channel_login, &response).await?;
+                        self.irc_client.send_message(&msg.channel_login, &response).await?;
                     }
                 }
             }
