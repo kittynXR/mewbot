@@ -6,11 +6,11 @@ use futures_util::SinkExt;
 use serde_json::json;
 use crate::config::Config;
 use crate::vrchat::models::World;
-use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient};
+use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterClient};
 use crate::storage::StorageClient;
 use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_verbose};
 use crate::LogLevel;
 use crate::logging::Logger;
 use crate::osc::VRChatOSC;
@@ -76,6 +76,16 @@ impl DashboardState {
         })
     }
 
+    pub async fn get_twitch_broadcaster_client(&self) -> Option<TwitchBroadcasterClient> {
+        let config = self.config.read().await;
+        self.twitch_irc_manager.as_ref().map(|manager| {
+            TwitchBroadcasterClient::new(
+                config.twitch_channel_to_join.clone().unwrap(),
+                manager.clone(),
+            )
+        })
+    }
+
     pub fn get_vrchat_osc(&self) -> Option<Arc<VRChatOSC>> {
         self.vrchat_osc.clone()
     }
@@ -97,7 +107,7 @@ impl DashboardState {
     }
 }
 
-pub async fn handle_ws_client(ws: WebSocket, state: Arc<RwLock<DashboardState>>, storage: Arc<RwLock<StorageClient>>, logger: Arc<Logger>, mut rx: broadcast::Receiver<()>) {
+pub async fn handle_ws_client(ws: WebSocket, state: Arc<RwLock<DashboardState>>, _storage: Arc<RwLock<StorageClient>>, logger: Arc<Logger>, mut rx: broadcast::Receiver<()>) {
     let (mut ws_tx, mut ws_rx) = ws.split();
 
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
@@ -186,6 +196,8 @@ async fn handle_ws_message(
                 message: Some("success".to_string()),
                 destination: None,
                 world: None,
+                additional_streams: None,
+                user_id: None, // Add this line
             };
             if let Err(e) = dashboard_state.tx.send(response) {
                 log_error!(logger, "Failed to broadcast world shared status: {:?}", e);
@@ -195,14 +207,14 @@ async fn handle_ws_message(
             if let Some(chat_msg) = &message.message {
                 log_info!(logger, "Sending chat message: {}", chat_msg);
                 if let Some(destinations) = &message.destination {
-                    if destinations["oscTextbox"].as_bool().unwrap_or(false) {
+                    if destinations.oscTextbox {
                         if let Some(vrchat_osc) = dashboard_state.get_vrchat_osc() {
                             if let Err(e) = vrchat_osc.send_chatbox_message(chat_msg, true, false) {
                                 log_error!(logger, "Error sending message to VRChat OSC: {:?}", e);
                             }
                         }
                     }
-                    if destinations["twitchChat"].as_bool().unwrap_or(false) {
+                    if destinations.twitchChat {
                         if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
                             if let Some(twitch_bot_client) = dashboard_state.get_twitch_bot_client().await {
                                 if let Err(e) = twitch_bot_client.send_message(&twitch_channel, chat_msg).await {
@@ -217,6 +229,8 @@ async fn handle_ws_message(
                     message: Some("success".to_string()),
                     destination: None,
                     world: None,
+                    additional_streams: None,
+                    user_id: None, // Add this line
                 };
                 if let Err(e) = dashboard_state.tx.send(response) {
                     log_error!(logger, "Failed to broadcast chat sent status: {:?}", e);
@@ -227,6 +241,8 @@ async fn handle_ws_message(
                     message: Some("Invalid chat message".to_string()),
                     destination: None,
                     world: None,
+                    additional_streams: None,
+                    user_id: None, // Add this line
                 };
                 if let Err(e) = dashboard_state.tx.send(error_response) {
                     log_error!(logger, "Failed to broadcast error message: {:?}", e);
@@ -271,21 +287,23 @@ pub async fn update_dashboard_state(
                 message: Some(status.to_string()),
                 destination: None,
                 world: Some(serde_json::json!({
-                    "uptime": uptime,
-                    "vrchat_world": state.vrchat_world,
-                    "recent_messages": recent_messages,
-                    "twitch_status": state.twitch_status,
-                    "discord_status": discord_status,
-                    "vrchat_status": state.vrchat_status,
-                    "obs_status": state.obs_status,
-                })),
+        "uptime": uptime,
+        "vrchat_world": state.vrchat_world,
+        "recent_messages": recent_messages,
+        "twitch_status": state.twitch_status,
+        "discord_status": discord_status,
+        "vrchat_status": state.vrchat_status,
+        "obs_status": state.obs_status,
+    })),
+                additional_streams: None,
+                user_id: None, // Add this line
             }
         };
         // Send the update to all connected clients
         {
             let state = state.read().await;
             match state.broadcast_message(update_message).await {
-                Ok(_) => log_info!(logger, "Broadcast update message successfully"),
+                Ok(_) => log_verbose!(logger, "Broadcast update message successfully"),
                 Err(e) => log_error!(logger, "Failed to broadcast update message: {:?}", e),
             }
         }

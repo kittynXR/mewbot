@@ -9,7 +9,9 @@ use crate::twitch::role_cache::RoleCache;
 use crate::discord::UserLinks;
 use crate::logging::Logger;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
+use tokio::time::timeout;
 use twitch_irc::message::ServerMessage;
 use crate::twitch::irc::TwitchBotClient;
 
@@ -50,8 +52,11 @@ impl MessageHandler {
     pub async fn handle_messages(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut receiver = self.irc_client.subscribe();
 
-        while let Ok(message) = receiver.recv().await {
-            self.handle_message(message).await?;
+        while let Ok(result) = timeout(Duration::from_secs(1), receiver.recv()).await {
+            match result {
+                Ok(message) => self.handle_message(message).await?,
+                Err(e) => eprintln!("Error receiving message: {:?}", e),
+            }
         }
 
         Ok(())

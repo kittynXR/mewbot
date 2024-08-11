@@ -16,8 +16,18 @@ pub struct WebSocketMessage {
     #[serde(rename = "type")]
     pub message_type: String,
     pub message: Option<String>,
-    pub destination: Option<serde_json::Value>,
+    pub destination: Option<ChatDestination>,
     pub world: Option<serde_json::Value>,
+    pub additional_streams: Option<Vec<String>>,
+    pub user_id: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ChatDestination {
+    pub oscTextbox: bool,
+    pub twitchChat: bool,
+    pub twitchBot: bool,
+    pub twitchBroadcaster: bool,
 }
 
 pub async fn handle_websocket(
@@ -43,6 +53,8 @@ pub async fn handle_websocket(
                 "uptime": bot_status.uptime_string(),
                 "active_modules": ["twitch", "discord", "vrchat"] // You may want to implement this properly
             })),
+            additional_streams: None,
+            user_id: None,
         }
     };
 
@@ -67,7 +79,6 @@ pub async fn handle_websocket(
                                         log_error!(logger, "Error handling WebSocket message: {:?}", e);
                                     }
                                 }
-
                                 Err(e) => {
                                     log_error!(logger, "Failed to parse WebSocket message: {:?}", e);
                                     log_error!(logger, "Raw message: {}", text);
@@ -117,29 +128,52 @@ async fn handle_ws_message(
             if let Some(chat_msg) = &message.message {
                 log_info!(logger, "Sending chat message: {}", chat_msg);
                 if let Some(destinations) = &message.destination {
-                    if destinations["oscTextbox"].as_bool().unwrap_or(false) {
+                    if destinations.oscTextbox {
                         if let Some(vrchat_osc) = dashboard_state.get_vrchat_osc() {
                             if let Err(e) = vrchat_osc.send_chatbox_message(chat_msg, true, false) {
                                 log_error!(logger, "Error sending message to VRChat OSC: {:?}", e);
                             }
                         }
                     }
-                    if destinations["twitchChat"].as_bool().unwrap_or(false) {
+                    if destinations.twitchChat {
                         if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                            if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
-                                if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
-                                    log_error!(logger, "Error sending message to Twitch chat: {:?}", e);
+                            if destinations.twitchBot {
+                                if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
+                                    if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
+                                        log_error!(logger, "Error sending message to Twitch chat as bot: {:?}", e);
+                                    }
+                                }
+                            }
+                            if destinations.twitchBroadcaster {
+                                if let Some(twitch_client) = dashboard_state.get_twitch_broadcaster_client().await {
+                                    if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
+                                        log_error!(logger, "Error sending message to Twitch chat as broadcaster: {:?}", e);
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                // Handle additional streams
+                if let Some(additional_streams) = &message.additional_streams {
+                    for stream in additional_streams {
+                        if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
+                            if let Err(e) = twitch_client.send_message(stream, chat_msg).await {
+                                log_error!(logger, "Error sending message to additional stream {}: {:?}", stream, e);
+                            }
+                        }
+                    }
+                }
+
                 // Send a response back to the client
                 let response = WebSocketMessage {
                     message_type: "chatSent".to_string(),
                     message: Some("success".to_string()),
                     destination: None,
                     world: None,
+                    additional_streams: None,
+                    user_id: None,
                 };
                 ws_tx.send(Message::text(serde_json::to_string(&response)?)).await?;
             }
@@ -162,8 +196,36 @@ async fn handle_ws_message(
                 message: Some("success".to_string()),
                 destination: None,
                 world: None,
+                additional_streams: None,
+                user_id: None,
             };
             ws_tx.send(Message::text(serde_json::to_string(&response)?)).await?;
+        }
+        "twitch_message" => {
+            if let (Some(chat_msg), Some(user_id)) = (&message.message, &message.user_id) {
+                log_info!(logger, "Received Twitch message from {}: {}", user_id, chat_msg);
+
+                // Add the message to recent messages
+                let storage = storage.read().await;
+                if let Err(e) = storage.add_message(user_id, chat_msg) {
+                    log_error!(logger, "Error adding message to storage: {:?}", e);
+                }
+
+                // Broadcast the message to all connected clients
+                let broadcast_msg = WebSocketMessage {
+                    message_type: "twitch_message".to_string(),
+                    message: Some(chat_msg.clone()),
+                    user_id: Some(user_id.clone()),
+                    destination: None,
+                    world: None,
+                    additional_streams: None,
+                };
+                if let Err(e) = dashboard_state.broadcast_message(broadcast_msg).await {
+                    log_error!(logger, "Error broadcasting Twitch message: {:?}", e);
+                }
+            } else {
+                log_error!(logger, "Received incomplete Twitch message");
+            }
         }
         _ => {
             log_error!(logger, "Unknown message type: {}", message.message_type);

@@ -30,6 +30,8 @@ use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
 use crate::web_ui::websocket_server::DashboardState;
+use tokio::sync::mpsc;
+use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct BotClients {
     pub twitch_irc_manager: Arc<TwitchIRCManager>,
@@ -48,6 +50,8 @@ pub struct BotClients {
     pub logger: Arc<Logger>,
     pub bot_status: Arc<RwLock<BotStatus>>,
     pub dashboard_state: Arc<RwLock<DashboardState>>,
+    pub websocket_tx: mpsc::Sender<WebSocketMessage>,
+    pub websocket_rx: Option<mpsc::Receiver<WebSocketMessage>>,
 }
 
 impl BotClients {
@@ -93,6 +97,10 @@ impl BotClients {
 pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std::error::Error + Send + Sync>> {
     let logger = Arc::new(Logger::new(config.clone()));
     let bot_status = BotStatus::new(logger.clone());
+
+    let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
+
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
 
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
@@ -141,7 +149,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
     )));
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new());
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
     let mut twitch_bot_client = None;
     let mut twitch_broadcaster_client = None;
 
@@ -150,15 +158,17 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
         let config_read = config.read().await;
         let bot_username = config_read.twitch_bot_username.clone().ok_or("Twitch IRC bot username not set")?;
+        let bot_oauth_token = config_read.twitch_bot_oauth_token.clone().ok_or("Bot OAuth token not set")?;
         let broadcaster_username = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
-        let oauth_token = config_read.twitch_bot_oauth_token.clone().ok_or("Twitch IRC OAuth token not set")?;
+        let broadcaster_oauth_token = config_read.twitch_broadcaster_oauth_token.clone().ok_or("Broadcaster OAuth token not set")?;
         let channel = broadcaster_username.clone();
 
         println!("Twitch IRC bot username: {}", bot_username);
-        println!("Twitch IRC OAuth token (first 10 chars): {}...", &oauth_token[..10]);
+        println!("Twitch IRC OAuth token (first 10 chars): {}...", &bot_oauth_token[..10]);
         println!("Twitch channel to join: {}", channel);
+        println!("Bot OAuth token (first 10 chars): {}...", &broadcaster_oauth_token[..10]);
 
-        twitch_irc_manager.add_client(bot_username.clone(), oauth_token.clone(), vec![channel.clone()]).await?;
+        twitch_irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()]).await?;
         twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username, twitch_irc_manager.clone())));
 
         if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
@@ -179,7 +189,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         Arc::new(Mutex::new(TwitchEventSubClient::new(
             config.clone(),
             Arc::clone(api_client),
-            bot_irc_client, // Use the awaited result
+            bot_irc_client,
             channel,
             redeem_manager.clone(),
             ai_client.clone(),
@@ -213,6 +223,16 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         vrchat_osc.clone(),
     )));
 
+    let web_ui = Arc::new(web_ui::WebUI::new(
+        config.clone(),
+        storage.clone(),
+        logger.clone(),
+        bot_status.clone(),
+        twitch_irc_manager.clone(),
+        vrchat_osc.clone(),
+        discord.clone(),
+    ));
+
     let clients = BotClients {
         twitch_irc_manager: twitch_irc_manager.clone(),
         twitch_bot_client: twitch_bot_client.ok_or("Twitch bot client not initialized")?,
@@ -230,6 +250,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         logger: logger.clone(),
         bot_status,
         dashboard_state,
+        websocket_tx,
+        websocket_rx:  Some(websocket_rx), // Add this line
     };
 
     // Reset coin game and update redeems based on stream status
@@ -247,7 +269,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     Ok(clients)
 }
 
-pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut handles: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> = vec![];
 
     let web_ui = Arc::new(web_ui::WebUI::new(
@@ -320,6 +342,21 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
         println!("Twitch IRC handler started.");
         clients.dashboard_state.write().await.update_twitch_status(true);
     }
+
+    let websocket_handle = tokio::spawn({
+        let dashboard_state = clients.dashboard_state.clone();
+        let logger = clients.logger.clone();
+        let mut websocket_rx = clients.websocket_rx.take().expect("WebSocket receiver missing");
+        async move {
+            while let Some(message) = websocket_rx.recv().await {
+                if let Err(e) = dashboard_state.write().await.broadcast_message(message).await {
+                    log_error!(logger, "Failed to broadcast WebSocket message: {:?}", e);
+                }
+            }
+            Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
+        }
+    });
+    handles.push(websocket_handle);
 
     if let Some(discord_client) = clients.discord {
         let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn({

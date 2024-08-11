@@ -7,7 +7,8 @@ const SettingsForm = () => {
         twitch_channel_to_join: '',
         twitch_client_id: '',
         twitch_client_secret: '',
-        twitch_irc_oauth_token: '',
+        twitch_bot_oauth_token: '',
+        twitch_broadcaster_oauth_token: '',
         vrchat_auth_cookie: '',
         discord_token: '',
         discord_client_id: '',
@@ -145,12 +146,23 @@ const SettingsForm = () => {
                         />
                     </div>
                     <div>
-                        <label htmlFor="twitch_irc_oauth_token">IRC OAuth Token</label>
+                        <label htmlFor="twitch_bot_oauth_token">Bot OAuth Token</label>
                         <input
                             type="password"
-                            id="twitch_irc_oauth_token"
-                            name="twitch_irc_oauth_token"
-                            value={config.twitch_irc_oauth_token}
+                            id="twitch_bot_oauth_token"
+                            name="twitch_bot_oauth_token"
+                            value={config.twitch_bot_oauth_token}
+                            onChange={handleInputChange}
+                            className="w-full p-2 border rounded bg-gray-700 text-white"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="twitch_broadcaster_oauth_token">Broadcaster OAuth Token</label>
+                        <input
+                            type="password"
+                            id="twitch_broadcaster_oauth_token"
+                            name="twitch_broadcaster_oauth_token"
+                            value={config.twitch_broadcaster_oauth_token}
                             onChange={handleInputChange}
                             className="w-full p-2 border rounded bg-gray-700 text-white"
                         />

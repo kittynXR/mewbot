@@ -7,23 +7,32 @@ import ErrorBoundary from './components/ErrorBoundary';
 
 const App = () => {
   const [activeView, setActiveView] = useState('Dashboard');
+  const [twitchMessages, setTwitchMessages] = useState([]);
 
   const renderView = () => {
     switch (activeView) {
       case 'Dashboard':
-        return <ErrorBoundary><Dashboard /></ErrorBoundary>;
+        return (
+            <ErrorBoundary>
+              <Dashboard setTwitchMessages={setTwitchMessages} />
+            </ErrorBoundary>
+        );
       case 'OBS Overlay':
         return <ErrorBoundary><OBSOverlay /></ErrorBoundary>;
       case 'Settings':
         return <ErrorBoundary><Settings /></ErrorBoundary>;
       default:
-        return <ErrorBoundary><Dashboard /></ErrorBoundary>;
+        return (
+            <ErrorBoundary>
+              <Dashboard setTwitchMessages={setTwitchMessages} />
+            </ErrorBoundary>
+        );
     }
   };
 
   return (
       <div className="min-h-screen bg-gray-900 text-white">
-        <Layout activeView={activeView} setActiveView={setActiveView}>
+        <Layout activeView={activeView} setActiveView={setActiveView} twitchMessages={twitchMessages}>
           {renderView()}
         </Layout>
       </div>

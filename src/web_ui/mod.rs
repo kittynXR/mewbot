@@ -1,5 +1,5 @@
 mod server;
-mod websocket;
+pub(crate) mod websocket;
 mod api_routes;
 mod storage_ext;
 mod config;
