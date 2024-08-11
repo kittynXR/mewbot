@@ -151,41 +151,22 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         let config_read = config.read().await;
         let bot_username = config_read.twitch_bot_username.clone().ok_or("Twitch IRC bot username not set")?;
         let broadcaster_username = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
-        let bot_oauth_token = config_read.twitch_bot_oauth_token.clone().ok_or("Twitch IRC OAuth token not set")?;
-        let broadcaster_oauth_token = config_read.twitch_broadcaster_oauth_token.clone().ok_or("Twitch broadcaster OAuth token not set")?;
+        let oauth_token = config_read.twitch_bot_oauth_token.clone().ok_or("Twitch IRC OAuth token not set")?;
         let channel = broadcaster_username.clone();
 
         println!("Twitch IRC bot username: {}", bot_username);
-        println!("Twitch IRC bot OAuth token (first 10 chars): {}...", &bot_oauth_token[..10]);
-        println!("Twitch broadcaster username: {}", broadcaster_username);
-        println!("Twitch broadcaster OAuth token (first 10 chars): {}...", &broadcaster_oauth_token[..10]);
+        println!("Twitch IRC OAuth token (first 10 chars): {}...", &oauth_token[..10]);
         println!("Twitch channel to join: {}", channel);
 
-        // Initialize bot client
-        println!("Initializing bot client...");
-        match twitch_irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()]).await {
-            Ok(_) => {
-                println!("Bot client initialized successfully");
-                twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username, twitch_irc_manager.clone())));
-            },
-            Err(e) => {
-                eprintln!("Failed to initialize bot client: {}", e);
-            }
+        twitch_irc_manager.add_client(bot_username.clone(), oauth_token.clone(), vec![channel.clone()]).await?;
+        twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username, twitch_irc_manager.clone())));
+
+        if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
+            twitch_irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token, vec![channel.clone()]).await?;
+            twitch_broadcaster_client = Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, twitch_irc_manager.clone())));
         }
 
-        // Initialize broadcaster client
-        println!("Initializing broadcaster client...");
-        match twitch_irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token, vec![channel.clone()]).await {
-            Ok(_) => {
-                println!("Broadcaster client initialized successfully");
-                twitch_broadcaster_client = Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, twitch_irc_manager.clone())));
-            },
-            Err(e) => {
-                eprintln!("Failed to initialize broadcaster client: {}", e);
-            }
-        }
-
-        println!("Twitch IRC clients initialization complete.");
+        println!("Twitch IRC clients initialized successfully.");
     } else {
         println!("Twitch IRC is not configured. Skipping initialization.");
     }
@@ -312,7 +293,7 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
         }
 
         let message_handler = Arc::new(MessageHandler::new(
-            clients.twitch_bot_client.clone(), // Pass TwitchBotClient instead of TwitchIRCManager
+            clients.twitch_bot_client.clone(),
             config.clone(),
             api_client,
             clients.redeem_manager.clone(),
@@ -424,7 +405,7 @@ pub async fn run(clients: BotClients, config: Arc<RwLock<Config>>) -> Result<(),
 }
 
 async fn handle_twitch_messages(
-    twitch_bot_client: Arc<TwitchBotClient>, // Change this parameter
+    twitch_bot_client: Arc<TwitchBotClient>,
     config: Arc<RwLock<Config>>,
     api_client: Arc<TwitchAPIClient>,
     redeem_manager: Arc<RwLock<RedeemManager>>,
@@ -436,7 +417,7 @@ async fn handle_twitch_messages(
     println!("Starting Twitch message handling...");
 
     let message_handler = MessageHandler::new(
-        twitch_bot_client, // Pass TwitchBotClient instead of TwitchIRCManager
+        twitch_bot_client,
         config,
         api_client,
         redeem_manager,
