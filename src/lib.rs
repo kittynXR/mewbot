@@ -323,6 +323,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             clients.role_cache.clone(),
             clients.user_links.clone(),
             clients.logger.clone(),
+            clients.websocket_tx.clone(),
         ));
 
         let twitch_handler = tokio::spawn({
@@ -450,6 +451,7 @@ async fn handle_twitch_messages(
     role_cache: Arc<RwLock<RoleCache>>,
     user_links: Arc<UserLinks>,
     logger: Arc<Logger>,
+    websocket_tx: mpsc::Sender<WebSocketMessage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
 
@@ -462,6 +464,7 @@ async fn handle_twitch_messages(
         role_cache,
         user_links,
         logger.clone(),
+        websocket_tx,
     );
 
     message_handler.handle_messages().await?;

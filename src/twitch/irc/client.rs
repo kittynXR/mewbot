@@ -7,7 +7,7 @@ use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
-use crate::{log_error, log_info};
+use crate::{log_debug, log_error, log_info};
 use crate::logging::Logger;
 use crate::LogLevel;
 use crate::web_ui::websocket::WebSocketMessage;
@@ -37,7 +37,7 @@ impl TwitchIRCManager {
     }
 
     pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        log_info!(self.logger, "Adding Twitch IRC client for user: {}", username);
+        log_debug!(self.logger, "Adding Twitch IRC client for user: {}", username);
 
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
 
@@ -81,6 +81,7 @@ impl TwitchIRCManager {
         logger: Arc<Logger>,
     ) {
         while let Some(message) = incoming_messages.recv().await {
+            log_debug!(logger, "Received message in handle_client_messages for user {}: {:?}", username, message);
             log_info!(logger, "Received message in TwitchIRCManager: {:?}", message);
             Self::log_message(&username, &message);
 
@@ -93,6 +94,7 @@ impl TwitchIRCManager {
                     world: None,
                     additional_streams: None,
                 };
+                log_debug!(logger, "Sending message to WebSocket: {:?}", websocket_message);
                 if let Err(e) = websocket_sender.send(websocket_message).await {
                     log_error!(logger, "Failed to send message to WebSocket: {:?}", e);
                 } else {
@@ -102,6 +104,8 @@ impl TwitchIRCManager {
 
             if let Err(e) = message_sender.send(message) {
                 log_error!(logger, "Failed to broadcast message: {:?}", e);
+            } else {
+                log_debug!(logger, "Successfully broadcasted message");
             }
         }
         log_info!(logger, "Exiting handle_client_messages for {}", username);

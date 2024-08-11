@@ -10,12 +10,13 @@ use crate::discord::UserLinks;
 use crate::logging::Logger;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::timeout;
 use twitch_irc::message::ServerMessage;
-use crate::{log_error, log_info};
+use crate::{log_debug, log_error, log_info};
 use crate::LogLevel;
 use crate::twitch::irc::TwitchBotClient;
+use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct MessageHandler {
     irc_client: Arc<TwitchBotClient>,
@@ -26,6 +27,7 @@ pub struct MessageHandler {
     role_cache: Arc<RwLock<RoleCache>>,
     user_links: Arc<UserLinks>,
     logger: Arc<Logger>,
+    websocket_sender: mpsc::Sender<WebSocketMessage>,
 }
 
 impl MessageHandler {
@@ -38,6 +40,7 @@ impl MessageHandler {
         role_cache: Arc<RwLock<RoleCache>>,
         user_links: Arc<UserLinks>,
         logger: Arc<Logger>,
+        websocket_sender: mpsc::Sender<WebSocketMessage>,
     ) -> Self {
         MessageHandler {
             irc_client,
@@ -48,6 +51,7 @@ impl MessageHandler {
             role_cache,
             user_links,
             logger,
+            websocket_sender,
         }
     }
 
@@ -55,6 +59,7 @@ impl MessageHandler {
         let mut receiver = self.irc_client.subscribe();
 
         while let Ok(message) = receiver.recv().await {
+            log_debug!(self.logger, "Received message in handle_messages: {:?}", message);
             log_info!(self.logger, "Received Twitch message: {:?}", message);
             if let Err(e) = self.handle_message(message).await {
                 log_error!(self.logger, "Error handling message: {:?}", e);
@@ -65,6 +70,7 @@ impl MessageHandler {
     }
 
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        log_debug!(self.logger, "Processing message in handle_message: {:?}", message);
         if let ServerMessage::Privmsg(msg) = message {
             let channel_id = self.api_client.get_broadcaster_id().await?;
             let user_role = get_user_role(&msg.sender.id, &channel_id, &self.api_client, &self.storage, &self.role_cache).await?;
@@ -76,6 +82,21 @@ impl MessageHandler {
                 .trim()
                 .to_string();
 
+            // Send the message to the WebSocket
+            let websocket_message = WebSocketMessage {
+                message_type: "twitch_message".to_string(),
+                message: Some(cleaned_message.clone()),
+                user_id: Some(msg.sender.id.clone()),
+                destination: None,
+                world: None,
+                additional_streams: None,
+            };
+            if let Err(e) = self.websocket_sender.send(websocket_message).await {
+                log_error!(self.logger, "Failed to send message to WebSocket: {:?}", e);
+            } else {
+                log_info!(self.logger, "Successfully sent message to WebSocket");
+            }
+
             let lowercase_message = cleaned_message.to_lowercase();
             let mut parts = lowercase_message.split_whitespace();
             let command = parts.next();
@@ -86,10 +107,10 @@ impl MessageHandler {
                     if user_role >= command.required_role {
                         (command.handler)(
                             &msg,
-                            &self.irc_client,  // Pass the TwitchBotClient directly
+                            &self.irc_client,
                             &msg.channel_login,
                             &self.api_client,
-                            &Arc::new(Mutex::new(None)), // world_info is not used in this example
+                            &Arc::new(Mutex::new(None)),
                             &Arc::new(Mutex::new(super::commands::ShoutoutCooldown::new())),
                             &self.redeem_manager,
                             &self.role_cache,

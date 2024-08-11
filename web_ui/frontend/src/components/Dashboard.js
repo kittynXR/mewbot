@@ -70,6 +70,9 @@ const Dashboard = ({ setTwitchMessages }) => {
                         console.log('Updated recent messages:', updatedMessages);
                         return updatedMessages;
                     });
+                } else if (data.type === 'chatSent') {
+                    console.log('Chat message sent successfully:', data.message);
+                    // You can add any additional handling for sent messages here
                 } else {
                     console.log('Received unknown message type:', data.type);
                 }
