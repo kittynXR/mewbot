@@ -28,6 +28,7 @@ pub struct MessageHandler {
     user_links: Arc<UserLinks>,
     logger: Arc<Logger>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
+    deduplicator: Mutex<MessageDeduplicator>,
 }
 
 impl MessageHandler {
@@ -52,6 +53,7 @@ impl MessageHandler {
             user_links,
             logger,
             websocket_sender,
+            deduplicator: Mutex::new(MessageDeduplicator::new(100, Duration::from_secs(60))),
         }
     }
 
@@ -72,6 +74,14 @@ impl MessageHandler {
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log_debug!(self.logger, "Processing message in handle_message: {:?}", message);
         if let ServerMessage::Privmsg(msg) = message {
+            let message_id = msg.message_id.clone();
+
+            // Check if this message is a duplicate
+            let mut deduplicator = self.deduplicator.lock().await;
+            if deduplicator.is_duplicate(&message_id) {
+                log_debug!(self.logger, "Skipping duplicate message: {}", message_id);
+                return Ok(());
+            }
             let channel_id = self.api_client.get_broadcaster_id().await?;
             let user_role = get_user_role(&msg.sender.id, &channel_id, &self.api_client, &self.storage, &self.role_cache).await?;
 
@@ -128,5 +138,52 @@ impl MessageHandler {
             }
         }
         Ok(())
+    }
+}
+
+use std::collections::VecDeque;
+use std::time::{Instant};
+
+struct MessageDeduplicator {
+    recent_messages: VecDeque<(String, Instant)>,
+    max_size: usize,
+    ttl: Duration,
+}
+
+impl MessageDeduplicator {
+    fn new(max_size: usize, ttl: Duration) -> Self {
+        MessageDeduplicator {
+            recent_messages: VecDeque::with_capacity(max_size),
+            max_size,
+            ttl,
+        }
+    }
+
+    fn is_duplicate(&mut self, message_id: &str) -> bool {
+        let now = Instant::now();
+
+        // Remove expired entries
+        while let Some((_, timestamp)) = self.recent_messages.front() {
+            if now.duration_since(*timestamp) > self.ttl {
+                self.recent_messages.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        // Check if message_id already exists
+        let is_duplicate = self.recent_messages.iter().any(|(id, _)| id == message_id);
+
+        if !is_duplicate {
+            // Add new message_id
+            self.recent_messages.push_back((message_id.to_string(), now));
+
+            // Ensure we don't exceed max_size
+            if self.recent_messages.len() > self.max_size {
+                self.recent_messages.pop_front();
+            }
+        }
+
+        is_duplicate
     }
 }
