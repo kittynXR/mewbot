@@ -9,11 +9,16 @@ use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::http::{Request, Uri};
 use tokio_tungstenite::tungstenite::http::header;
+use tokio::sync::mpsc;
+use crate::vrchat::VRChatClient;
+use crate::web_ui::websocket::WebSocketMessage;
 
 pub async fn handler(
     auth_cookie: String,
     world_info: Arc<Mutex<Option<World>>>,
     current_user_id: String,
+    vrchat_client: Arc<VRChatClient>,
+    websocket_tx: mpsc::Sender<WebSocketMessage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(64);
@@ -28,7 +33,21 @@ pub async fn handler(
                         Ok(TungsteniteMessage::Text(msg)) => {
                             if let Ok(Some(world)) = extract_user_location_info(&msg, &current_user_id) {
                                 let mut guard = world_info.lock().await;
-                                *guard = Some(world);
+                                *guard = Some(world.clone());
+
+
+                                // Send world status update to web_ui
+                                let ws_message = WebSocketMessage {
+                                    message_type: "vrchat_world_update".to_string(),
+                                    message: None,
+                                    destination: None,
+                                    world: Some(serde_json::to_value(&world).unwrap()),
+                                    additional_streams: None,
+                                    user_id: None,
+                                };
+                                if let Err(e) = websocket_tx.send(ws_message).await {
+                                    eprintln!("Failed to send world update to web_ui: {}", e);
+                                }
                             }
                         }
                         Err(err) => {

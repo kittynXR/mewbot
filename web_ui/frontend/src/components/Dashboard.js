@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Share } from 'lucide-react';
 import TwitchPlayer from './TwitchPlayer';
+import VRChatWorldStatus from './VRChatWorldStatus';
 
 const Dashboard = ({ setTwitchMessages }) => {
     const [botStatus, setBotStatus] = useState('Unknown');
@@ -31,69 +32,89 @@ const Dashboard = ({ setTwitchMessages }) => {
         }
 
         console.log('Attempting to connect WebSocket...');
-        const socket = new WebSocket(`ws://${window.location.hostname}:3333/ws`);
+        socketRef.current = new WebSocket(`ws://${window.location.hostname}:3333/ws`);
 
-        socket.onopen = () => {
+        socketRef.current.onopen = () => {
             console.log('WebSocket connection established');
-            socketRef.current = socket;
         };
 
-        socket.onmessage = (event) => {
+        socketRef.current.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
                 console.log('Received WebSocket message:', data);
 
-                if (data.type === 'update' || data.type === 'bot_status') {
-                    console.log('Received bot status update:', data);
-                    setBotStatus(data.message || 'Unknown');
-                    if (data.world) {
-                        setUptime(data.world.uptime || '-');
-                        setCurrentVRCWorld(data.world.vrchat_world || null);
+                switch (data.type) {
+                    case 'update':
+                    case 'bot_status':
+                        console.log('Received bot status update:', data);
+                        setBotStatus(data.message || 'Unknown');
+                        if (data.world) {
+                            setUptime(data.world.uptime || '-');
+                            if (data.world.vrchat_world) {
+                                console.log('Updating VRChat world:', data.world.vrchat_world);
+                                setCurrentVRCWorld(data.world.vrchat_world);
+                            }
+                            setRecentMessages(prevMessages => {
+                                const updatedMessages = [...prevMessages, ...(data.world.recent_messages || [])].slice(-10);
+                                console.log('Updated recent messages:', updatedMessages);
+                                return updatedMessages;
+                            });
+                            setTwitchStatus(data.world.twitch_status || false);
+                            setDiscordStatus(data.world.discord_status || false);
+                            setVRChatStatus(data.world.vrchat_status || false);
+                        }
+                        break;
+                    case 'vrchat_world_update':
+                        console.log('Received VRChat update:', data);
+                        if (data.world) {
+                            console.log('Updating VRChat world:', data.world);
+                            setCurrentVRCWorld(data.world);
+                            setVRChatStatus(true);
+                        }
+                        break;
+                    case 'twitch_message':
+                        console.log('Received Twitch message:', data.message);
+                        setTwitchMessages(prevMessages => {
+                            const updatedMessages = [...prevMessages, data.message].slice(-500);
+                            console.log('Updated Twitch messages:', updatedMessages);
+                            return updatedMessages;
+                        });
                         setRecentMessages(prevMessages => {
-                            const updatedMessages = [...prevMessages, ...(data.world.recent_messages || [])].slice(-10);
+                            const updatedMessages = [...prevMessages, data.message].slice(-10);
                             console.log('Updated recent messages:', updatedMessages);
                             return updatedMessages;
                         });
-                        setTwitchStatus(data.world.twitch_status || false);
-                        setDiscordStatus(data.world.discord_status || false);
-                        setVRChatStatus(data.world.vrchat_status || false);
-                    }
-                } else if (data.type === 'twitch_message') {
-                    console.log('Received Twitch message:', data.message);
-                    setTwitchMessages(prevMessages => {
-                        const updatedMessages = [...prevMessages, data.message].slice(-500);
-                        console.log('Updated Twitch messages:', updatedMessages);
-                        return updatedMessages;
-                    });
-                    setRecentMessages(prevMessages => {
-                        const updatedMessages = [...prevMessages, data.message].slice(-10);
-                        console.log('Updated recent messages:', updatedMessages);
-                        return updatedMessages;
-                    });
-                } else if (data.type === 'chatSent') {
-                    console.log('Chat message sent successfully:', data.message);
-                    // You can add any additional handling for sent messages here
-                } else {
-                    console.log('Received unknown message type:', data.type);
+                        break;
+                    case 'chatSent':
+                        console.log('Chat message sent successfully:', data.message);
+                        break;
+                    case 'worldShared':
+                        console.log('World shared successfully:', data.message);
+                        break;
+                    default:
+                        console.log('Received unknown message type:', data.type);
                 }
             } catch (error) {
                 console.error('Error processing WebSocket message:', error);
             }
         };
 
-        socket.onerror = (error) => {
+        socketRef.current.onerror = (error) => {
             console.error('WebSocket error:', error);
         };
 
-        socket.onclose = (event) => {
+        socketRef.current.onclose = (event) => {
             console.log('WebSocket connection closed:', event);
-            socketRef.current = null;
             setTimeout(() => {
                 console.log('Attempting to reconnect WebSocket...');
                 connectWebSocket();
             }, 5000); // Attempt to reconnect after 5 seconds
         };
     }, [setTwitchMessages]);
+
+    useEffect(() => {
+        console.log('Current VRChat World updated:', currentVRCWorld);
+    }, [currentVRCWorld]);
 
     useEffect(() => {
         console.log('Setting up WebSocket connection...');
@@ -162,8 +183,13 @@ const Dashboard = ({ setTwitchMessages }) => {
         console.log('Sharing world:', currentVRCWorld);
         if (currentVRCWorld) {
             sendWebSocketMessage({ type: 'shareWorld', world: currentVRCWorld });
+        } else {
+            console.error('No VRChat world to share');
+            // Optionally, you can show an error message to the user here
         }
     }, [currentVRCWorld, sendWebSocketMessage]);
+
+    // The return statement and JSX would follow here...
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -195,26 +221,11 @@ const Dashboard = ({ setTwitchMessages }) => {
                 <p className="text-gray-300">Discord: <span className={`font-bold ${discordStatus ? 'text-green-500' : 'text-red-500'}`}>{discordStatus ? 'Connected' : 'Disconnected'}</span></p>
                 <p className="text-gray-300">VRChat: <span className={`font-bold ${vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>{vrchatStatus ? 'Connected' : 'Disconnected'}</span></p>
             </div>
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-4 text-white">Current VRChat World</h2>
-                {currentVRCWorld ? (
-                    <>
-                        <p className="text-gray-300 mb-2">Name: {currentVRCWorld.name}</p>
-                        <p className="text-gray-300 mb-2">Author: {currentVRCWorld.author_name}</p>
-                        <p className="text-gray-300 mb-4">Capacity: {currentVRCWorld.capacity}</p>
-                    </>
-                ) : (
-                    <p className="text-gray-300 mb-4">Not in a world</p>
-                )}
-                <button
-                    onClick={handleShareWorld}
-                    className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded flex items-center"
-                    disabled={!currentVRCWorld}
-                >
-                    <Share className="mr-2" size={16}/>
-                    Share with Chat
-                </button>
-            </div>
+            <VRChatWorldStatus
+                currentVRCWorld={currentVRCWorld}
+                vrchatStatus={vrchatStatus}
+                handleShareWorld={handleShareWorld}
+            />
             <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                 <h2 className="text-2xl font-bold mb-4 text-white">Chat</h2>
                 <form onSubmit={handleSendChat} className="mb-4">

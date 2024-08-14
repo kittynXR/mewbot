@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::StreamExt;
-use futures_util::SinkExt;
+use futures_util::{AsyncWriteExt, SinkExt};
 use serde_json::json;
 use crate::config::Config;
 use crate::vrchat::models::World;
@@ -94,6 +94,10 @@ impl DashboardState {
         self.vrchat_status = status;
     }
 
+    pub fn update_vrchat_world(&mut self, world: Option<World>) {
+        self.vrchat_world = world;
+    }
+
     pub fn update_twitch_status(&mut self, status: bool) {
         self.twitch_status = status;
     }
@@ -176,7 +180,7 @@ async fn handle_ws_message(
     dashboard_state: &Arc<RwLock<DashboardState>>,
     logger: &Arc<Logger>
 ) {
-    let dashboard_state = dashboard_state.read().await;
+    let mut dashboard_state = dashboard_state.write().await;
 
     match message.message_type.as_str() {
         "shareWorld" => {
@@ -201,6 +205,17 @@ async fn handle_ws_message(
             };
             if let Err(e) = dashboard_state.tx.send(response) {
                 log_error!(logger, "Failed to broadcast world shared status: {:?}", e);
+            }
+        }
+        "vrchat_world_update" => {
+            if let Some(world) = &message.world {
+                log_info!(logger, "Received VRChat world update: {:?}", world);
+                if let Ok(world_data) = serde_json::from_value::<World>(world.clone()) {
+                    dashboard_state.update_vrchat_world(Some(world_data));
+                    dashboard_state.update_vrchat_status(true);
+                } else {
+                    log_error!(logger, "Failed to parse VRChat world data");
+                }
             }
         }
         "sendChat" => {
@@ -289,6 +304,9 @@ pub async fn update_dashboard_state(
             let status = if bot_status.is_online() { "online" } else { "offline" };
             let uptime = bot_status.uptime_string();
 
+            // Log the current VRChat world state
+            log_info!(logger, "Current VRChat world state: {:?}", state.vrchat_world);
+
             // Fetch recent messages from storage
             let recent_messages = match storage.read().await.get_recent_messages(10).await {
                 Ok(messages) => messages,
@@ -303,25 +321,23 @@ pub async fn update_dashboard_state(
                 message: Some(status.to_string()),
                 destination: None,
                 world: Some(serde_json::json!({
-        "uptime": uptime,
-        "vrchat_world": state.vrchat_world,
-        "recent_messages": recent_messages,
-        "twitch_status": state.twitch_status,
-        "discord_status": discord_status,
-        "vrchat_status": state.vrchat_status,
-        "obs_status": state.obs_status,
-    })),
+                    "uptime": uptime,
+                    "vrchat_world": state.vrchat_world,
+                    "recent_messages": recent_messages,
+                    "twitch_status": state.twitch_status,
+                    "discord_status": discord_status,
+                    "vrchat_status": state.vrchat_status,
+                    "obs_status": state.obs_status,
+                })),
                 additional_streams: None,
-                user_id: None, // Add this line
+                user_id: None,
             }
         };
-        // Send the update to all connected clients
-        {
-            let state = state.read().await;
-            match state.broadcast_message(update_message).await {
-                Ok(_) => log_verbose!(logger, "Broadcast update message successfully"),
-                Err(e) => log_error!(logger, "Failed to broadcast update message: {:?}", e),
-            }
+
+        // Broadcast the update
+        let state = state.read().await;
+        if let Err(e) = state.broadcast_message(update_message).await {
+            log_error!(logger, "Failed to broadcast update message: {:?}", e);
         }
     }
 }

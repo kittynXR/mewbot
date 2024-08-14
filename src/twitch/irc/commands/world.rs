@@ -5,6 +5,7 @@ use twitch_irc::message::PrivmsgMessage;
 use crate::twitch::irc::TwitchBotClient;
 use crate::discord::UserLinks;
 use crate::storage::StorageClient;
+use crate::vrchat::VRChatClient;
 
 pub async fn handle_world(
     msg: &PrivmsgMessage,
@@ -13,7 +14,19 @@ pub async fn handle_world(
     world_info: &Arc<Mutex<Option<World>>>,
     storage: &Arc<RwLock<StorageClient>>,
     user_links: &Arc<UserLinks>,
+    vrchat_client: &Arc<VRChatClient>,
+    is_stream_online: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !is_stream_online {
+        client.send_message(channel, "The world status is not available while the stream is offline.").await?;
+        return Ok(());
+    }
+
+    if !vrchat_client.is_online().await {
+        client.send_message(channel, "The VRChat status is currently offline.").await?;
+        return Ok(());
+    }
+
     let guard = world_info.lock().await;
     match &*guard {
         Some(world) => {

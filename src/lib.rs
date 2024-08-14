@@ -38,7 +38,7 @@ pub struct BotClients {
     pub twitch_bot_client: Arc<TwitchBotClient>,
     pub twitch_broadcaster_client: Option<Arc<TwitchBroadcasterClient>>,
     pub twitch_api: Option<Arc<TwitchAPIClient>>,
-    pub vrchat: Option<VRChatClient>,
+    pub vrchat: Option<Arc<VRChatClient>>,
     pub discord: Option<Arc<discord::DiscordClient>>,
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
     pub ai_client: Option<Arc<AIClient>>,
@@ -68,7 +68,7 @@ impl BotClients {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Disconnect from VRChat
-        if let Some(vrchat_client) = &mut self.vrchat {
+        if let Some(vrchat_client) = &self.vrchat {
             println!("Disconnecting from VRChat...");
             vrchat_client.disconnect().await?;
         }
@@ -121,15 +121,19 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     };
     drop(config_read);
 
-    let vrchat = match VRChatClient::new(config.clone()).await {
-        Ok(vrchat_client) => {
-            println!("VRChat client initialized successfully.");
-            Some(vrchat_client)
+    let vrchat = if config.read().await.is_vrchat_configured() {
+        match VRChatClient::new(config.clone(), websocket_tx.clone()).await {
+            Ok(vrchat_client) => {
+                println!("VRChat client initialized successfully.");
+                Some(Arc::new(vrchat_client))
+            }
+            Err(e) => {
+                eprintln!("Failed to initialize VRChat client: {}. VRChat functionality will be disabled.", e);
+                None
+            }
         }
-        Err(e) => {
-            eprintln!("Failed to initialize VRChat client: {}. VRChat functionality will be disabled.", e);
-            None
-        }
+    } else {
+        None
     };
 
     let vrchat_osc = match VRChatOSC::new("127.0.0.1:9000") {
@@ -324,6 +328,8 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             clients.user_links.clone(),
             clients.logger.clone(),
             clients.websocket_tx.clone(),
+            world_info.clone(),
+            clients.vrchat.clone().expect("VRChatClient should be initialized") // Add this line
         ));
 
         let twitch_handler = tokio::spawn({
@@ -406,14 +412,22 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         }
     });
 
-    if let Some(vrchat_client) = clients.vrchat {
+    if let Some(vrchat_client) = &clients.vrchat {
         let current_user_id = vrchat_client.get_current_user_id().await?;
         let auth_cookie = vrchat_client.get_auth_cookie().await;
         let vrchat_handle = tokio::spawn({
             let logger_clone = clients.logger.clone();
             let dashboard_state = clients.dashboard_state.clone();
+            let websocket_tx = clients.websocket_tx.clone();
+            let vrchat_client = Arc::clone(vrchat_client);
             async move {
-                let result = crate::vrchat::websocket::handler(auth_cookie, world_info.clone(), current_user_id).await;
+                let result = crate::vrchat::websocket::handler(
+                    auth_cookie,
+                    world_info.clone(),
+                    current_user_id,
+                    vrchat_client,
+                    websocket_tx
+                ).await;
                 if let Err(e) = &result {
                     log_error!(logger_clone, "VRChat websocket handler error: {:?}", e);
                     dashboard_state.write().await.update_vrchat_status(false);
@@ -452,6 +466,8 @@ async fn handle_twitch_messages(
     user_links: Arc<UserLinks>,
     logger: Arc<Logger>,
     websocket_tx: mpsc::Sender<WebSocketMessage>,
+    world_info: Arc<Mutex<Option<World>>>,
+    vrchat_client: Arc<VRChatClient>, // Add this parameter
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting Twitch message handling...");
 
@@ -465,6 +481,8 @@ async fn handle_twitch_messages(
         user_links,
         logger.clone(),
         websocket_tx,
+        world_info,
+        vrchat_client // Use the parameter here
     );
 
     message_handler.handle_messages().await?;

@@ -8,16 +8,19 @@ use tokio::sync::RwLock;
 use tokio::sync::Mutex;
 use std::io::{self, Write};
 use rpassword::read_password;
+use tokio::sync::mpsc;
+use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct VRChatClient {
     client: Client,
-    auth_cookie: Arc<Mutex<String>>,
+    auth_cookie: Arc<RwLock<String>>,
     config: Arc<RwLock<Config>>,
-    current_user_id: Arc<Mutex<Option<String>>>,
+    current_user_id: Arc<RwLock<Option<String>>>,
+    websocket_tx: mpsc::Sender<WebSocketMessage>,
 }
 
 impl VRChatClient {
-    pub async fn new(config: Arc<RwLock<Config>>) -> Result<Self, VRChatError> {
+    pub async fn new(config: Arc<RwLock<Config>>, websocket_tx: mpsc::Sender<WebSocketMessage>) -> Result<Self, VRChatError> {
         let client = Client::builder()
             .user_agent("kittynvrc/twitchbot")
             .build()
@@ -40,10 +43,18 @@ impl VRChatClient {
 
         Ok(VRChatClient {
             client,
-            auth_cookie: Arc::new(Mutex::new(auth_cookie)),
+            auth_cookie: Arc::new(RwLock::new(auth_cookie)),
             config,
-            current_user_id: Arc::new(Mutex::new(None)),
+            current_user_id: Arc::new(RwLock::new(None)),
+            websocket_tx,
         })
+    }
+
+    pub async fn is_online(&self) -> bool {
+        // Implement the logic to check if VRChat is online
+        // This could be based on the last received world update or a separate status field
+        // For now, we'll assume it's online if we have a current user ID
+        self.current_user_id.read().await.is_some()
     }
 
     async fn login(client: &Client) -> Result<String, VRChatError> {
@@ -134,13 +145,13 @@ impl VRChatClient {
     }
 
     pub async fn get_current_user_id(&self) -> Result<String, VRChatError> {
-        if let Some(id) = self.current_user_id.lock().await.clone() {
+        if let Some(id) = self.current_user_id.read().await.clone() {
             return Ok(id);
         }
 
         let mut attempts = 0;
         loop {
-            let auth_cookie = self.auth_cookie.lock().await.clone();
+            let auth_cookie = self.auth_cookie.read().await.clone();
             let response = self.client.get("https://api.vrchat.cloud/api/1/auth/user")
                 .header(COOKIE, &auth_cookie)
                 .header(USER_AGENT, "kittynvrc/twitchbot")
@@ -160,7 +171,7 @@ impl VRChatClient {
                 if two_factor_types.contains(&Value::String("totp".to_string())) {
                     println!("Two-factor authentication required.");
                     let new_auth_cookie = self.handle_2fa(&auth_cookie).await?;
-                    *self.auth_cookie.lock().await = new_auth_cookie.clone();
+                    *self.auth_cookie.write().await = new_auth_cookie.clone(); // Changed to write()
                     let mut config = self.config.write().await;
                     config.set_vrchat_auth_cookie(new_auth_cookie)?;
                     continue;
@@ -169,12 +180,12 @@ impl VRChatClient {
 
             if let Some(id) = user_info.get("id").and_then(|id| id.as_str()) {
                 let id = id.to_string();
-                *self.current_user_id.lock().await = Some(id.clone());
+                *self.current_user_id.write().await = Some(id.clone());
                 return Ok(id);
             } else if user_info.get("error").is_some() {
                 println!("Authentication failed. Attempting to log in again.");
                 let new_auth_cookie = Self::login(&self.client).await?;
-                *self.auth_cookie.lock().await = new_auth_cookie.clone();
+                *self.auth_cookie.write().await = new_auth_cookie.clone(); // Changed to write()
                 let mut config = self.config.write().await;
                 config.set_vrchat_auth_cookie(new_auth_cookie)?;
                 attempts += 1;
@@ -189,10 +200,10 @@ impl VRChatClient {
     }
 
     pub async fn get_auth_cookie(&self) -> String {
-        self.auth_cookie.lock().await.clone()
+        self.auth_cookie.read().await.clone()
     }
 
-    pub async fn disconnect(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn disconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Implement VRChat disconnection logic here
         // For example:
         // self.websocket.close().await?;

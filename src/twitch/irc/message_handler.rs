@@ -29,6 +29,8 @@ pub struct MessageHandler {
     logger: Arc<Logger>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
     deduplicator: Mutex<MessageDeduplicator>,
+    world_info: Arc<Mutex<Option<World>>>,
+    vrchat_client: Arc<VRChatClient>,
 }
 
 impl MessageHandler {
@@ -42,6 +44,8 @@ impl MessageHandler {
         user_links: Arc<UserLinks>,
         logger: Arc<Logger>,
         websocket_sender: mpsc::Sender<WebSocketMessage>,
+        world_info: Arc<Mutex<Option<World>>>,
+        vrchat_client: Arc<VRChatClient>,
     ) -> Self {
         MessageHandler {
             irc_client,
@@ -54,6 +58,8 @@ impl MessageHandler {
             logger,
             websocket_sender,
             deduplicator: Mutex::new(MessageDeduplicator::new(100, Duration::from_secs(60))),
+            world_info,
+            vrchat_client,
         }
     }
 
@@ -115,12 +121,14 @@ impl MessageHandler {
             if let Some(cmd) = command {
                 if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
                     if user_role >= command.required_role {
+                        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+                        let is_stream_online = self.api_client.is_stream_live(&broadcaster_id).await?;
                         (command.handler)(
                             &msg,
                             &self.irc_client,
                             &msg.channel_login,
                             &self.api_client,
-                            &Arc::new(Mutex::new(None)),
+                            &self.world_info,
                             &Arc::new(Mutex::new(super::commands::ShoutoutCooldown::new())),
                             &self.redeem_manager,
                             &self.role_cache,
@@ -128,7 +136,9 @@ impl MessageHandler {
                             &self.user_links,
                             &params,
                             &self.config,
-                            &self.logger
+                            &self.logger,
+                            &self.vrchat_client,
+                            is_stream_online
                         ).await?;
                     } else {
                         let response = format!("@{}, this command is only available to {:?}s and above.", msg.sender.name, command.required_role);
@@ -143,6 +153,7 @@ impl MessageHandler {
 
 use std::collections::VecDeque;
 use std::time::{Instant};
+use crate::vrchat::{VRChatClient, World};
 
 struct MessageDeduplicator {
     recent_messages: VecDeque<(String, Instant)>,

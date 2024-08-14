@@ -35,7 +35,7 @@ fn default_additional_streams() -> Vec<String> {
 }
 
 impl Config {
-    const CONFIG_PATH: &'static str = "mewbot.conf";
+    const CONFIG_PATH: &'static str = "C:\\Users\\kittyn\\RustroverProjects\\mewbot\\target\\debug\\mewbot.conf";
 
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         if Path::new(Self::CONFIG_PATH).exists() {

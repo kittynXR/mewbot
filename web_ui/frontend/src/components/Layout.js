@@ -37,7 +37,7 @@ const Sidebar = ({ activeItem, setActiveItem, isCollapsed, toggleSidebar }) => {
 
 const Layout = ({ children, activeView, setActiveView }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);
-    const [messages, setMessages] = useState([]); // This should be populated with actual Twitch chat messages
+    const [messages] = useState([]); // Remove setMessages if it's not being used
 
     const toggleSidebar = () => setIsCollapsed(!isCollapsed);
 
