@@ -3,7 +3,6 @@ pub(crate) mod websocket;
 mod api_routes;
 mod storage_ext;
 mod config;
-pub(crate) mod websocket_server;
 
 pub use server::WebUI;
 pub use config::WebUIConfig;

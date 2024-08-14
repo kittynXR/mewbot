@@ -11,8 +11,8 @@ use crate::storage::StorageClient;
 use crate::logging::Logger;
 use crate::osc::VRChatOSC;
 use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient}; // Updated import
-use crate::web_ui::websocket_server;
-use crate::web_ui::websocket_server::{DashboardState, update_dashboard_state};
+use crate::web_ui::websocket;
+use crate::web_ui::websocket::{DashboardState, update_dashboard_state};
 use super::websocket::{handle_websocket, WebSocketMessage};
 use super::api_routes::{api_routes, with_storage, with_logger};
 use crate::discord::DiscordClient;
@@ -21,7 +21,7 @@ pub struct WebUI {
     config: Arc<RwLock<Config>>,
     storage: Arc<RwLock<StorageClient>>,
     logger: Arc<Logger>,
-    pub dashboard_state: Arc<RwLock<websocket_server::DashboardState>>,
+    pub dashboard_state: Arc<RwLock<websocket::DashboardState>>,
     discord_client: Option<Arc<DiscordClient>>,
 }
 

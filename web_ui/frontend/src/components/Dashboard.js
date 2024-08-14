@@ -117,6 +117,10 @@ const Dashboard = ({ setTwitchMessages }) => {
     }, [currentVRCWorld]);
 
     useEffect(() => {
+        console.log('VRChat Status updated:', vrchatStatus);
+    }, [vrchatStatus]);
+
+    useEffect(() => {
         console.log('Setting up WebSocket connection...');
         connectWebSocket();
         return () => {

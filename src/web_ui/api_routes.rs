@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::{log_error, log_info};
 use crate::LogLevel;
 use crate::web_ui::storage_ext::StorageClientExt;
-use crate::web_ui::websocket_server::DashboardState;
+use crate::web_ui::websocket::DashboardState;
 
 pub fn api_routes(
     config: Arc<RwLock<Config>>,

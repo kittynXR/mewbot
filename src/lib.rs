@@ -29,7 +29,7 @@ use crate::osc::VRChatOSC;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
-use crate::web_ui::websocket_server::DashboardState;
+use crate::web_ui::websocket::DashboardState;
 use tokio::sync::mpsc;
 use crate::web_ui::websocket::WebSocketMessage;
 
