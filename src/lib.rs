@@ -352,14 +352,16 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     let websocket_handle = tokio::spawn({
         let dashboard_state = clients.dashboard_state.clone();
+        let storage = clients.storage.clone();
+        let discord_client = clients.discord.clone();
         let logger = clients.logger.clone();
-        let mut websocket_rx = clients.websocket_rx.take().expect("WebSocket receiver missing");
         async move {
-            while let Some(message) = websocket_rx.recv().await {
-                if let Err(e) = dashboard_state.write().await.broadcast_message(message).await {
-                    log_error!(logger, "Failed to broadcast WebSocket message: {:?}", e);
-                }
-            }
+            crate::web_ui::websocket::update_dashboard_state(
+                dashboard_state,
+                storage,
+                Arc::new(RwLock::new(discord_client)),
+                logger
+            ).await;
             Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
         }
     });
@@ -418,7 +420,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let vrchat_handle = tokio::spawn({
             let logger_clone = clients.logger.clone();
             let dashboard_state = clients.dashboard_state.clone();
-            let websocket_tx = clients.websocket_tx.clone();
+            let dashboard_state_clone = dashboard_state.clone(); // Clone for use inside the closure
             let vrchat_client = Arc::clone(vrchat_client);
             async move {
                 let result = crate::vrchat::websocket::handler(
@@ -426,7 +428,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
                     world_info.clone(),
                     current_user_id,
                     vrchat_client,
-                    websocket_tx
+                    dashboard_state_clone // Use the cloned version here
                 ).await;
                 if let Err(e) = &result {
                     log_error!(logger_clone, "VRChat websocket handler error: {:?}", e);

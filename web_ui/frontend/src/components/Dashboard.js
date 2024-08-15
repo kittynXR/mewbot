@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Share } from 'lucide-react';
+// Remove the unused Share import
 import TwitchPlayer from './TwitchPlayer';
 import VRChatWorldStatus from './VRChatWorldStatus';
 
@@ -41,7 +41,8 @@ const Dashboard = ({ setTwitchMessages }) => {
         socketRef.current.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                console.log('Received WebSocket message:', data);
+                console.log('Raw WebSocket message received:', event.data);
+                console.log('Parsed WebSocket message:', data);
 
                 switch (data.type) {
                     case 'update':
@@ -49,27 +50,24 @@ const Dashboard = ({ setTwitchMessages }) => {
                         console.log('Received bot status update:', data);
                         setBotStatus(data.message || 'Unknown');
                         if (data.world) {
-                            setUptime(data.world.uptime || '-');
-                            if (data.world.vrchat_world) {
-                                console.log('Updating VRChat world:', data.world.vrchat_world);
+                            console.log('world object:', data.world);
+                            if ('vrchat_world' in data.world) {
+                                console.log('vrchat_world exists:', data.world.vrchat_world);
                                 setCurrentVRCWorld(data.world.vrchat_world);
+                            } else {
+                                console.log('vrchat_world does not exist in the world object');
                             }
-                            setRecentMessages(prevMessages => {
-                                const updatedMessages = [...prevMessages, ...(data.world.recent_messages || [])].slice(-10);
-                                console.log('Updated recent messages:', updatedMessages);
-                                return updatedMessages;
-                            });
-                            setTwitchStatus(data.world.twitch_status || false);
-                            setDiscordStatus(data.world.discord_status || false);
-                            setVRChatStatus(data.world.vrchat_status || false);
+                        } else {
+                            console.log('world object does not exist in the received data');
                         }
                         break;
                     case 'vrchat_world_update':
-                        console.log('Received VRChat update:', data);
-                        if (data.world) {
-                            console.log('Updating VRChat world:', data.world);
-                            setCurrentVRCWorld(data.world);
+                        if (data.world && data.world.vrchat_world) {
+                            console.log('Updating VRChat world:', data.world.vrchat_world);
+                            setCurrentVRCWorld(data.world.vrchat_world);
                             setVRChatStatus(true);
+                        } else {
+                            console.log('No VRChat world data in update');
                         }
                         break;
                     case 'twitch_message':
@@ -108,7 +106,7 @@ const Dashboard = ({ setTwitchMessages }) => {
             setTimeout(() => {
                 console.log('Attempting to reconnect WebSocket...');
                 connectWebSocket();
-            }, 5000); // Attempt to reconnect after 5 seconds
+            }, 5000);
         };
     }, [setTwitchMessages]);
 

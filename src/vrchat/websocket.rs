@@ -3,22 +3,23 @@ use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::http::{Request, Uri};
 use tokio_tungstenite::tungstenite::http::header;
 use tokio::sync::mpsc;
+use crate::log_info;
 use crate::vrchat::VRChatClient;
-use crate::web_ui::websocket::WebSocketMessage;
+use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 
 pub async fn handler(
     auth_cookie: String,
     world_info: Arc<Mutex<Option<World>>>,
     current_user_id: String,
     vrchat_client: Arc<VRChatClient>,
-    websocket_tx: mpsc::Sender<WebSocketMessage>,
+    dashboard_state: Arc<RwLock<DashboardState>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(64);
@@ -27,27 +28,20 @@ pub async fn handler(
         match connect_to_websocket(&auth_cookie).await {
             Ok(mut ws_stream) => {
                 println!("WebSocket connection established");
+                dashboard_state.write().await.update_vrchat_status(true);
 
                 while let Some(message) = ws_stream.next().await {
                     match message {
                         Ok(TungsteniteMessage::Text(msg)) => {
                             if let Ok(Some(world)) = extract_user_location_info(&msg, &current_user_id) {
+                                let mut dashboard = dashboard_state.write().await;
+                                dashboard.update_vrchat_world(Some(world.clone()));
+                                println!("Current user changed world: {:?}", world);
+                                println!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+
+                                // Update the separate world_info as well
                                 let mut guard = world_info.lock().await;
-                                *guard = Some(world.clone());
-
-
-                                // Send world status update to web_ui
-                                let ws_message = WebSocketMessage {
-                                    message_type: "vrchat_world_update".to_string(),
-                                    message: None,
-                                    destination: None,
-                                    world: Some(serde_json::to_value(&world).unwrap()),
-                                    additional_streams: None,
-                                    user_id: None,
-                                };
-                                if let Err(e) = websocket_tx.send(ws_message).await {
-                                    eprintln!("Failed to send world update to web_ui: {}", e);
-                                }
+                                *guard = Some(world);
                             }
                         }
                         Err(err) => {
@@ -61,6 +55,7 @@ pub async fn handler(
             }
             Err(err) => {
                 println!("Failed to connect: {}", err);
+                dashboard_state.write().await.update_vrchat_status(false);
                 delay = std::cmp::min(delay * 2, max_delay);
             }
         }
@@ -69,8 +64,6 @@ pub async fn handler(
         sleep(delay).await;
     }
 }
-
-// ... rest of the file remains the same ...
 
 
 async fn connect_to_websocket(auth_cookie: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, VRChatError> {

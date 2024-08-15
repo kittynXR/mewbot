@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
@@ -18,6 +19,7 @@ use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Default)]
 pub struct WebSocketMessage {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -112,32 +114,10 @@ impl DashboardState {
 
     pub fn update_vrchat_status(&mut self, status: bool) {
         self.vrchat_status = status;
-        let update_message = WebSocketMessage {
-            message_type: "vrchat_status_update".to_string(),
-            message: Some(status.to_string()),
-            destination: None,
-            world: None,
-            additional_streams: None,
-            user_id: None,
-        };
-        let _ = self.tx.send(update_message);
     }
 
     pub fn update_vrchat_world(&mut self, world: Option<World>) {
-        println!("Updating VRChat world: {:?}", world);
-        self.vrchat_world = world.clone();
-        // Broadcast the world update to all connected clients
-        if let Some(world) = &self.vrchat_world {
-            let update_message = WebSocketMessage {
-                message_type: "vrchat_world_update".to_string(),
-                message: None,
-                destination: None,
-                world: Some(serde_json::to_value(world).unwrap()),
-                additional_streams: None,
-                user_id: None,
-            };
-            let _ = self.tx.send(update_message); // Ignore send errors
-        }
+        self.vrchat_world = world;
     }
 
     pub fn update_twitch_status(&mut self, status: bool) {
@@ -160,6 +140,9 @@ pub async fn handle_websocket(
     logger: Arc<Logger>
 ) {
     let (mut ws_tx, mut ws_rx) = ws.split();
+
+    // Wait for the connection to be fully established
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Create a new receiver for this connection
     let mut rx = dashboard_state.read().await.tx.subscribe();
@@ -244,69 +227,63 @@ async fn handle_ws_message(
     storage: &Arc<RwLock<StorageClient>>,
     logger: &Arc<Logger>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut dashboard_state = dashboard_state.write().await;
-
     match message.message_type.as_str() {
         "shareWorld" => {
-            log_info!(logger, "Sharing VRChat world");
-            if let Some(world) = &dashboard_state.vrchat_world {
-                let world_info = format!("Current VRChat World: {} by {}", world.name, world.author_name);
-                if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                    if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
-                        if let Err(e) = twitch_client.send_message(&twitch_channel, &world_info).await {
-                            log_error!(logger, "Error sending world info to Twitch chat: {:?}", e);
-                        }
-                    }
+            let world_info = {
+                let state = dashboard_state.read().await;
+                state.vrchat_world.as_ref().map(|world| {
+                    format!("Current VRChat World: {} by {}", world.name, world.author_name)
+                })
+            };
+
+            if let Some(world_info) = world_info {
+                let twitch_channel = dashboard_state.read().await.get_twitch_channel().await?;
+                if let Some(twitch_client) = dashboard_state.read().await.get_twitch_bot_client().await {
+                    twitch_client.send_message(&twitch_channel, &world_info).await?;
                 }
             }
+
             let response = WebSocketMessage {
                 message_type: "worldShared".to_string(),
                 message: Some("success".to_string()),
-                destination: None,
-                world: None,
-                additional_streams: None,
-                user_id: None,
+                ..Default::default()
             };
-            dashboard_state.broadcast_message(response).await?;
+            dashboard_state.read().await.broadcast_message(response).await?;
         }
         "sendChat" => {
             if let Some(chat_msg) = &message.message {
-                log_info!(logger, "Sending chat message: {}", chat_msg);
-                if let Some(destinations) = &message.destination {
-                    if destinations.oscTextbox {
-                        if let Some(vrchat_osc) = dashboard_state.get_vrchat_osc() {
-                            if let Err(e) = vrchat_osc.send_chatbox_message(chat_msg, true, false) {
-                                log_error!(logger, "Error sending message to VRChat OSC: {:?}", e);
-                            }
+                let destinations = message.destination.clone();
+                let additional_streams = message.additional_streams.clone();
+
+                // Handle VRChat OSC
+                if destinations.as_ref().map_or(false, |d| d.oscTextbox) {
+                    if let Some(vrchat_osc) = dashboard_state.read().await.get_vrchat_osc() {
+                        vrchat_osc.send_chatbox_message(chat_msg, true, false)?;
+                    }
+                }
+
+                // Handle Twitch chat
+                if destinations.as_ref().map_or(false, |d| d.twitchChat) {
+                    let twitch_channel = dashboard_state.read().await.get_twitch_channel().await?;
+
+                    if destinations.as_ref().map_or(false, |d| d.twitchBot) {
+                        if let Some(twitch_client) = dashboard_state.read().await.get_twitch_bot_client().await {
+                            twitch_client.send_message(&twitch_channel, chat_msg).await?;
                         }
                     }
-                    if destinations.twitchChat {
-                        if let Ok(twitch_channel) = dashboard_state.get_twitch_channel().await {
-                            if destinations.twitchBot {
-                                if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
-                                    if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
-                                        log_error!(logger, "Error sending message to Twitch chat as bot: {:?}", e);
-                                    }
-                                }
-                            }
-                            if destinations.twitchBroadcaster {
-                                if let Some(twitch_client) = dashboard_state.get_twitch_broadcaster_client().await {
-                                    if let Err(e) = twitch_client.send_message(&twitch_channel, chat_msg).await {
-                                        log_error!(logger, "Error sending message to Twitch chat as broadcaster: {:?}", e);
-                                    }
-                                }
-                            }
+
+                    if destinations.as_ref().map_or(false, |d| d.twitchBroadcaster) {
+                        if let Some(twitch_client) = dashboard_state.read().await.get_twitch_broadcaster_client().await {
+                            twitch_client.send_message(&twitch_channel, chat_msg).await?;
                         }
                     }
                 }
 
                 // Handle additional streams
-                if let Some(additional_streams) = &message.additional_streams {
-                    for stream in additional_streams {
-                        if let Some(twitch_client) = dashboard_state.get_twitch_bot_client().await {
-                            if let Err(e) = twitch_client.send_message(stream, chat_msg).await {
-                                log_error!(logger, "Error sending message to additional stream {}: {:?}", stream, e);
-                            }
+                if let Some(streams) = additional_streams {
+                    if let Some(twitch_client) = dashboard_state.read().await.get_twitch_bot_client().await {
+                        for stream in streams {
+                            twitch_client.send_message(&stream, chat_msg).await?;
                         }
                     }
                 }
@@ -314,20 +291,26 @@ async fn handle_ws_message(
                 let response = WebSocketMessage {
                     message_type: "chatSent".to_string(),
                     message: Some("success".to_string()),
-                    destination: None,
-                    world: None,
-                    additional_streams: None,
-                    user_id: None,
+                    ..Default::default()
                 };
-                dashboard_state.broadcast_message(response).await?;
+                dashboard_state.read().await.broadcast_message(response).await?;
             }
         }
         "vrchat_world_update" => {
             if let Some(world) = &message.world {
-                log_info!(logger, "Received VRChat world update: {:?}", world);
                 if let Ok(world_data) = serde_json::from_value::<World>(world.clone()) {
-                    dashboard_state.update_vrchat_world(Some(world_data));
-                    dashboard_state.update_vrchat_status(true);
+                    {
+                        let mut state = dashboard_state.write().await;
+                        state.update_vrchat_world(Some(world_data.clone()));
+                        state.update_vrchat_status(true);
+                    }
+
+                    let broadcast_msg = WebSocketMessage {
+                        message_type: "vrchat_world_update".to_string(),
+                        world: Some(serde_json::to_value(&world_data)?),
+                        ..Default::default()
+                    };
+                    dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
                 } else {
                     log_error!(logger, "Failed to parse VRChat world data");
                 }
@@ -335,24 +318,15 @@ async fn handle_ws_message(
         }
         "twitch_message" => {
             if let (Some(chat_msg), Some(user_id)) = (&message.message, &message.user_id) {
-                log_info!(logger, "Received Twitch message from {}: {}", user_id, chat_msg);
+                storage.write().await.add_message(user_id, chat_msg)?;
 
-                // Add the message to recent messages
-                let storage = storage.read().await;
-                if let Err(e) = storage.add_message(user_id, chat_msg) {
-                    log_error!(logger, "Error adding message to storage: {:?}", e);
-                }
-
-                // Broadcast the message to all connected clients
                 let broadcast_msg = WebSocketMessage {
                     message_type: "twitch_message".to_string(),
                     message: Some(chat_msg.clone()),
                     user_id: Some(user_id.clone()),
-                    destination: None,
-                    world: None,
-                    additional_streams: None,
+                    ..Default::default()
                 };
-                dashboard_state.broadcast_message(broadcast_msg).await?;
+                dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
             } else {
                 log_error!(logger, "Received incomplete Twitch message");
             }
@@ -395,7 +369,7 @@ pub async fn update_dashboard_state(
             };
 
             // Create the update message
-            WebSocketMessage {
+            let message = WebSocketMessage {
                 message_type: "update".to_string(),
                 message: Some(status.to_string()),
                 destination: None,
@@ -410,7 +384,12 @@ pub async fn update_dashboard_state(
                 })),
                 additional_streams: None,
                 user_id: None,
-            }
+            };
+
+            // Log the exact WebSocket message being sent
+            log_info!(logger, "Sending WebSocket message: {}", serde_json::to_string_pretty(&message).unwrap());
+
+            message
         };
 
         // Broadcast the update
