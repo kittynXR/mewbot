@@ -1,133 +1,125 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-// Remove the unused Share import
+import React, { useReducer, useEffect, useCallback, useState } from 'react';
 import TwitchPlayer from './TwitchPlayer';
 import VRChatWorldStatus from './VRChatWorldStatus';
+import useWebSocket from './useWebSocket';
 
-const Dashboard = ({ setTwitchMessages }) => {
-    const [botStatus, setBotStatus] = useState('Unknown');
-    const [uptime, setUptime] = useState('-');
-    const [currentVRCWorld, setCurrentVRCWorld] = useState(null);
-    const [recentMessages, setRecentMessages] = useState([]);
-    const [chatMessage, setChatMessage] = useState('');
-    const [chatDestination, setChatDestination] = useState({
+const initialState = {
+    botStatus: 'Unknown',
+    uptime: '-',
+    currentVRCWorld: null,
+    recentMessages: [],
+    chatMessage: '',
+    chatDestination: {
         oscTextbox: false,
         twitchChat: false,
         twitchBot: false,
         twitchBroadcaster: false
-    });
-    const [twitchStatus, setTwitchStatus] = useState(false);
-    const [discordStatus, setDiscordStatus] = useState(false);
-    const [vrchatStatus, setVRChatStatus] = useState(false);
-    const [twitchChannel, setTwitchChannel] = useState('');
-    const [additionalStreams, setAdditionalStreams] = useState([]);
-    const [additionalStreamToggles, setAdditionalStreamToggles] = useState([]);
-    const [twitchError, setTwitchError] = useState(null);
+    },
+    twitchStatus: false,
+    discordStatus: false,
+    vrchatStatus: false,
+    twitchChannel: '',
+    additionalStreams: [],
+    additionalStreamToggles: [],
+    twitchError: null,
+    wsError: null
+};
 
-    const socketRef = useRef(null);
+function reducer(state, action) {
+    switch (action.type) {
+        case 'SET_BOT_STATUS':
+            return { ...state, botStatus: action.payload };
+        case 'SET_UPTIME':
+            return { ...state, uptime: action.payload };
+        case 'SET_VRC_WORLD':
+            return { ...state, currentVRCWorld: action.payload };
+        case 'SET_RECENT_MESSAGES':
+            return {
+                ...state,
+                recentMessages: Array.isArray(action.payload)
+                    ? action.payload
+                    : (Array.isArray(state.recentMessages) ? state.recentMessages : [])
+            };
+        case 'SET_CHAT_MESSAGE':
+            return { ...state, chatMessage: action.payload };
+        case 'SET_CHAT_DESTINATION':
+            return { ...state, chatDestination: { ...state.chatDestination, ...action.payload } };
+        case 'SET_TWITCH_STATUS':
+            return { ...state, twitchStatus: action.payload };
+        case 'SET_DISCORD_STATUS':
+            return { ...state, discordStatus: action.payload };
+        case 'SET_VRCHAT_STATUS':
+            return { ...state, vrchatStatus: action.payload };
+        case 'SET_TWITCH_CHANNEL':
+            return { ...state, twitchChannel: action.payload };
+        case 'SET_ADDITIONAL_STREAMS':
+            return { ...state, additionalStreams: action.payload, additionalStreamToggles: action.payload.map(() => false) };
+        case 'TOGGLE_ADDITIONAL_STREAM':
+            return {
+                ...state,
+                additionalStreamToggles: state.additionalStreamToggles.map((toggle, index) =>
+                    index === action.payload ? !toggle : toggle
+                )
+            };
+        case 'SET_TWITCH_ERROR':
+            return { ...state, twitchError: action.payload };
+        case 'WS_ERROR':
+            return { ...state, wsError: action.payload };
+        default:
+            return state;
+    }
+}
 
-    const connectWebSocket = useCallback(() => {
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-            console.log('WebSocket is already connected');
-            return;
-        }
+const Dashboard = ({ setTwitchMessages }) => {
+    const [state, dispatch] = useReducer(reducer, initialState);
+    const [wsConnectionError, setWsConnectionError] = useState(null);
 
-        console.log('Attempting to connect WebSocket...');
-        socketRef.current = new WebSocket(`ws://${window.location.hostname}:3333/ws`);
+    const handleWebSocketMessage = useCallback((data) => {
+        console.log('Received WebSocket message:', data);
 
-        socketRef.current.onopen = () => {
-            console.log('WebSocket connection established');
-        };
-
-        socketRef.current.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                console.log('Raw WebSocket message received:', event.data);
-                console.log('Parsed WebSocket message:', data);
-
-                switch (data.type) {
-                    case 'update':
-                    case 'bot_status':
-                        console.log('Received bot status update:', data);
-                        setBotStatus(data.message || 'Unknown');
-                        if (data.world) {
-                            console.log('world object:', data.world);
-                            if ('vrchat_world' in data.world) {
-                                console.log('vrchat_world exists:', data.world.vrchat_world);
-                                setCurrentVRCWorld(data.world.vrchat_world);
-                            } else {
-                                console.log('vrchat_world does not exist in the world object');
-                            }
-                        } else {
-                            console.log('world object does not exist in the received data');
-                        }
-                        break;
-                    case 'vrchat_world_update':
-                        if (data.world && data.world.vrchat_world) {
-                            console.log('Updating VRChat world:', data.world.vrchat_world);
-                            setCurrentVRCWorld(data.world.vrchat_world);
-                            setVRChatStatus(true);
-                        } else {
-                            console.log('No VRChat world data in update');
-                        }
-                        break;
-                    case 'twitch_message':
-                        console.log('Received Twitch message:', data.message);
-                        setTwitchMessages(prevMessages => {
-                            const updatedMessages = [...prevMessages, data.message].slice(-500);
-                            console.log('Updated Twitch messages:', updatedMessages);
-                            return updatedMessages;
+        switch (data.type) {
+            case 'update':
+            case 'bot_status':
+                dispatch({ type: 'SET_BOT_STATUS', payload: data.message || 'Unknown' });
+                if (data.world) {
+                    dispatch({ type: 'SET_UPTIME', payload: data.world.uptime || '-' });
+                    dispatch({ type: 'SET_VRC_WORLD', payload: data.world.vrchat_world });
+                    dispatch({ type: 'SET_TWITCH_STATUS', payload: data.world.twitch_status });
+                    dispatch({ type: 'SET_DISCORD_STATUS', payload: data.world.discord_status });
+                    dispatch({ type: 'SET_VRCHAT_STATUS', payload: data.world.vrchat_status });
+                    dispatch({ type: 'SET_OBS_STATUS', payload: data.world.obs_status });
+                    if (data.world.recent_messages) {
+                        dispatch({ type: 'SET_RECENT_MESSAGES', payload: prevMessages =>
+                                [...prevMessages, ...data.world.recent_messages].slice(-10)
                         });
-                        setRecentMessages(prevMessages => {
-                            const updatedMessages = [...prevMessages, data.message].slice(-10);
-                            console.log('Updated recent messages:', updatedMessages);
-                            return updatedMessages;
-                        });
-                        break;
-                    case 'chatSent':
-                        console.log('Chat message sent successfully:', data.message);
-                        break;
-                    case 'worldShared':
-                        console.log('World shared successfully:', data.message);
-                        break;
-                    default:
-                        console.log('Received unknown message type:', data.type);
+                    }
                 }
-            } catch (error) {
-                console.error('Error processing WebSocket message:', error);
-            }
-        };
-
-        socketRef.current.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
-
-        socketRef.current.onclose = (event) => {
-            console.log('WebSocket connection closed:', event);
-            setTimeout(() => {
-                console.log('Attempting to reconnect WebSocket...');
-                connectWebSocket();
-            }, 5000);
-        };
+                break;
+            case 'twitch_message':
+                setTwitchMessages(prevMessages => [...prevMessages, data.message].slice(-500));
+                dispatch({ type: 'SET_RECENT_MESSAGES', payload: prevMessages =>
+                        [...prevMessages, data.message].slice(-10)
+                });
+                break;
+            case 'vrchat_world_update':
+                dispatch({ type: 'SET_VRC_WORLD', payload: data.world });
+                break;
+            default:
+                console.log('Unhandled message type:', data.type);
+        }
     }, [setTwitchMessages]);
 
-    useEffect(() => {
-        console.log('Current VRChat World updated:', currentVRCWorld);
-    }, [currentVRCWorld]);
+    const handleWebSocketError = useCallback((error) => {
+        console.error('WebSocket error:', error);
+        setWsConnectionError(error);
+        dispatch({ type: 'WS_ERROR', payload: error });
+    }, []);
 
-    useEffect(() => {
-        console.log('VRChat Status updated:', vrchatStatus);
-    }, [vrchatStatus]);
-
-    useEffect(() => {
-        console.log('Setting up WebSocket connection...');
-        connectWebSocket();
-        return () => {
-            console.log('Cleaning up WebSocket connection...');
-            if (socketRef.current) {
-                socketRef.current.close();
-            }
-        };
-    }, [connectWebSocket]);
+    const { sendMessage, isConnected } = useWebSocket(
+        `ws://${window.location.hostname}:3333/ws`,
+        handleWebSocketMessage,
+        handleWebSocketError
+    );
 
     useEffect(() => {
         const fetchTwitchInfo = async () => {
@@ -144,67 +136,60 @@ const Dashboard = ({ setTwitchMessages }) => {
                 const channelData = await channelResponse.json();
                 const configData = await configResponse.json();
 
-                setTwitchChannel(channelData.channel);
+                dispatch({ type: 'SET_TWITCH_CHANNEL', payload: channelData.channel });
                 const filteredStreams = configData.additional_streams.filter(stream => stream);
-                setAdditionalStreams(filteredStreams);
-                setAdditionalStreamToggles(filteredStreams.map(() => false));
-                setTwitchError(null);
+                dispatch({ type: 'SET_ADDITIONAL_STREAMS', payload: filteredStreams });
+                dispatch({ type: 'SET_TWITCH_ERROR', payload: null });
             } catch (error) {
                 console.error('Failed to fetch Twitch info:', error);
-                setTwitchError(error.message);
+                dispatch({ type: 'SET_TWITCH_ERROR', payload: error.message });
             }
         };
 
         fetchTwitchInfo();
     }, []);
 
-    const sendWebSocketMessage = useCallback((message) => {
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-            socketRef.current.send(JSON.stringify(message));
-        } else {
-            console.error('WebSocket is not connected');
-        }
-    }, []);
-
     const handleSendChat = useCallback((e) => {
         e.preventDefault();
-        console.log('Sending chat message:', chatMessage);
-        if (chatMessage.trim() === '') return;
+        if (state.chatMessage.trim() === '' || !isConnected) return;
 
-        sendWebSocketMessage({
+        sendMessage({
             type: 'sendChat',
-            message: chatMessage,
-            destination: chatDestination,
-            additionalStreams: additionalStreams.filter((_, index) => additionalStreamToggles[index])
+            message: state.chatMessage,
+            destination: state.chatDestination,
+            additionalStreams: state.additionalStreams.filter((_, index) => state.additionalStreamToggles[index])
         });
 
-        setChatMessage('');
-    }, [chatMessage, chatDestination, additionalStreams, additionalStreamToggles, sendWebSocketMessage]);
+        dispatch({ type: 'SET_CHAT_MESSAGE', payload: '' });
+    }, [state.chatMessage, state.chatDestination, state.additionalStreams, state.additionalStreamToggles, sendMessage, isConnected]);
 
     const handleShareWorld = useCallback(() => {
-        console.log('Sharing world:', currentVRCWorld);
-        if (currentVRCWorld) {
-            sendWebSocketMessage({ type: 'shareWorld', world: currentVRCWorld });
+        if (state.currentVRCWorld && isConnected) {
+            sendMessage({ type: 'shareWorld', world: state.currentVRCWorld });
+        } else if (!isConnected) {
+            dispatch({ type: 'WS_ERROR', payload: 'WebSocket is not connected' });
         } else {
-            console.error('No VRChat world to share');
-            // Optionally, you can show an error message to the user here
+            dispatch({ type: 'WS_ERROR', payload: 'No VRChat world to share' });
         }
-    }, [currentVRCWorld, sendWebSocketMessage]);
-
-    // The return statement and JSX would follow here...
+    }, [state.currentVRCWorld, sendMessage, isConnected]);
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+            {wsConnectionError && (
+                <div className="bg-red-500 text-white p-4 mb-4">
+                    WebSocket Error: {wsConnectionError}
+                </div>
+            )}
             <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                 <h2 className="text-2xl font-bold mb-4 text-white">Twitch Stream</h2>
-                {twitchError ? (
-                    <p className="text-red-500">Error loading Twitch stream: {twitchError}</p>
-                ) : twitchChannel ? (
+                {state.twitchError ? (
+                    <p className="text-red-500">Error loading Twitch stream: {state.twitchError}</p>
+                ) : state.twitchChannel ? (
                     <>
-                        <p className="text-gray-300 mb-2">Channel: {twitchChannel}</p>
+                        <p className="text-gray-300 mb-2">Channel: {state.twitchChannel}</p>
                         <div className="w-full h-0 pb-[56.25%] relative">
                             <div className="absolute inset-0">
-                                <TwitchPlayer channel={twitchChannel} />
+                                <TwitchPlayer channel={state.twitchChannel}/>
                             </div>
                         </div>
                     </>
@@ -214,62 +199,50 @@ const Dashboard = ({ setTwitchMessages }) => {
             </div>
             <div className="bg-gray-800 p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-4 text-white">Bot Status</h2>
-                <p className="text-gray-300">Status: <span className="font-bold text-white">{botStatus}</span></p>
-                <p className="text-gray-300">Uptime: <span className="font-bold text-white">{uptime}</span></p>
+                <p className="text-gray-300">Status: <span className="font-bold text-white">{state.botStatus}</span></p>
+                <p className="text-gray-300">Uptime: <span className="font-bold text-white">{state.uptime}</span></p>
             </div>
             <div className="bg-gray-800 p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-4 text-white">Connection Status</h2>
-                <p className="text-gray-300">Twitch: <span className={`font-bold ${twitchStatus ? 'text-green-500' : 'text-red-500'}`}>{twitchStatus ? 'Connected' : 'Disconnected'}</span></p>
-                <p className="text-gray-300">Discord: <span className={`font-bold ${discordStatus ? 'text-green-500' : 'text-red-500'}`}>{discordStatus ? 'Connected' : 'Disconnected'}</span></p>
-                <p className="text-gray-300">VRChat: <span className={`font-bold ${vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>{vrchatStatus ? 'Connected' : 'Disconnected'}</span></p>
+                <p className="text-gray-300">Twitch: <span
+                    className={`font-bold ${state.twitchStatus ? 'text-green-500' : 'text-red-500'}`}>{state.twitchStatus ? 'Connected' : 'Disconnected'}</span>
+                </p>
+                <p className="text-gray-300">Discord: <span
+                    className={`font-bold ${state.discordStatus ? 'text-green-500' : 'text-red-500'}`}>{state.discordStatus ? 'Connected' : 'Disconnected'}</span>
+                </p>
+                <p className="text-gray-300">VRChat: <span
+                    className={`font-bold ${state.vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>{state.vrchatStatus ? 'Connected' : 'Disconnected'}</span>
+                </p>
             </div>
             <VRChatWorldStatus
-                currentVRCWorld={currentVRCWorld}
-                vrchatStatus={vrchatStatus}
+                currentVRCWorld={state.currentVRCWorld}
+                vrchatStatus={state.vrchatStatus}
                 handleShareWorld={handleShareWorld}
             />
+            <div>
+                {wsConnectionError && <div className="error">WebSocket Error: {wsConnectionError}</div>}
+                {!isConnected && <div className="warning">WebSocket is disconnected. Attempting to reconnect...</div>}
+            </div>
             <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                 <h2 className="text-2xl font-bold mb-4 text-white">Chat</h2>
                 <form onSubmit={handleSendChat} className="mb-4">
                     <div className="flex flex-wrap items-center mb-2">
-                        <button
-                            type="button"
-                            onClick={() => setChatDestination(prev => ({...prev, oscTextbox: !prev.oscTextbox}))}
-                            className={`mr-2 mb-2 px-4 py-2 rounded ${chatDestination.oscTextbox ? 'bg-blue-500' : 'bg-gray-600'}`}
-                        >
-                            OSC Textbox
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setChatDestination(prev => ({...prev, twitchChat: !prev.twitchChat}))}
-                            className={`mr-2 mb-2 px-4 py-2 rounded ${chatDestination.twitchChat ? 'bg-blue-500' : 'bg-gray-600'}`}
-                        >
-                            Twitch Chat
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setChatDestination(prev => ({...prev, twitchBot: !prev.twitchBot}))}
-                            className={`mr-2 mb-2 px-4 py-2 rounded ${chatDestination.twitchBot ? 'bg-blue-500' : 'bg-gray-600'}`}
-                        >
-                            As Bot
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setChatDestination(prev => ({...prev, twitchBroadcaster: !prev.twitchBroadcaster}))}
-                            className={`mr-2 mb-2 px-4 py-2 rounded ${chatDestination.twitchBroadcaster ? 'bg-blue-500' : 'bg-gray-600'}`}
-                        >
-                            As Broadcaster
-                        </button>
-                        {additionalStreams.map((stream, index) => (
+                        {Object.entries(state.chatDestination).map(([key, value]) => (
+                            <button
+                                key={key}
+                                type="button"
+                                onClick={() => dispatch({type: 'SET_CHAT_DESTINATION', payload: {[key]: !value}})}
+                                className={`mr-2 mb-2 px-4 py-2 rounded ${value ? 'bg-blue-500' : 'bg-gray-600'}`}
+                            >
+                                {key.charAt(0).toUpperCase() + key.slice(1)}
+                            </button>
+                        ))}
+                        {state.additionalStreams.map((stream, index) => (
                             <button
                                 key={index}
                                 type="button"
-                                onClick={() => setAdditionalStreamToggles(prev => {
-                                    const newToggles = [...prev];
-                                    newToggles[index] = !newToggles[index];
-                                    return newToggles;
-                                })}
-                                className={`mr-2 mb-2 px-4 py-2 rounded ${additionalStreamToggles[index] ? 'bg-blue-500' : 'bg-gray-600'}`}
+                                onClick={() => dispatch({type: 'TOGGLE_ADDITIONAL_STREAM', payload: index})}
+                                className={`mr-2 mb-2 px-4 py-2 rounded ${state.additionalStreamToggles[index] ? 'bg-blue-500' : 'bg-gray-600'}`}
                             >
                                 {stream}
                             </button>
@@ -278,8 +251,8 @@ const Dashboard = ({ setTwitchMessages }) => {
                     <div className="flex">
                         <input
                             type="text"
-                            value={chatMessage}
-                            onChange={(e) => setChatMessage(e.target.value)}
+                            value={state.chatMessage}
+                            onChange={(e) => dispatch({type: 'SET_CHAT_MESSAGE', payload: e.target.value})}
                             className="flex-grow mr-2 px-4 py-2 bg-gray-700 text-white rounded"
                             placeholder="Type your message..."
                         />
@@ -295,19 +268,20 @@ const Dashboard = ({ setTwitchMessages }) => {
             <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                 <h2 className="text-2xl font-bold mb-4 text-white">Recent Messages</h2>
                 <ul className="list-disc list-inside text-gray-300">
-                    {recentMessages.map((message, index) => (
+                    {state.recentMessages.map((message, index) => (
                         <li key={index}>{message}</li>
                     ))}
                 </ul>
             </div>
-            {additionalStreams.length > 0 && (
+            {state.additionalStreams.length > 0 && (
                 <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                     <h2 className="text-2xl font-bold mb-4 text-white">Additional Streams</h2>
-                    <div className={`grid ${additionalStreams.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
-                        {additionalStreams.map((stream, index) => (
+                    <div
+                        className={`grid ${state.additionalStreams.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
+                        {state.additionalStreams.map((stream, index) => (
                             <div key={index} className="w-full h-0 pb-[56.25%] relative">
                                 <div className="absolute inset-0">
-                                    <TwitchPlayer channel={stream} />
+                                    <TwitchPlayer channel={stream}/>
                                 </div>
                             </div>
                         ))}
@@ -317,5 +291,4 @@ const Dashboard = ({ setTwitchMessages }) => {
         </div>
     );
 };
-
 export default Dashboard;

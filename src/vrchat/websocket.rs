@@ -12,11 +12,11 @@ use tokio_tungstenite::tungstenite::http::header;
 use tokio::sync::mpsc;
 use crate::log_info;
 use crate::vrchat::VRChatClient;
-use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
+use crate::web_ui::websocket::{DashboardState, WebSocketMessage, WorldState};
 
 pub async fn handler(
     auth_cookie: String,
-    world_info: Arc<Mutex<Option<World>>>,
+    world_state: Arc<RwLock<WorldState>>,
     current_user_id: String,
     vrchat_client: Arc<VRChatClient>,
     dashboard_state: Arc<RwLock<DashboardState>>,
@@ -33,15 +33,25 @@ pub async fn handler(
                 while let Some(message) = ws_stream.next().await {
                     match message {
                         Ok(TungsteniteMessage::Text(msg)) => {
-                            if let Ok(Some(world)) = extract_user_location_info(&msg, &current_user_id) {
-                                let mut dashboard = dashboard_state.write().await;
-                                dashboard.update_vrchat_world(Some(world.clone()));
-                                println!("Current user changed world: {:?}", world);
-                                println!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                            if let Ok(Some(new_world)) = extract_user_location_info(&msg, &current_user_id) {
+                                let mut world_state_guard = world_state.write().await;
+                                if world_state_guard.get().as_ref() != Some(&new_world) {
+                                    world_state_guard.update(Some(new_world.clone()));
+                                    println!("Current user changed world: {:?}", new_world);
 
-                                // Update the separate world_info as well
-                                let mut guard = world_info.lock().await;
-                                *guard = Some(world);
+                                    // Update dashboard state
+                                    let mut dashboard = dashboard_state.write().await;
+                                    dashboard.update_vrchat_world(Some(new_world.clone()));
+                                    println!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+
+                                    // Broadcast the VRChat world update immediately
+                                    let broadcast_msg = WebSocketMessage {
+                                        message_type: "vrchat_world_update".to_string(),
+                                        world: Some(serde_json::to_value(&new_world)?),
+                                        ..Default::default()
+                                    };
+                                    dashboard.broadcast_message(broadcast_msg).await?;
+                                }
                             }
                         }
                         Err(err) => {

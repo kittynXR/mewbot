@@ -29,7 +29,7 @@ use crate::osc::VRChatOSC;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
-use crate::web_ui::websocket::DashboardState;
+use crate::web_ui::websocket::{DashboardState, WorldState};
 use tokio::sync::mpsc;
 use crate::web_ui::websocket::WebSocketMessage;
 
@@ -286,13 +286,16 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.discord.clone(),
     ));
 
-    let web_ui_clone = web_ui.clone();
-
-    let web_ui_handle = tokio::spawn(async move {
-        web_ui_clone.run().await;
+    let web_ui_handle = tokio::spawn({
+        let web_ui = web_ui.clone();
+        async move {
+            web_ui.run().await;
+            Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
+        }
     });
 
     let world_info = Arc::new(Mutex::new(None::<World>));
+    let world_state = Arc::new(RwLock::new(WorldState::new()));
 
     // Initialize redeems
     println!("Initializing channel point redeems...");
@@ -349,23 +352,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         println!("Twitch IRC handler started.");
         clients.dashboard_state.write().await.update_twitch_status(true);
     }
-
-    let websocket_handle = tokio::spawn({
-        let dashboard_state = clients.dashboard_state.clone();
-        let storage = clients.storage.clone();
-        let discord_client = clients.discord.clone();
-        let logger = clients.logger.clone();
-        async move {
-            crate::web_ui::websocket::update_dashboard_state(
-                dashboard_state,
-                storage,
-                Arc::new(RwLock::new(discord_client)),
-                logger
-            ).await;
-            Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
-        }
-    });
-    handles.push(websocket_handle);
 
     if let Some(discord_client) = clients.discord {
         let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn({
@@ -425,7 +411,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             async move {
                 let result = crate::vrchat::websocket::handler(
                     auth_cookie,
-                    world_info.clone(),
+                    world_state.clone(),
                     current_user_id,
                     vrchat_client,
                     dashboard_state_clone // Use the cloned version here
@@ -453,7 +439,9 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         }
     }
 
-    web_ui_handle.await?;
+    // Await the web_ui_handle separately
+    web_ui_handle.await??;
+
     println!("Bot has shut down.");
     Ok(())
 }

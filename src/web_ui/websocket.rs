@@ -1,3 +1,4 @@
+use std::cmp::PartialEq;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
@@ -32,10 +33,37 @@ pub struct WebSocketMessage {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ChatDestination {
-    pub oscTextbox: bool,
-    pub twitchChat: bool,
-    pub twitchBot: bool,
-    pub twitchBroadcaster: bool,
+    pub osc_textbox: bool,
+    pub twitch_chat: bool,
+    pub twitch_bot: bool,
+    pub twitch_broadcaster: bool,
+}
+
+pub struct WorldState {
+    current_world: Option<World>,
+    last_updated: std::time::Instant,
+}
+
+impl WorldState {
+    pub fn new() -> Self {
+        Self {
+            current_world: None,
+            last_updated: std::time::Instant::now(),
+        }
+    }
+
+    pub fn update(&mut self, new_world: Option<World>) {
+        self.current_world = new_world;
+        self.last_updated = std::time::Instant::now();
+    }
+
+    pub fn get(&self) -> Option<World> {
+        self.current_world.clone()
+    }
+
+    pub fn is_stale(&self, threshold: std::time::Duration) -> bool {
+        self.last_updated.elapsed() > threshold
+    }
 }
 
 pub struct DashboardState {
@@ -51,6 +79,7 @@ pub struct DashboardState {
     vrchat_osc: Option<Arc<VRChatOSC>>,
     pub(crate) tx: broadcast::Sender<WebSocketMessage>,
     pub(crate) rx: broadcast::Receiver<WebSocketMessage>,
+    world_state: Arc<RwLock<WorldState>>,
 }
 
 impl DashboardState {
@@ -74,6 +103,7 @@ impl DashboardState {
             vrchat_osc,
             tx,
             rx,
+            world_state: Arc::new(RwLock::new(WorldState::new())),
         }
     }
 
@@ -141,37 +171,25 @@ pub async fn handle_websocket(
 ) {
     let (mut ws_tx, mut ws_rx) = ws.split();
 
-    // Wait for the connection to be fully established
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Implement a handshake
+    if let Err(e) = ws_tx.send(Message::text("READY")).await {
+        log_error!(logger, "Failed to send handshake: {:?}", e);
+        return;
+    }
+
+    // Wait for client acknowledgment
+    match ws_rx.next().await {
+        Some(Ok(msg)) if msg.to_str() == Ok("ACK") => {},
+        _ => {
+            log_error!(logger, "Failed to receive handshake acknowledgment");
+            return;
+        }
+    }
 
     // Create a new receiver for this connection
     let mut rx = dashboard_state.read().await.tx.subscribe();
 
-    // Send initial status
-    let initial_status = {
-        let dashboard_state = dashboard_state.read().await;
-        let bot_status = dashboard_state.bot_status.read().await;
-        WebSocketMessage {
-            message_type: "bot_status".to_string(),
-            message: Some(if bot_status.is_online() { "online".to_string() } else { "offline".to_string() }),
-            destination: None,
-            world: Some(serde_json::json!({
-                "uptime": bot_status.uptime_string(),
-                "vrchat_world": dashboard_state.vrchat_world,
-                "active_modules": ["twitch", "discord", "vrchat"]
-            })),
-            additional_streams: None,
-            user_id: None,
-        }
-    };
-
-    if let Ok(initial_status_str) = serde_json::to_string(&initial_status) {
-        log_info!(logger, "Sending initial status: {}", initial_status_str);
-        if let Err(e) = ws_tx.send(Message::text(initial_status_str)).await {
-            log_error!(logger, "Failed to send initial WebSocket message: {:?}", e);
-            return;
-        }
-    }
+    let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
 
     loop {
         tokio::select! {
@@ -179,17 +197,13 @@ pub async fn handle_websocket(
                 match msg {
                     Some(Ok(msg)) => {
                         if let Ok(text) = msg.to_str() {
-                            log_info!(logger, "Received WebSocket message: {}", text);
-                            match serde_json::from_str::<WebSocketMessage>(text) {
-                                Ok(parsed_message) => {
-                                    if let Err(e) = handle_ws_message(&parsed_message, &dashboard_state, &storage, &logger).await {
-                                        log_error!(logger, "Error handling WebSocket message: {:?}", e);
-                                    }
+                            if let Ok(parsed_message) = serde_json::from_str::<WebSocketMessage>(text) {
+                                if let Err(e) = handle_ws_message(&parsed_message, &dashboard_state, &storage, &logger).await {
+                                    log_error!(logger, "Error handling WebSocket message: {:?}", e);
+                                    break;
                                 }
-                                Err(e) => {
-                                    log_error!(logger, "Failed to parse WebSocket message: {:?}", e);
-                                    log_error!(logger, "Raw message: {}", text);
-                                }
+                            } else {
+                                log_error!(logger, "Failed to parse WebSocket message");
                             }
                         }
                     }
@@ -214,6 +228,12 @@ pub async fn handle_websocket(
                         log_error!(logger, "Failed to receive broadcast message: {:?}", e);
                         break;
                     }
+                }
+            }
+            _ = ping_interval.tick() => {
+                if let Err(e) = ws_tx.send(Message::ping(vec![])).await {
+                    log_error!(logger, "Failed to send ping: {:?}", e);
+                    break;
                 }
             }
         }
@@ -256,23 +276,23 @@ async fn handle_ws_message(
                 let additional_streams = message.additional_streams.clone();
 
                 // Handle VRChat OSC
-                if destinations.as_ref().map_or(false, |d| d.oscTextbox) {
+                if destinations.as_ref().map_or(false, |d| d.osc_textbox) {
                     if let Some(vrchat_osc) = dashboard_state.read().await.get_vrchat_osc() {
                         vrchat_osc.send_chatbox_message(chat_msg, true, false)?;
                     }
                 }
 
                 // Handle Twitch chat
-                if destinations.as_ref().map_or(false, |d| d.twitchChat) {
+                if destinations.as_ref().map_or(false, |d| d.twitch_chat) {
                     let twitch_channel = dashboard_state.read().await.get_twitch_channel().await?;
 
-                    if destinations.as_ref().map_or(false, |d| d.twitchBot) {
+                    if destinations.as_ref().map_or(false, |d| d.twitch_bot) {
                         if let Some(twitch_client) = dashboard_state.read().await.get_twitch_bot_client().await {
                             twitch_client.send_message(&twitch_channel, chat_msg).await?;
                         }
                     }
 
-                    if destinations.as_ref().map_or(false, |d| d.twitchBroadcaster) {
+                    if destinations.as_ref().map_or(false, |d| d.twitch_broadcaster) {
                         if let Some(twitch_client) = dashboard_state.read().await.get_twitch_broadcaster_client().await {
                             twitch_client.send_message(&twitch_channel, chat_msg).await?;
                         }
@@ -338,13 +358,40 @@ async fn handle_ws_message(
     Ok(())
 }
 
+impl PartialEq for World {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.name == other.name
+    }
+}
+
+impl PartialEq for ChatDestination {
+    fn eq(&self, other: &Self) -> bool {
+        self.osc_textbox == other.osc_textbox
+            && self.twitch_chat == other.twitch_chat
+            && self.twitch_bot == other.twitch_bot
+            && self.twitch_broadcaster == other.twitch_broadcaster
+    }
+}
+
+impl PartialEq for WebSocketMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.message_type == other.message_type
+            && self.message == other.message
+            && self.destination == other.destination
+            && self.world == other.world
+            && self.additional_streams == other.additional_streams
+            && self.user_id == other.user_id
+    }
+}
+
 pub async fn update_dashboard_state(
     state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
     discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
     logger: Arc<Logger>,
 ) {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
+    let mut last_update: Option<WebSocketMessage> = None;
 
     loop {
         interval.tick().await;
@@ -356,10 +403,11 @@ pub async fn update_dashboard_state(
             let status = if bot_status.is_online() { "online" } else { "offline" };
             let uptime = bot_status.uptime_string();
 
-            // Log the current VRChat world state
-            log_info!(logger, "Current VRChat world state: {:?}", state.vrchat_world);
+            let world_state = state.world_state.read().await;
+            let current_world = world_state.get();
 
-            // Fetch recent messages from storage
+            log_info!(logger, "Current VRChat world state (update dashboard): {:?}", current_world);
+
             let recent_messages = match storage.read().await.get_recent_messages(10).await {
                 Ok(messages) => messages,
                 Err(e) => {
@@ -368,8 +416,7 @@ pub async fn update_dashboard_state(
                 }
             };
 
-            // Create the update message
-            let message = WebSocketMessage {
+            WebSocketMessage {
                 message_type: "update".to_string(),
                 message: Some(status.to_string()),
                 destination: None,
@@ -384,18 +431,16 @@ pub async fn update_dashboard_state(
                 })),
                 additional_streams: None,
                 user_id: None,
-            };
-
-            // Log the exact WebSocket message being sent
-            log_info!(logger, "Sending WebSocket message: {}", serde_json::to_string_pretty(&message).unwrap());
-
-            message
+            }
         };
 
-        // Broadcast the update
-        let state = state.read().await;
-        if let Err(e) = state.broadcast_message(update_message).await {
-            log_error!(logger, "Failed to broadcast update message: {:?}", e);
+        if last_update.as_ref() != Some(&update_message) {
+            let state = state.read().await;
+            if let Err(e) = state.broadcast_message(update_message.clone()).await {
+                log_error!(logger, "Failed to broadcast update message: {:?}", e);
+            } else {
+                last_update = Some(update_message);
+            }
         }
     }
 }
