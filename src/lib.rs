@@ -445,38 +445,3 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     println!("Bot has shut down.");
     Ok(())
 }
-
-async fn handle_twitch_messages(
-    twitch_bot_client: Arc<TwitchBotClient>,
-    config: Arc<RwLock<Config>>,
-    api_client: Arc<TwitchAPIClient>,
-    redeem_manager: Arc<RwLock<RedeemManager>>,
-    storage_client: Arc<RwLock<StorageClient>>,
-    role_cache: Arc<RwLock<RoleCache>>,
-    user_links: Arc<UserLinks>,
-    logger: Arc<Logger>,
-    websocket_tx: mpsc::Sender<WebSocketMessage>,
-    world_info: Arc<Mutex<Option<World>>>,
-    vrchat_client: Arc<VRChatClient>, // Add this parameter
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Starting Twitch message handling...");
-
-    let message_handler = MessageHandler::new(
-        twitch_bot_client,
-        config,
-        api_client,
-        redeem_manager,
-        storage_client,
-        role_cache,
-        user_links,
-        logger.clone(),
-        websocket_tx,
-        world_info,
-        vrchat_client // Use the parameter here
-    );
-
-    message_handler.handle_messages().await?;
-
-    println!("Twitch message handling ended.");
-    Ok(())
-}
