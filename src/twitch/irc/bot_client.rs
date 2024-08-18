@@ -1,5 +1,6 @@
 use super::client::{TwitchIRCManager, TwitchIRCClientType};
 use std::sync::Arc;
+use log::{debug, error, trace};
 use tokio::sync::broadcast;
 use twitch_irc::message::ServerMessage;
 
@@ -18,14 +19,14 @@ impl TwitchBotClient {
     }
 
     pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Attempting to send message to channel {}: {}", channel, message);
+        debug!("Attempting to send message to channel {}: {}", channel, message);
         match self.manager.send_message(&self.username, channel, message).await {
             Ok(_) => {
-                println!("Message sent successfully");
+                trace!("Message sent successfully");
                 Ok(())
             },
             Err(e) => {
-                println!("Error sending message: {:?}", e);
+                error!("Error sending message: {:?}", e);
                 Err(e)
             }
         }

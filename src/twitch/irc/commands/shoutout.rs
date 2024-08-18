@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
+use log::{debug, error, info};
 use twitch_irc::message::PrivmsgMessage;
 use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::api::TwitchAPIClient;
@@ -50,7 +51,7 @@ pub async fn handle_shoutout(
     }
 
     let target = strip_at_symbol(params[0]);
-    println!("Shoutout target: {}", target);
+    debug!("Shoutout target: {}", target);
 
     // Check if the user is trying to shout themselves out
     if target.to_lowercase() == msg.sender.name.to_lowercase() {
@@ -124,13 +125,13 @@ pub async fn handle_shoutout(
                     cooldowns.per_user.insert(target.to_string(), now);
                 },
                 Err(e) => {
-                    eprintln!("Error sending shoutout: {}", e);
+                    error!("Error sending shoutout: {}", e);
                     client.send_message(channel, &format!("Sorry, @{}, I couldn't send a shoutout to {}. There was an API error.", msg.sender.name, target)).await?;
                 }
             }
         },
         Err(e) => {
-            println!("Error getting user info for shoutout target: {}", e);
+            error!("Error getting user info for shoutout target: {}", e);
             client.send_message(channel, &format!("Sorry, I couldn't find information for user {}.", target)).await?;
         }
     }

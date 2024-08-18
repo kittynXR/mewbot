@@ -5,6 +5,7 @@ use crate::discord::UserLinks;
 use twitch_irc::message::PrivmsgMessage;
 use crate::twitch::irc::TwitchBotClient;
 use std::sync::Arc;
+use log::{info, warn};
 use tokio::sync::RwLock;
 
 pub async fn handle_verify(
@@ -22,15 +23,15 @@ pub async fn handle_verify(
     let code = params[0].parse::<u32>().map_err(|_| "Invalid verification code")?;
     let twitch_username = msg.sender.name.clone();
 
-    println!("Attempting to verify Twitch user: {} with code: {}", twitch_username, code);
+    info!("Attempting to verify Twitch user: {} with code: {}", twitch_username, code);
 
     match user_links.verify_and_link(&twitch_username, code).await {
         Ok(discord_id) => {
-            println!("Successfully linked Twitch user: {} to Discord ID: {}", twitch_username, discord_id);
+            info!("Successfully linked Twitch user: {} to Discord ID: {}", twitch_username, discord_id);
             client.send_message(channel, &format!("@{}, your Twitch account has been successfully verified and linked to your Discord account!", twitch_username)).await?;
         },
         Err(e) => {
-            println!("Verification failed for Twitch user: {}. Error: {}", twitch_username, e);
+            warn!("Verification failed for Twitch user: {}. Error: {}", twitch_username, e);
             client.send_message(channel, &format!("@{}, verification failed: {}. Please use the /linktwitch command in Discord to get a new verification code.", twitch_username, e)).await?;
         }
     }

@@ -62,7 +62,7 @@ impl MessageHandler {
 
         while let Ok(message) = receiver.recv().await {
             debug!("Received message in handle_messages: {:?}", message);
-            info!("Received Twitch message: {:?}", message);
+            debug!("Received Twitch message: {:?}", message);
             if let Err(e) = self.handle_message(message).await {
                 error!("Error handling message: {:?}", e);
             }
@@ -104,7 +104,7 @@ impl MessageHandler {
             if let Err(e) = self.websocket_sender.send(websocket_message).await {
                 error!("Failed to send message to WebSocket: {:?}", e);
             } else {
-                info!("Successfully sent message to WebSocket");
+                debug!("Successfully sent message to WebSocket");
             }
 
             let lowercase_message = cleaned_message.to_lowercase();

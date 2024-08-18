@@ -7,6 +7,7 @@ use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
+use log::debug;
 use crate::twitch::api::TwitchAPIClient;
 
 pub async fn handle_message(
@@ -16,7 +17,7 @@ pub async fn handle_message(
     api_client: &Arc<TwitchAPIClient>,
     eventsub_client: &TwitchEventSubClient,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Received EventSub message: {}", message);
+    debug!("Received EventSub message: {}", message);
     let parsed: Value = serde_json::from_str(message)?;
 
     if let Some(event_type) = parsed["metadata"]["subscription_type"].as_str() {

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque, HashSet};
 use std::sync::Arc;
 use async_trait::async_trait;
+use log::{debug, error, info, trace, warn};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::{Mutex, RwLock};
@@ -133,22 +134,22 @@ impl RedeemManager {
     }
 
     pub async fn initialize_redeems(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Starting initialize_redeems method");
+        debug!("Starting initialize_redeems method");
         let settings = self.load_settings().await?;
         let existing_rewards = self.api_client.get_channel_point_rewards().await?;
 
-        println!("Initializing redeems. Settings: {:?}", settings);
+        debug!("Initializing redeems. Settings: {:?}", settings);
 
         let mut handlers_by_id = self.handlers_by_id.write().await;
         let mut handlers_by_name = self.handlers_by_name.write().await;
-        println!("Initializing handlers. Current count: {}", handlers_by_id.len());
+        debug!("Initializing handlers. Current count: {}", handlers_by_id.len());
 
         let stream_status = self.stream_status.read().await;
         let is_live = stream_status.is_live;
         let current_game = stream_status.current_game.clone();
         drop(stream_status);
 
-        println!("Current stream status: is_live = {}, current_game = '{}'", is_live, current_game);
+        info!("Current stream status: is_live = {}, current_game = '{}'", is_live, current_game);
 
         for setting in settings {
             let existing_reward = existing_rewards.iter().find(|r| r.title == setting.title);
@@ -156,7 +157,7 @@ impl RedeemManager {
             let updated_setting = match existing_reward {
                 Some(reward) if reward.is_user_input_required == setting.action_config.queued => {
                     let should_be_active = self.should_be_active(&setting, is_live, &current_game);
-                    println!("Redeem '{}' should be active: {}", setting.title, should_be_active);
+                    debug!("Redeem '{}' should be active: {}", setting.title, should_be_active);
 
                     match self.api_client.update_custom_reward(
                         &reward.id,
@@ -167,21 +168,21 @@ impl RedeemManager {
                         &setting.prompt
                     ).await {
                         Ok(_) => {
-                            println!("Successfully updated reward: {}", setting.title);
+                            debug!("Successfully updated reward: {}", setting.title);
                             let mut updated = setting;
                             updated.reward_id = reward.id.clone();
                             updated
                         },
                         Err(e) => {
-                            eprintln!("Failed to update reward {}: {}", setting.title, e);
+                            error!("Failed to update reward {}: {}", setting.title, e);
                             continue;
                         }
                     }
                 }
                 _ => {
-                    println!("Creating new reward: {}", setting.title);
+                    info!("Creating new reward: {}", setting.title);
                     let should_be_active = self.should_be_active(&setting, is_live, &current_game);
-                    println!("New redeem '{}' should be active: {}", setting.title, should_be_active);
+                    debug!("New redeem '{}' should be active: {}", setting.title, should_be_active);
                     match self.api_client.create_custom_reward(
                         &setting.title,
                         setting.cost,
@@ -190,20 +191,20 @@ impl RedeemManager {
                         &setting.prompt
                     ).await {
                         Ok(new_reward) => {
-                            println!("Successfully created reward: {} (ID: {})", setting.title, new_reward.id);
+                            debug!("Successfully created reward: {} (ID: {})", setting.title, new_reward.id);
                             let mut new_setting = setting;
                             new_setting.reward_id = new_reward.id.clone();
                             new_setting
                         },
                         Err(e) => {
-                            eprintln!("Failed to create reward {}: {}", setting.title, e);
+                            error!("Failed to create reward {}: {}", setting.title, e);
                             continue;
                         }
                     }
                 }
             };
 
-            println!("Registering handler for reward: {} (ID: {})", updated_setting.title, updated_setting.reward_id);
+            debug!("Registering handler for reward: {} (ID: {})", updated_setting.title, updated_setting.reward_id);
             handlers_by_id.insert(updated_setting.reward_id.clone(), updated_setting.clone());
             handlers_by_name.insert(updated_setting.title.clone(), updated_setting.clone());
 
@@ -220,7 +221,7 @@ impl RedeemManager {
                     self.action_manager.register_action(&updated_setting.title, Box::new(CoinGameAction)).await;
                 }
                 _ => {
-                    println!("Unknown action type for reward: {}", updated_setting.title);
+                    warn!("Unknown action type for reward: {}", updated_setting.title);
                 }
             }
         }
@@ -254,7 +255,7 @@ impl RedeemManager {
                 &coin_game_setting.prompt
             ).await {
                 Ok(new_reward) => {
-                    println!("Successfully created coin game reward: {} (ID: {})", coin_game_setting.title, new_reward.id);
+                    info!("Successfully created coin game reward: {} (ID: {})", coin_game_setting.title, new_reward.id);
                     let mut new_setting = coin_game_setting;
                     new_setting.reward_id = new_reward.id.clone();
                     handlers_by_id.insert(new_setting.reward_id.clone(), new_setting.clone());
@@ -262,38 +263,38 @@ impl RedeemManager {
                     self.action_manager.register_action(&new_setting.title, Box::new(CoinGameAction)).await;
                 },
                 Err(e) => {
-                    eprintln!("Failed to create coin game reward: {}", e);
+                    error!("Failed to create coin game reward: {}", e);
                 }
             }
         }
 
-        println!("Redeems initialization complete. Registered handlers: {:?}", handlers_by_id);
+        info!("Redeems initialization complete. Registered handlers: {:?}", handlers_by_id);
         Ok(())
     }
 
     pub async fn initialize_with_current_status(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Starting initialize_with_current_status");
+        debug!("Starting initialize_with_current_status");
         let channel_id = self.api_client.get_broadcaster_id().await?;
-        println!("Got broadcaster ID: {}", channel_id);
+        debug!("Got broadcaster ID: {}", channel_id);
 
         let stream_info = self.api_client.get_stream_info(&channel_id).await?;
-        println!("Stream info: {:?}", stream_info);
+        debug!("Stream info: {:?}", stream_info);
 
         let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
-        println!("Is live: {}", is_live);
+        debug!("Is live: {}", is_live);
 
         let game_name = if is_live {
             stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
         } else {
             let channel_info = get_channel_information(&self.api_client, &channel_id).await?;
-            println!("Channel info: {:?}", channel_info);
+            debug!("Channel info: {:?}", channel_info);
             channel_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
         };
 
-        println!("Game name: {}", game_name);
+        debug!("Game name: {}", game_name);
 
         self.update_stream_status(game_name).await?;
-        println!("Stream status updated");
+        debug!("Stream status updated");
 
         Ok(())
     }
@@ -304,7 +305,7 @@ impl RedeemManager {
 
         let json = serde_json::to_string_pretty(&settings)?;
         tokio::fs::write(&self.settings_file, json).await?;
-        println!("Redemption settings saved to {}", self.settings_file);
+        debug!("Redemption settings saved to {}", self.settings_file);
 
         Ok(())
     }
@@ -316,7 +317,7 @@ impl RedeemManager {
                 Ok(settings)
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                println!("Redemption settings file not found. Creating with default settings.");
+                warn!("Redemption settings file not found. Creating with default settings.");
                 let default_settings = crate::twitch::redeems::defaults::get_default_redeems();
                 let json = serde_json::to_string_pretty(&default_settings)?;
                 tokio::fs::write(&self.settings_file, json).await?;
@@ -341,7 +342,7 @@ impl RedeemManager {
             channel_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
         };
 
-        println!("Initial stream status: is_live = {}, game = {}", is_live, game_name);
+        debug!("Initial stream status: is_live = {}, game = {}", is_live, game_name);
         self.update_stream_status(game_name).await;
         Ok(())
     }
@@ -466,23 +467,23 @@ impl RedeemManager {
         *status = StreamStatus::new(is_live, current_game.clone());
         drop(status);  // Release the write lock
 
-        println!("Stream live status updated: is_live = {}", is_live);
-        println!("Updating all redeems...");
+        info!("Stream live status updated: is_live = {}", is_live);
+        debug!("Updating all redeems...");
         self.update_all_redeems(is_live, &current_game).await;
-        println!("All redeems updated.");
+        debug!("All redeems updated.");
 
         Ok(())
     }
 
     fn should_be_active(&self, settings: &RedemptionSettings, is_live: bool, current_game: &str) -> bool {
-        println!("Checking if redeem '{}' should be active:", settings.title);
-        println!("  Is live: {}", is_live);
-        println!("  Current game: '{}'", current_game);
-        println!("  Active games: {:?}", settings.active_games);
-        println!("  Offline chat redeem: {}", settings.offline_chat_redeem);
+        debug!("Checking if redeem '{}' should be active:", settings.title);
+        debug!("  Is live: {}", is_live);
+        debug!("  Current game: '{}'", current_game);
+        debug!("  Active games: {:?}", settings.active_games);
+        debug!("  Offline chat redeem: {}", settings.offline_chat_redeem);
 
         if !settings.active {
-            println!("  Redeem is not active");
+            debug!("  Redeem is not active");
             return false;
         }
 
@@ -495,8 +496,8 @@ impl RedeemManager {
             settings.offline_chat_redeem
         };
 
-        println!("  Game condition: {}", game_condition);
-        println!("  Final result: {}", result);
+        debug!("  Game condition: {}", game_condition);
+        debug!("  Final result: {}", result);
 
         result
     }
@@ -520,7 +521,7 @@ impl RedeemManager {
                 &settings.prompt
             ).await?;
 
-            println!("Redeem '{}' active status updated to: {}", settings.title, active);
+            info!("Redeem '{}' active status updated to: {}", settings.title, active);
             Ok(())
         } else {
             Err("Redeem not found".into())
@@ -692,7 +693,7 @@ impl RedeemManager {
             RedemptionStatus::Canceled => "CANCELED",
         };
 
-        println!("Updating redemption status: ID: {}, New Status: {}", redemption.id, status_str);
+        debug!("Updating redemption status: ID: {}, New Status: {}", redemption.id, status_str);
 
         channel_points::update_redemption_status(
             &self.api_client,
@@ -701,7 +702,7 @@ impl RedeemManager {
             &redemption.id,
             status_str,
         ).await.map_err(|e| {
-            eprintln!("Failed to update redemption status: {}", e);
+            error!("Failed to update redemption status: {}", e);
             e.into()
         })
     }
@@ -713,21 +714,21 @@ impl RedeemManager {
         status.current_game = game.clone();
         drop(status);  // Release the write lock
 
-        println!("Updating stream status: is_live = {}, game = '{}'", is_live, game);
-        println!("Updating all redeems...");
+        debug!("Updating stream status: is_live = {}, game = '{}'", is_live, game);
+        debug!("Updating all redeems...");
         self.update_all_redeems(is_live, &game).await;
-        println!("All redeems updated.");
+        debug!("All redeems updated.");
 
         Ok(())
     }
 
     async fn update_active_redeems(&self, is_live: bool, current_game: &str) {
-        println!("Updating active redeems: is_live = {}, current_game = {}", is_live, current_game);
+        debug!("Updating active redeems: is_live = {}, current_game = {}", is_live, current_game);
         let handlers_by_id = self.handlers_by_id.read().await;
 
         for (reward_id, settings) in handlers_by_id.iter() {
             let should_be_active = self.should_be_active(settings, is_live, current_game);
-            println!("Redeem '{}' should be active: {}", settings.title, should_be_active);
+            debug!("Redeem '{}' should be active: {}", settings.title, should_be_active);
 
             if let Err(e) = self.api_client.update_custom_reward(
                 reward_id,
@@ -737,20 +738,20 @@ impl RedeemManager {
                 settings.cooldown,
                 &settings.prompt
             ).await {
-                eprintln!("Failed to update reward {}: {}", settings.title, e);
+                error!("Failed to update reward {}: {}", settings.title, e);
             } else {
-                println!("Successfully updated reward '{}' to active = {}", settings.title, should_be_active);
+                debug!("Successfully updated reward '{}' to active = {}", settings.title, should_be_active);
             }
         }
     }
 
     async fn update_all_redeems(&self, is_live: bool, current_game: &str) {
-        println!("Updating all redeems: is_live = {}, current_game = {}", is_live, current_game);
+        debug!("Updating all redeems: is_live = {}, current_game = {}", is_live, current_game);
         let handlers_by_id = self.handlers_by_id.read().await;
 
         for (reward_id, settings) in handlers_by_id.iter() {
             let should_be_active = self.should_be_active(settings, is_live, current_game);
-            println!("Redeem '{}' should be active: {}", settings.title, should_be_active);
+            debug!("Redeem '{}' should be active: {}", settings.title, should_be_active);
 
             match self.api_client.update_custom_reward(
                 reward_id,
@@ -760,29 +761,29 @@ impl RedeemManager {
                 settings.cooldown,
                 &settings.prompt
             ).await {
-                Ok(_) => println!("Successfully updated reward '{}'", settings.title),
+                Ok(_) => debug!("Successfully updated reward '{}'", settings.title),
                 Err(e) => eprintln!("Failed to update reward {}: {}", settings.title, e),
             }
         }
-        println!("All redeems updated.");
+        info!("All redeems updated.");
     }
 
     pub async fn update_twitch_redeems(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Starting to update Twitch redeems based on local settings...");
+        trace!("Starting to update Twitch redeems based on local settings...");
 
         let handlers_by_id = self.handlers_by_id.read().await;
         let status = self.stream_status.read().await;
 
         for (reward_id, settings) in handlers_by_id.iter() {
-            println!("Checking redeem '{}' (ID: {})", settings.title, reward_id);
+            debug!("Checking redeem '{}' (ID: {})", settings.title, reward_id);
             match self.api_client.get_custom_reward(reward_id).await {
                 Ok(current_state) => {
                     let should_be_active = self.should_be_active(settings, status.is_live, &status.current_game);
-                    println!("Current state for '{}': is_enabled = {}, should_be_active = {}",
+                    debug!("Current state for '{}': is_enabled = {}, should_be_active = {}",
                              settings.title, current_state.is_enabled, should_be_active);
 
                     if current_state.is_enabled != should_be_active {
-                        println!("Updating redeem '{}' to active = {}", settings.title, should_be_active);
+                        debug!("Updating redeem '{}' to active = {}", settings.title, should_be_active);
                         match self.api_client.update_custom_reward(
                             reward_id,
                             &settings.title,
@@ -795,14 +796,14 @@ impl RedeemManager {
                             Err(e) => eprintln!("Failed to update Twitch redeem '{}': {}", settings.title, e),
                         }
                     } else {
-                        println!("No update needed for redeem '{}'", settings.title);
+                        debug!("No update needed for redeem '{}'", settings.title);
                     }
                 },
-                Err(e) => eprintln!("Failed to get current state for redeem '{}': {}", settings.title, e),
+                Err(e) => error!("Failed to get current state for redeem '{}': {}", settings.title, e),
             }
         }
 
-        println!("Finished updating Twitch redeems.");
+        info!("Finished updating Twitch redeems.");
         Ok(())
     }
 
@@ -835,11 +836,11 @@ impl RedeemManager {
 
 impl RedeemManager {
     pub async fn handle_redemption(&self, redemption: Redemption, irc_client: Arc<TwitchIRCClientType>, channel: String) -> RedemptionResult {
-        println!("Starting to handle redemption: {:?}", redemption);
+        debug!("Starting to handle redemption: {:?}", redemption);
 
         let mut processed = self.processed_redemptions.lock().await;
         if processed.contains(&redemption.id) {
-            println!("Skipping already processed redemption: {:?}", redemption);
+            debug!("Skipping already processed redemption: {:?}", redemption);
             return RedemptionResult {
                 success: true,
                 message: Some("Redemption already processed".to_string()),
@@ -853,14 +854,14 @@ impl RedeemManager {
         let settings = handlers_by_id.get(&redemption.reward_id);
 
         if let Some(settings) = settings {
-            println!("Found handler for reward: {:?}", settings);
+            debug!("Found handler for reward: {:?}", settings);
 
             let stream_status = self.stream_status.read().await;
             let is_active = self.should_be_active(settings, stream_status.is_live, &stream_status.current_game);
             drop(stream_status);
 
             if !is_active {
-                println!("Redeem is not active for the current game or stream status");
+                debug!("Redeem is not active for the current game or stream status");
                 return RedemptionResult {
                     success: false,
                     message: Some("This redeem is not active for the current game or stream status".to_string()),
@@ -871,10 +872,10 @@ impl RedeemManager {
             let result = match &settings.action_config.action {
                 RedemptionActionType::OSCMessage => {
                     if let Some(osc_config) = &settings.osc_config {
-                        println!("Handling OSC redemption");
+                        debug!("Handling OSC redemption");
                         self.handle_osc_redemption(&redemption, osc_config).await
                     } else {
-                        println!("OSC config not found for this redemption");
+                        debug!("OSC config not found for this redemption");
                         RedemptionResult {
                             success: false,
                             message: Some("OSC config not found for this redemption".to_string()),
@@ -884,16 +885,16 @@ impl RedeemManager {
                 },
                 _ => {
                     if settings.title == "coin game" {
-                        println!("Processing coin game redemption");
+                        debug!("Processing coin game redemption");
                         self.handle_coin_game(&redemption, &irc_client, &channel).await
                     } else {
-                        println!("Processing regular redemption");
+                        debug!("Processing regular redemption");
                         self.execute_action(&redemption, &settings.action_config, &irc_client, &channel).await
                     }
                 }
             };
 
-            println!("Redemption result: {:?}", result);
+            debug!("Redemption result: {:?}", result);
 
             // Update the redemption status on Twitch based on the auto_complete flag
             if settings.auto_complete {
@@ -903,27 +904,27 @@ impl RedeemManager {
                     RedemptionStatus::Canceled
                 };
                 if let Err(e) = self.update_redemption_status(&redemption, &status).await {
-                    eprintln!("Failed to update redemption status: {:?}", e);
+                    error!("Failed to update redemption status: {:?}", e);
                 } else {
-                    println!("Successfully updated redemption status to {:?}", status);
+                    debug!("Successfully updated redemption status to {:?}", status);
                 }
             } else {
-                println!("Skipping status update for non-auto-complete redemption: {}", redemption.id);
+                debug!("Skipping status update for non-auto-complete redemption: {}", redemption.id);
             }
 
             // Send the response to chat if there's a message
             if let Some(message) = &result.message {
                 let chat_message = format!("@{}: {}", redemption.user_name, message);
                 if let Err(e) = irc_client.say(channel, chat_message).await {
-                    eprintln!("Failed to send message to chat: {}", e);
+                    error!("Failed to send message to chat: {}", e);
                 } else {
-                    println!("Sent message to chat");
+                    debug!("Sent message to chat");
                 }
             }
 
             result
         } else {
-            println!("No handler found for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title);
+            debug!("No handler found for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title);
             RedemptionResult {
                 success: false,
                 message: Some(format!("No handler registered for reward ID: {} or name: {}", redemption.reward_id, redemption.reward_title)),
@@ -938,31 +939,31 @@ impl RedeemManager {
         let status: RedemptionStatus = event["status"].as_str().unwrap_or("").into();
         let user_name = event["user_name"].as_str().unwrap_or("");
 
-        println!("Received redemption update: ID: {}, Reward ID: {}, Status: {:?}, User: {}", redemption_id, reward_id, status, user_name);
+        debug!("Received redemption update: ID: {}, Reward ID: {}, Status: {:?}, User: {}", redemption_id, reward_id, status, user_name);
 
         let handlers_by_id = self.handlers_by_id.read().await;
         if let Some(settings) = handlers_by_id.get(reward_id) {
-            println!("Redemption settings for {}: auto_complete: {}", settings.title, settings.auto_complete);
+            debug!("Redemption settings for {}: auto_complete: {}", settings.title, settings.auto_complete);
 
             if !settings.auto_complete {
                 match status {
                     RedemptionStatus::Fulfilled => {
-                        println!("Manual fulfillment of redemption {}", redemption_id);
+                        debug!("Manual fulfillment of redemption {}", redemption_id);
                         // Add any logic for manually fulfilled redemptions here
                     },
                     RedemptionStatus::Canceled => {
-                        println!("Manual cancellation of redemption {}", redemption_id);
+                        debug!("Manual cancellation of redemption {}", redemption_id);
                         // Add any logic for manually canceled redemptions here
                     },
                     RedemptionStatus::Unfulfilled => {
-                        println!("Redemption {} is still unfulfilled", redemption_id);
+                        debug!("Redemption {} is still unfulfilled", redemption_id);
                     },
                 }
             } else {
-                println!("Ignoring status update for auto-completed redemption: {}", redemption_id);
+                debug!("Ignoring status update for auto-completed redemption: {}", redemption_id);
             }
         } else {
-            println!("No settings found for redemption: {} (Reward ID: {})", redemption_id, reward_id);
+            debug!("No settings found for redemption: {} (Reward ID: {})", redemption_id, reward_id);
         }
 
         Ok(())
@@ -999,7 +1000,7 @@ impl RedeemManager {
     }
 
     pub async fn handle_ai_response(&self, redemption: &Redemption, ai_client: &AIClient) -> RedemptionResult {
-        println!("title: {}", &redemption.reward_title);
+        debug!("title: {}", &redemption.reward_title);
         let config = match self.ai_response_manager.get_config(&redemption.reward_title) {
             Some(config) => config,
             None => return RedemptionResult {
@@ -1186,7 +1187,7 @@ impl RedeemManager {
 
 impl RedeemManager {
     pub async fn handle_coin_game(&self, redemption: &Redemption, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
-        println!("Executing CoinGameAction for redemption: {:?}", redemption);
+        debug!("Executing CoinGameAction for redemption: {:?}", redemption);
 
         let mut state = self.coin_game_state.write().await;
         let current_price = state.current_price;
@@ -1195,14 +1196,14 @@ impl RedeemManager {
         if let Some(previous_redemption) = state.last_redemption.take() {
             // Refund the previous redemption
             if let Err(e) = self.api_client.refund_channel_points(&previous_redemption.reward_id, &previous_redemption.id).await {
-                eprintln!("Failed to refund previous coin game redemption: {}", e);
+                error!("Failed to refund previous coin game redemption: {}", e);
             } else {
                 let refund_message = format!(
                     "{} is cute!",
                     previous_redemption.user_name
                 );
                 if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
-                    eprintln!("Failed to send refund message to chat: {}", e);
+                    error!("Failed to send refund message to chat: {}", e);
                 }
             }
         }
@@ -1211,7 +1212,7 @@ impl RedeemManager {
         let settings = match handlers_by_id.get(&redemption.reward_id) {
             Some(s) => s,
             None => {
-                eprintln!("No handler found for reward ID: {}", redemption.reward_id);
+                error!("No handler found for reward ID: {}", redemption.reward_id);
                 return RedemptionResult {
                     success: false,
                     message: Some("Failed to process coin game: reward not found".to_string()),
@@ -1226,12 +1227,12 @@ impl RedeemManager {
             match ai_client.generate_response_without_history(&ai_prompt).await {
                 Ok(message) => message,
                 Err(e) => {
-                    eprintln!("Failed to generate AI message: {}", e);
+                    error!("Failed to generate AI message: {}", e);
                     "joins coin game!".to_string() // Fallback message
                 }
             }
         } else {
-            "hjoins coin game!".to_string() // Fallback message if AI client is not available
+            "joins coin game!".to_string() // Fallback message if AI client is not available
         };
 
         // Generate new prompt
@@ -1246,7 +1247,7 @@ impl RedeemManager {
             settings.cooldown,
             &new_prompt
         ).await {
-            eprintln!("Failed to update reward: {}", e);
+            error!("Failed to update reward: {}", e);
             return RedemptionResult {
                 success: false,
                 message: Some("Failed to update reward".to_string()),
@@ -1260,7 +1261,7 @@ impl RedeemManager {
             redemption.user_name, ai_message, current_price, new_price
         );
         if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
-            eprintln!("Failed to send message to chat: {}", e);
+            error!("Failed to send message to chat: {}", e);
         }
 
         // Update the state
@@ -1277,11 +1278,11 @@ impl RedeemManager {
     pub async fn reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut state = self.coin_game_state.write().await;
         if let Some(last_redeemer) = state.last_redemption.take() {
-            println!("Resetting coin game state. Last redeemer: {}", last_redeemer.user_name);
+            debug!("Resetting coin game state. Last redeemer: {}", last_redeemer.user_name);
 
             // Refund the last redeemer
             if let Err(e) = self.api_client.refund_channel_points(&last_redeemer.reward_id, &last_redeemer.id).await {
-                eprintln!("Failed to refund last coin game redeemer: {}", e);
+                error!("Failed to refund last coin game redeemer: {}", e);
             }
         }
 

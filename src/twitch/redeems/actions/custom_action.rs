@@ -3,6 +3,7 @@ use crate::twitch::api::TwitchAPIClient;
 use rand::{SeedableRng, Rng};
 use rand::rngs::SmallRng;
 use std::sync::Arc;
+use log::{debug, error};
 use crate::twitch::irc::client::TwitchIRCClientType;
 use crate::twitch::redeems::RedeemManager;
 
@@ -31,7 +32,7 @@ pub async fn handle_coin_game(
     channel: &str,
     redeem_manager: &RedeemManager
 ) -> RedemptionResult {
-    println!("Executing CoinGameAction for redemption: {:?}", redemption);
+    debug!("Executing CoinGameAction for redemption: {:?}", redemption);
 
     let mut rng = SmallRng::from_entropy();
     let multiplier = rng.gen_range(1.5..=2.5);
@@ -90,7 +91,7 @@ pub async fn handle_coin_game(
         redemption.user_name, current_price, new_price
     );
     if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
-        eprintln!("Failed to send message to chat: {}", e);
+        error!("Failed to send message to chat: {}", e);
     }
 
     // Update the state

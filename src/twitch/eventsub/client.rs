@@ -22,7 +22,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
-use log::debug;
+use log::{debug, error, info, trace, warn};
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
 
@@ -93,19 +93,19 @@ impl TwitchEventSubClient {
                 Ok(()) => {
                     reconnect_attempt = 0;
                     if let Err(e) = self.listen_for_messages().await {
-                        eprintln!("Error in message handling: {:?}", e);
+                        error!("Error in message handling: {:?}", e);
                         break;
                     }
                 }
                 Err(e) => {
-                    eprintln!("WebSocket error: {:?}", e);
+                    error!("WebSocket error: {:?}", e);
                     reconnect_attempt += 1;
                     if reconnect_attempt > max_reconnect_attempts {
-                        eprintln!("Max reconnection attempts reached. Exiting.");
+                        error!("Max reconnection attempts reached. Exiting.");
                         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Max reconnection attempts reached")));
                     }
                     let backoff_duration = self.calculate_backoff(reconnect_attempt);
-                    println!("Attempting to reconnect (attempt {}/{}) after {:?}", reconnect_attempt, max_reconnect_attempts, backoff_duration);
+                    warn!("Attempting to reconnect (attempt {}/{}) after {:?}", reconnect_attempt, max_reconnect_attempts, backoff_duration);
                     tokio::time::sleep(backoff_duration).await;
                 }
             }
@@ -116,7 +116,7 @@ impl TwitchEventSubClient {
 
     async fn connect_websocket(&self, url: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let (ws_stream, _) = connect_async(url).await?;
-        println!("EventSub WebSocket connected to {}", url);
+        info!("EventSub WebSocket connected to {}", url);
         let (ws_tx, ws_rx) = ws_stream.split();
         *self.ws_tx.lock().await = Some(ws_tx);
         *self.ws_rx.lock().await = Some(ws_rx);
@@ -151,12 +151,12 @@ impl TwitchEventSubClient {
                             self.handle_revocation(&response).await?;
                         }
                         _ => {
-                            println!("Received unhandled message type: {}", response["metadata"]["message_type"]);
+                            warn!("Received unhandled message type: {}", response["metadata"]["message_type"]);
                         }
                     }
                 }
                 Ok(Message::Close(frame)) => {
-                    println!("EventSub WebSocket closed with frame: {:?}", frame);
+                    info!("EventSub WebSocket closed with frame: {:?}", frame);
                     return Ok(());
                 }
                 Ok(Message::Ping(data)) => {
@@ -165,7 +165,7 @@ impl TwitchEventSubClient {
                     }
                 }
                 Err(e) => {
-                    eprintln!("EventSub WebSocket error: {:?}", e);
+                    error!("EventSub WebSocket error: {:?}", e);
                     return Err(Box::new(e) as Box<dyn StdError + Send + Sync>);
                 }
                 _ => {
@@ -179,7 +179,7 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_reconnect(&self, reconnect_url: String) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        println!("Handling reconnect to URL: {}", reconnect_url);
+        warn!("Handling reconnect to URL: {}", reconnect_url);
 
         // Start a 30-second timer
         let reconnect_result = timeout(Duration::from_secs(30), async {
@@ -194,22 +194,22 @@ impl TwitchEventSubClient {
 
         match reconnect_result {
             Ok(Ok(())) => {
-                println!("Successfully reconnected to new URL");
+                info!("Successfully reconnected to new URL");
                 Ok(())
             }
             Ok(Err(e)) => {
-                eprintln!("Error during reconnection: {:?}", e);
+                error!("Error during reconnection: {:?}", e);
                 Err(e)
             }
             Err(_) => {
-                eprintln!("Reconnection timed out");
+                error!("Reconnection timed out");
                 Err(Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "Reconnection timed out")))
             }
         }
     }
 
     async fn handle_welcome_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        println!("Received welcome message: {:?}", response);
+        info!("Received welcome message: {:?}", response);
         if let Some(session) = response["payload"]["session"].as_object() {
             if let Some(session_id) = session["id"].as_str() {
                 self.create_eventsub_subscription(session_id).await?;
@@ -225,7 +225,7 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_notification(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        println!("Received notification: {:?}", response);
+        info!("Received notification: {:?}", response);
 
         let message = serde_json::to_string(response)?;
         handlers::handle_message(
@@ -240,7 +240,7 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_revocation(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        println!("Received revocation: {:?}", response);
+        warn!("Received revocation: {:?}", response);
         // Implement revocation handling logic here
         Ok(())
     }
@@ -248,7 +248,7 @@ impl TwitchEventSubClient {
 
     pub async fn refresh_token_periodically(&self) -> Result<(), BoxedError> {
         if let Err(e) = self.api_client.refresh_token().await {
-            eprintln!("Failed to refresh token: {:?}", e);
+            error!("Failed to refresh token: {:?}", e);
             return Err(e.into());
         }
         Ok(())
@@ -387,7 +387,7 @@ impl TwitchEventSubClient {
 
         match status {
             RedemptionStatus::Unfulfilled => {
-                println!("Processing new redemption: {:?}", redemption);
+                trace!("Processing new redemption: {:?}", redemption);
                 let result = self.redeem_manager.read().await.handle_redemption(
                     redemption.clone(),
                     self.irc_client.clone(),
@@ -395,9 +395,9 @@ impl TwitchEventSubClient {
                 ).await;
 
                 if result.success {
-                    println!("Redemption handled successfully: {:?}", result);
+                    debug!("Redemption handled successfully: {:?}", result);
                 } else {
-                    eprintln!("Failed to handle redemption: {:?}", result);
+                    error!("Failed to handle redemption: {:?}", result);
                 }
 
                 if redemption.announce_in_chat {
@@ -405,12 +405,12 @@ impl TwitchEventSubClient {
                 }
             },
             RedemptionStatus::Fulfilled => {
-                println!("Redemption already fulfilled: {:?}", redemption);
+                debug!("Redemption already fulfilled: {:?}", redemption);
             },
             RedemptionStatus::Canceled => {
-                println!("Redemption canceled: {:?}", redemption);
+                debug!("Redemption canceled: {:?}", redemption);
                 if let Err(e) = self.redeem_manager.write().await.cancel_redemption(&redemption.id).await {
-                    eprintln!("Error canceling redemption: {}", e);
+                    error!("Error canceling redemption: {}", e);
                 }
             },
         }
@@ -433,7 +433,7 @@ impl TwitchEventSubClient {
             announce_in_chat: false,
         };
 
-        println!("Processing new redemption: {:?}", redemption);
+        trace!("Processing new redemption: {:?}", redemption);
 
         let redeem_manager = self.redeem_manager.read().await;
         let result = if redemption.reward_title == "coin game" {
@@ -447,9 +447,9 @@ impl TwitchEventSubClient {
         };
 
         if result.success {
-            println!("Redemption handled successfully: {:?}", result);
+            debug!("Redemption handled successfully: {:?}", result);
         } else {
-            eprintln!("Failed to handle redemption: {:?}", result);
+            error!("Failed to handle redemption: {:?}", result);
         }
 
         // Check if the redemption should be auto-completed
@@ -458,20 +458,20 @@ impl TwitchEventSubClient {
             if settings.auto_complete {
                 let status = if result.success { "FULFILLED" } else { "CANCELED" };
                 if let Err(e) = self.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
-                    eprintln!("Failed to update redemption status: {:?}", e);
+                    error!("Failed to update redemption status: {:?}", e);
                 }
             } else {
-                println!("Redemption is not set to auto-complete. Leaving status as UNFULFILLED.");
+                info!("Redemption is not set to auto-complete. Leaving status as UNFULFILLED.");
             }
         } else {
-            eprintln!("Failed to get redemption settings for reward ID: {}", redemption.reward_id);
+            error!("Failed to get redemption settings for reward ID: {}", redemption.reward_id);
         }
 
         Ok(())
     }
 
     pub async fn handle_channel_point_redemption_update(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Received channel point redemption update: {:?}", event);
+        trace!("Received channel point redemption update: {:?}", event);
         self.redeem_manager.read().await.handle_redemption_update(event).await
     }
 
@@ -480,7 +480,7 @@ impl TwitchEventSubClient {
         if let Some(osc_config) = configs.get_config(event_type) {
             if let Some(osc_client) = &self.osc_client {
                 osc_client.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value)?;
-                println!("Sent OSC message for event: {}", event_type);
+                debug!("Sent OSC message for event: {}", event_type);
             }
         }
         Ok(())
@@ -501,7 +501,7 @@ impl TwitchEventSubClient {
         };
 
         if let Err(e) = self.irc_client.say(self.channel.clone(), message).await {
-            eprintln!("Failed to announce redemption in chat: {}", e);
+            error!("Failed to announce redemption in chat: {}", e);
         }
     }
 }

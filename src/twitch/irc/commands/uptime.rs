@@ -2,6 +2,7 @@ use crate::twitch::utils::get_stream_uptime;
 use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::irc::TwitchBotClient;
 use std::sync::Arc;
+use log::error;
 use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
 use crate::discord::UserLinks;
@@ -29,7 +30,7 @@ pub async fn handle_uptime(
             client.send_message(channel, &response).await?;
         },
         Err(e) => {
-            eprintln!("Error getting stream uptime: {:?}", e);
+            error!("Error getting stream uptime: {:?}", e);
             client.send_message(channel, "Sorry, I couldn't retrieve the stream uptime. Please try again later.").await?;
         }
     }

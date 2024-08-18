@@ -8,6 +8,7 @@ use crate::ai::{AIClient, AIError};
 use crate::twitch::redeems::models::{Redemption, RedemptionResult};
 use crate::twitch::redeems::manager::RedeemManager;
 use async_trait::async_trait;
+use log::error;
 use serde::{Deserialize, Serialize};
 
 
@@ -185,13 +186,13 @@ impl RedeemAction for AIResponseAction {
                 Ok(response) => {
                     // Mark the redemption as complete
                     if let Err(e) = api_client.update_redemption_status(&redemption.reward_id, &redemption.id, "FULFILLED").await {
-                        eprintln!("Failed to mark redemption as complete: {}", e);
+                        error!("Failed to mark redemption as complete: {}", e);
                     }
 
                     // Send the AI response to chat
                     let chat_message = format!("@{}: {}", redemption.user_name, response);
                     if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
-                        eprintln!("Failed to send message to chat: {}", e);
+                        error!("Failed to send message to chat: {}", e);
                     }
 
                     RedemptionResult {

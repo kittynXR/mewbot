@@ -6,6 +6,7 @@ use crate::twitch::irc::TwitchBotClient;
 use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
+use log::{debug, error, warn};
 use tokio::sync::RwLock;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
@@ -22,27 +23,27 @@ pub fn handle_complete_redemption<'a>(
 ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>> {
 
     Box::pin(async move {
-        println!("Handling complete redemption command. Sender: {}, Params: {:?}", msg.sender.name, params);
+        debug!("Handling complete redemption command. Sender: {}, Params: {:?}", msg.sender.name, params);
 
         if params.is_empty() {
-            println!("No redemption ID provided");
+            warn!("No redemption ID provided");
             client.send_message(channel, "Usage: !complete <redemption_id>").await?;
             return Ok(());
         }
 
         let redemption_id = params[0];
-        println!("Attempting to complete redemption: {}", redemption_id);
+        debug!("Attempting to complete redemption: {}", redemption_id);
 
         // Acquire a write lock on the RedeemManager
         let mut redeem_manager = redeem_manager.write().await;
 
         match redeem_manager.complete_redemption(redemption_id).await {
             Ok(_) => {
-                println!("Redemption {} completed successfully", redemption_id);
+                debug!("Redemption {} completed successfully", redemption_id);
                 client.send_message(channel, &format!("Redemption {} marked as complete", redemption_id)).await?;
             },
             Err(e) => {
-                println!("Error completing redemption {}: {}", redemption_id, e);
+                error!("Error completing redemption {}: {}", redemption_id, e);
                 client.send_message(channel, &format!("Error completing redemption: {}", e)).await?;
             }
         }

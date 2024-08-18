@@ -3,6 +3,7 @@ use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
+use log::error;
 use crate::twitch::redeems::RedeemManager;
 use tokio::sync::RwLock;
 
@@ -26,7 +27,7 @@ pub async fn handle(
         // Update stream status
         let mut manager = redeem_manager.write().await;
         if let Err(e) = manager.set_stream_live(false).await {
-            eprintln!("Failed to set stream as offline: {}", e);
+            error!("Failed to set stream as offline: {}", e);
         }
     }
 

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::debug;
 use tokio::sync::RwLock;
 use crate::twitch::redeems::models::{Redemption, RedemptionResult};
 use crate::twitch::api::TwitchAPIClient;
@@ -102,7 +103,7 @@ pub struct CoinGameAction;
 #[async_trait]
 impl RedeemAction for CoinGameAction {
     async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, _ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
-        println!("Executing CoinGameAction");
+        debug!("Executing CoinGameAction");
         handle_coin_game(redemption, api_client, irc_client, channel, redeem_manager).await
     }
 }

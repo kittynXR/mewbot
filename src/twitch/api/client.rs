@@ -8,6 +8,7 @@ use warp::Filter;
 use tokio::time::timeout;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
+use log::{debug, info, warn};
 use crate::twitch::api::models::ChannelPointReward;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +52,7 @@ impl TwitchAPIClient {
         }
         drop(config);
 
-        println!("No existing Twitch API tokens found. Starting authentication flow...");
+        warn!("No existing Twitch API tokens found. Starting authentication flow...");
         self.start_auth_flow().await
     }
 
@@ -64,14 +65,14 @@ impl TwitchAPIClient {
                 expires_in: 0,
                 expires_at: Some(Instant::now()),
             });
-            println!("Existing Twitch API tokens found.");
+            warn!("Existing Twitch API tokens found.");
         } else {
             drop(config);
-            println!("No existing Twitch API tokens found. Starting authentication flow...");
+            warn!("No existing Twitch API tokens found. Starting authentication flow...");
             self.start_auth_flow().await?;
         }
         self.initialized.store(true, Ordering::SeqCst);
-        println!("Twitch API client fully initialized.");
+        info!("Twitch API client fully initialized.");
 
         Ok(())
     }
@@ -106,12 +107,12 @@ impl TwitchAPIClient {
                 }
             });
 
-        println!("Starting local server on http://localhost:3000");
+        warn!("Starting local server on http://localhost:3000");
         let (addr, server) = warp::serve(routes).bind_with_graceful_shutdown(([127, 0, 0, 1], 3000), async {
             rx.await.ok();
         });
 
-        println!("Local server running on {}", addr);
+        warn!("Local server running on {}", addr);
 
         let server_handle = tokio::spawn(server);
 
@@ -158,7 +159,7 @@ impl TwitchAPIClient {
         let client_id = config_read.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?;
         let client_secret = config_read.twitch_client_secret.as_ref().ok_or("Twitch client secret not set")?;
 
-        println!("Sending token request...");
+        info!("Sending token request...");
         let res = self.client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&[
@@ -172,7 +173,7 @@ impl TwitchAPIClient {
             .await?;
 
         let status = res.status();
-        println!("Received response with status: {}", status);
+        info!("Received response with status: {}", status);
 
         if !status.is_success() {
             let error_text = res.text().await?;
@@ -180,10 +181,10 @@ impl TwitchAPIClient {
         }
 
         let token: TwitchToken = res.json().await?;
-        println!("Successfully parsed token response");
-        println!("Access token (first 10 chars): {}...", &token.access_token[..10]);
-        println!("Refresh token (first 10 chars): {}...", &token.refresh_token[..10]);
-        println!("Token expires in: {} seconds", token.expires_in);
+        debug!("Successfully parsed token response");
+        debug!("Access token (first 10 chars): {}...", &token.access_token[..10]);
+        debug!("Refresh token (first 10 chars): {}...", &token.refresh_token[..10]);
+        debug!("Token expires in: {} seconds", token.expires_in);
 
         // Drop the read lock before acquiring the write lock
         drop(config_read);
@@ -191,12 +192,12 @@ impl TwitchAPIClient {
         // Now, update the config with the new tokens
         let mut config_write = self.config.write().await;
         config_write.set_twitch_tokens(token.access_token.clone(), token.refresh_token.clone())?;
-        println!("Tokens saved to config file");
+        debug!("Tokens saved to config file");
 
         // Update the token in the TwitchAPIClient
         *self.token.write().await = Some(token);
 
-        println!("Token exchange and storage completed successfully.");
+        debug!("Token exchange and storage completed successfully.");
 
         Ok(())
     }
@@ -258,7 +259,7 @@ impl TwitchAPIClient {
         let config = self.config.read().await;
         let client_id = config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?;
 
-        println!("Sending request to Twitch API for user info: {}", user_login);
+        debug!("Sending request to Twitch API for user info: {}", user_login);
 
         let response = self.client
             .get(&format!("https://api.twitch.tv/helix/users?login={}", user_login))
@@ -267,10 +268,10 @@ impl TwitchAPIClient {
             .send()
             .await?;
 
-        println!("Received response from Twitch API. Status: {}", response.status());
+        debug!("Received response from Twitch API. Status: {}", response.status());
 
         let body = response.text().await?;
-        println!("Response body: {}", body);
+        debug!("Response body: {}", body);
 
         let json: serde_json::Value = serde_json::from_str(&body)?;
 
