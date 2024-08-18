@@ -8,6 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 use crate::twitch::role_cache::RoleCache;
 use std::cmp::Ordering;
+use log::{debug, error};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserRole {
@@ -86,28 +87,28 @@ pub async fn get_user_role(
     storage: &Arc<RwLock<StorageClient>>,
     role_cache: &Arc<RwLock<RoleCache>>,
 ) -> Result<UserRole, Box<dyn std::error::Error + Send + Sync>> {
-    println!("Getting user role for user_id: {}", user_id);
+    debug!("Getting user role for user_id: {}", user_id);
 
     // Check the cache first
     if let Some(role) = role_cache.read().await.get_role(user_id) {
-        println!("Role found in cache: {:?}", role);
+        debug!("Role found in cache: {:?}", role);
         return Ok(role);
     }
 
-    println!("Role not found in cache, checking database");
+    debug!("Role not found in cache, checking database");
 
     // If not in cache, check the database
     let storage_read = storage.read().await;
     if let Some(chatter_data) = storage_read.get_chatter_data(user_id)? {
         let role = chatter_data.role;
-        println!("Role found in database: {:?}", role);
+        debug!("Role found in database: {:?}", role);
         drop(storage_read);
         role_cache.write().await.set_role(user_id.to_string(), role.clone());
         return Ok(role);
     }
     drop(storage_read);
 
-    println!("Role not found in database, fetching from API");
+    debug!("Role not found in database, fetching from API");
 
     // If not in database, fetch from API
     let role = if user_id == channel_id {
@@ -121,23 +122,23 @@ pub async fn get_user_role(
                     Ok(true) => UserRole::Subscriber,
                     Ok(false) => UserRole::Viewer,
                     Err(e) => {
-                        println!("Error checking subscription status: {:?}", e);
+                        error!("Error checking subscription status: {:?}", e);
                         UserRole::Viewer
                     }
                 },
                 Err(e) => {
-                    println!("Error checking VIP status: {:?}", e);
+                    error!("Error checking VIP status: {:?}", e);
                     UserRole::Viewer
                 }
             },
             Err(e) => {
-                println!("Error checking moderator status: {:?}", e);
+                error!("Error checking moderator status: {:?}", e);
                 UserRole::Viewer
             }
         }
     };
 
-    println!("Role fetched from API: {:?}", role);
+    debug!("Role fetched from API: {:?}", role);
 
     // Update the database and cache
     {
@@ -146,14 +147,14 @@ pub async fn get_user_role(
         chatter_data.role = role.clone();
         chatter_data.last_seen = Utc::now();
         if let Err(e) = storage_write.upsert_chatter(&chatter_data) {
-            println!("Error upserting chatter data: {:?}", e);
+            error!("Error upserting chatter data: {:?}", e);
         } else {
-            println!("Chatter data updated in database");
+            debug!("Chatter data updated in database");
         }
     }
 
     role_cache.write().await.set_role(user_id.to_string(), role.clone());
-    println!("Role updated in cache");
+    debug!("Role updated in cache");
 
     Ok(role)
 }

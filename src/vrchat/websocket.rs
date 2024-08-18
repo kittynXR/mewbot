@@ -3,6 +3,7 @@ use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
+use log::{debug, error, info, warn};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
@@ -26,7 +27,7 @@ pub async fn handler(
     loop {
         match connect_to_websocket(&auth_cookie).await {
             Ok(mut ws_stream) => {
-                println!("WebSocket connection established");
+                info!("WebSocket connection established");
                 dashboard_state.write().await.update_vrchat_status(true);
 
                 while let Some(message) = ws_stream.next().await {
@@ -36,12 +37,12 @@ pub async fn handler(
                                 let mut world_state_guard = world_state.write().await;
                                 if world_state_guard.get().as_ref() != Some(&new_world) {
                                     world_state_guard.update(Some(new_world.clone()));
-                                    println!("Current user changed world: {:?}", new_world);
+                                    info!("Current user changed world: {:?}", new_world);
 
                                     // Update dashboard state
                                     let mut dashboard = dashboard_state.write().await;
                                     dashboard.update_vrchat_world(Some(new_world.clone()));
-                                    println!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                    debug!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
 
                                     // Broadcast the VRChat world update immediately
                                     let broadcast_msg = WebSocketMessage {
@@ -54,7 +55,7 @@ pub async fn handler(
                             }
                         }
                         Err(err) => {
-                            println!("WebSocket error: {}", err);
+                            error!("WebSocket error: {}", err);
                             break;
                         }
                         _ => {}
@@ -63,13 +64,13 @@ pub async fn handler(
                 delay = Duration::from_secs(1);
             }
             Err(err) => {
-                println!("Failed to connect: {}", err);
+                error!("Failed to connect: {}", err);
                 dashboard_state.write().await.update_vrchat_status(false);
                 delay = std::cmp::min(delay * 2, max_delay);
             }
         }
 
-        println!("Attempting to reconnect after {:?}", delay);
+        warn!("Attempting to reconnect after {:?}", delay);
         sleep(delay).await;
     }
 }
@@ -161,7 +162,7 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
                 created_at,
                 updated_at,
             };
-            println!("Current user changed world: {:?}", world);
+            info!("Current user changed world: {:?}", world);
             return Ok(Some(world));
         }
     }

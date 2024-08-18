@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::Mutex;
 use std::io::{self, Write};
+use log::{info, warn};
 use rpassword::read_password;
 use tokio::sync::mpsc;
 use crate::web_ui::websocket::WebSocketMessage;
@@ -119,7 +120,7 @@ impl VRChatClient {
             .await
             .map_err(|e| VRChatError(format!("Failed to send 2FA verification request: {}", e)))?;
 
-        println!("2FA response status: {}", twofa_resp.status());
+        info!("2FA response status: {}", twofa_resp.status());
 
         if !twofa_resp.status().is_success() {
             let error_body = twofa_resp.text().await
@@ -159,7 +160,7 @@ impl VRChatClient {
                 .await
                 .map_err(|e| VRChatError(format!("Failed to send request: {}", e)))?;
 
-            println!("User info response status: {}", response.status());
+            info!("User info response status: {}", response.status());
 
             let body = response.text().await
                 .map_err(|e| VRChatError(format!("Failed to get response body: {}", e)))?;
@@ -183,7 +184,7 @@ impl VRChatClient {
                 *self.current_user_id.write().await = Some(id.clone());
                 return Ok(id);
             } else if user_info.get("error").is_some() {
-                println!("Authentication failed. Attempting to log in again.");
+                warn!("Authentication failed. Attempting to log in again.");
                 let new_auth_cookie = Self::login(&self.client).await?;
                 *self.auth_cookie.write().await = new_auth_cookie.clone(); // Changed to write()
                 let mut config = self.config.write().await;
@@ -208,7 +209,7 @@ impl VRChatClient {
         // For example:
         // self.websocket.close().await?;
         // self.clear_session_data()?;
-        println!("VRChat client disconnected");
+        info!("VRChat client disconnected");
         Ok(())
     }
 }
