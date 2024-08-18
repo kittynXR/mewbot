@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
+use log::{debug, error, info};
 use serenity::builder::{CreateInteractionResponse, CreateInteractionResponseMessage};
 use tokio::sync::RwLock;
 use crate::discord::commands::{link_twitch, ping};
@@ -24,7 +25,7 @@ impl EventHandler {
 #[async_trait]
 impl serenity::client::EventHandler for EventHandler {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        info!("{} is connected!", ready.user.name);
 
         let guild_id = {
             let config_read = self.config.read().await;
@@ -39,13 +40,13 @@ impl serenity::client::EventHandler for EventHandler {
                 // Add more slash commands here
             ]).await;
 
-            println!("Slash commands registered: {:#?}", commands);
+            debug!("Slash commands registered: {:#?}", commands);
         }
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
-            println!("Received command interaction: {:#?}", command);
+            info!("Received command interaction: {:#?}", command);
 
             let result = match command.data.name.as_str() {
                 "ping" => ping::run(ctx, command).await,
@@ -58,7 +59,7 @@ impl serenity::client::EventHandler for EventHandler {
             };
 
             if let Err(why) = result {
-                println!("Cannot respond to slash command: {}", why);
+                error!("Cannot respond to slash command: {}", why);
             }
         }
     }

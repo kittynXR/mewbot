@@ -8,6 +8,7 @@ use rand::Rng;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
+use log::{error, info};
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("linktwitch")
@@ -22,7 +23,7 @@ pub async fn run(ctx: Context, command: CommandInteraction, user_links: Arc<User
 
     // Store the pending verification
     if let Err(e) = user_links.add_pending_verification(discord_id, verification_code).await {
-        eprintln!("Error adding pending verification: {:?}", e);
+        error!("Error adding pending verification: {:?}", e);
         command.create_response(&ctx.http, CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
                 .content("An error occurred while processing your request. Please try again later.")
@@ -45,7 +46,7 @@ pub async fn run(ctx: Context, command: CommandInteraction, user_links: Arc<User
             .ephemeral(true)
     )).await?;
 
-    println!("Added pending verification for Discord user: {}", discord_id);
+    info!("Added pending verification for Discord user: {}", discord_id);
 
     Ok(())
 }
