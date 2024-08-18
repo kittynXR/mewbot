@@ -5,12 +5,12 @@ use crate::config::Config;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 
 use super::events::EventHandler;
 
 pub struct DiscordClient {
-    client: Client,
+    client: Arc<Mutex<Option<Client>>>,
     storage: Arc<RwLock<StorageClient>>,
     user_links: Arc<UserLinks>,
     config: Arc<RwLock<Config>>,
@@ -38,10 +38,22 @@ impl DiscordClient {
             .event_handler(EventHandler::new(config.clone(), storage.clone(), user_links.clone()))
             .await?;
 
-        Ok(Self { client, storage, user_links, config })
+        Ok(Self {
+            client: Arc::new(Mutex::new(Some(client))),
+            storage,
+            user_links,
+            config
+        })
     }
 
-    pub async fn start(mut self) -> Result<(), serenity::Error> {
-        self.client.start().await
+    pub async fn start(&self) -> Result<(), serenity::Error> {
+        let mut client_guard = self.client.lock().await;
+        if let Some(mut client) = client_guard.take() {
+            client.start().await?;
+            *client_guard = Some(client);
+            Ok(())
+        } else {
+            Err(serenity::Error::Other("Discord client has already been started"))
+        }
     }
 }

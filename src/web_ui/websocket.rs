@@ -13,7 +13,7 @@ use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterCli
 use crate::storage::StorageClient;
 use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_warn};
 use crate::LogLevel;
 use crate::logging::Logger;
 use crate::osc::VRChatOSC;
@@ -406,7 +406,7 @@ pub async fn update_dashboard_state(
             let world_state = state.world_state.read().await;
             let current_world = world_state.get();
 
-            log_info!(logger, "Current VRChat world state (update dashboard): {:?}", current_world);
+            log_warn!(logger, "Current VRChat world state (update dashboard): {:?}", current_world);
 
             let recent_messages = match storage.read().await.get_recent_messages(10).await {
                 Ok(messages) => messages,

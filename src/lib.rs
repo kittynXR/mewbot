@@ -353,15 +353,13 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.dashboard_state.write().await.update_twitch_status(true);
     }
 
-    if let Some(discord_client) = clients.discord {
+    if let Some(discord_client) = &clients.discord {
         let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn({
+            let discord_client = Arc::clone(discord_client);
             let dashboard_state = clients.dashboard_state.clone();
             let logger_clone = clients.logger.clone();
             async move {
-                let result = match Arc::try_unwrap(discord_client) {
-                    Ok(client) => client.start().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
-                    Err(_) => Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to unwrap Arc")) as Box<dyn std::error::Error + Send + Sync>),
-                };
+                let result = discord_client.start().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
 
                 if let Err(e) = &result {
                     log_error!(logger_clone, "Discord client error: {:?}", e);
