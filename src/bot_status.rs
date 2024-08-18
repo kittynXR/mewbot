@@ -1,22 +1,18 @@
 use std::time::{Instant, Duration};
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use crate::log_info;
-use crate::logging::Logger;
-use crate::LogLevel;
+use log::info;
 
 pub struct BotStatus {
     start_time: Instant,
     is_online: bool,
-    logger: Arc<Logger>,
 }
 
 impl BotStatus {
-    pub fn new(logger: Arc<Logger>) -> Arc<RwLock<Self>> {
+    pub fn new() -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self {
             start_time: Instant::now(),
             is_online: false,
-            logger,
         }))
     }
 
@@ -25,7 +21,7 @@ impl BotStatus {
         if online {
             self.start_time = Instant::now();
         }
-        log_info!(self.logger, "Bot status changed to: {}", if online { "online" } else { "offline" });
+        info!("Bot status changed to: {}", if online { "online" } else { "offline" });
     }
 
     pub fn is_online(&self) -> bool {

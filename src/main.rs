@@ -1,8 +1,12 @@
-use clap::Parser;
+use clap::{Parser, ArgAction};
 use mewbot::{config::Config, init, run};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use mewbot::logging::LogLevel;
+use log::{error, warn, info, debug, trace, LevelFilter};
+use fern::colors::{Color, ColoredLevelConfig};
+use chrono::Local;
+use std::fs;
+use std::path::Path;
 
 /// MewBot - A Twitch and VRChat bot
 #[derive(Parser, Debug)]
@@ -12,9 +16,59 @@ struct Args {
     #[arg(short, long, value_name = "FILE")]
     config: Option<String>,
 
-    /// Set log level (error, warn, info, debug, verbose)
+    /// Set log level (error, warn, info, debug, trace)
     #[arg(short = 'L', long, value_name = "LEVEL")]
     log_level: Option<String>,
+
+    /// Enable single-level logging (only show logs of the specified level)
+    #[arg(long, action = ArgAction::SetTrue)]
+    single_level: bool,
+}
+
+fn setup_logger(log_level: LevelFilter, single_level: bool) -> Result<(), fern::InitError> {
+    // Configure colors for log levels
+    let colors = ColoredLevelConfig::new()
+        .error(Color::Red)
+        .warn(Color::Yellow)
+        .info(Color::Green)
+        .debug(Color::Blue)
+        .trace(Color::Magenta);
+
+    // Create logs directory if it doesn't exist
+    let logs_dir = Path::new("logs");
+    fs::create_dir_all(logs_dir)?;
+
+    // Generate a unique log file name based on the current date and time
+    let log_file_name = Local::now().format("mewbot_%Y-%m-%d_%H-%M-%S.log").to_string();
+    let log_file_path = logs_dir.join(log_file_name);
+
+    // Build the logger
+    let dispatch = fern::Dispatch::new()
+        .format(move |out, message, record| {
+            if !single_level || record.level() == log_level {
+                out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                    record.target(),
+                    colors.color(record.level()),
+                    message
+                ))
+            }
+        })
+        .level(log_level)
+        .level_for("serenity", LevelFilter::Error)  // Adjusted to Error
+        .filter(|metadata| {
+            !metadata.target().contains("serenity")
+                && !metadata.target().contains("tracing::span")
+                && !(metadata.level() <= log::Level::Info && metadata.target().contains("do_heartbeat"))
+        })
+        .chain(std::io::stdout())
+        .chain(fern::log_file(log_file_path)?);
+
+    // Apply the logger configuration
+    dispatch.apply()?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -24,25 +78,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config_path = args.config.unwrap_or_else(|| "mewbot.conf".to_string());
     let mut config = Config::new()?;
 
-    if let Some(level) = args.log_level {
-        let new_level = match level.to_lowercase().as_str() {
-            "error" => LogLevel::ERROR,
-            "warn" => LogLevel::WARN,
-            "info" => LogLevel::INFO,
-            "debug" => LogLevel::DEBUG,
-            "verbose" => LogLevel::VERBOSE,
+    // Set log level
+    let log_level = if let Some(level) = args.log_level {
+        match level.to_lowercase().as_str() {
+            "error" => LevelFilter::Error,
+            "warn" => LevelFilter::Warn,
+            "info" => LevelFilter::Info,
+            "debug" => LevelFilter::Debug,
+            "trace" => LevelFilter::Trace,
             _ => {
                 eprintln!("Invalid log level. Using default (INFO).");
-                LogLevel::INFO
+                LevelFilter::Info
             }
-        };
-        config.log_level = new_level;
-        config.save()?;
-    }
+        }
+    } else {
+        config.log_level
+    };
+
+    // Initialize logger
+    setup_logger(log_level, args.single_level)?;
+
+    // Update config with new log level and save
+    config.log_level = log_level;
+    config.save()?;
 
     let config = Arc::new(RwLock::new(config));
 
-    println!("Log level: {:?}", config.read().await.log_level);
+    info!("Starting MewBot with log level: {:?}", log_level);
+    if args.single_level {
+        info!("Single-level logging enabled. Only showing logs at the {} level.", log_level);
+    }
 
     let clients = init(Arc::clone(&config)).await?;
 
@@ -51,5 +116,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     run(clients, config).await?;
 
+    info!("MewBot shutting down");
     Ok(())
 }

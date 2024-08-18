@@ -4,6 +4,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -13,9 +14,6 @@ use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterCli
 use crate::storage::StorageClient;
 use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
-use crate::{log_error, log_info, log_warn};
-use crate::LogLevel;
-use crate::logging::Logger;
 use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
 
@@ -167,13 +165,12 @@ pub async fn handle_websocket(
     ws: WebSocket,
     dashboard_state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
-    logger: Arc<Logger>
 ) {
     let (mut ws_tx, mut ws_rx) = ws.split();
 
     // Implement a handshake
     if let Err(e) = ws_tx.send(Message::text("READY")).await {
-        log_error!(logger, "Failed to send handshake: {:?}", e);
+        error!("Failed to send handshake: {:?}", e);
         return;
     }
 
@@ -181,7 +178,7 @@ pub async fn handle_websocket(
     match ws_rx.next().await {
         Some(Ok(msg)) if msg.to_str() == Ok("ACK") => {},
         _ => {
-            log_error!(logger, "Failed to receive handshake acknowledgment");
+            error!("Failed to receive handshake acknowledgment");
             return;
         }
     }
@@ -198,17 +195,17 @@ pub async fn handle_websocket(
                     Some(Ok(msg)) => {
                         if let Ok(text) = msg.to_str() {
                             if let Ok(parsed_message) = serde_json::from_str::<WebSocketMessage>(text) {
-                                if let Err(e) = handle_ws_message(&parsed_message, &dashboard_state, &storage, &logger).await {
-                                    log_error!(logger, "Error handling WebSocket message: {:?}", e);
+                                if let Err(e) = handle_ws_message(&parsed_message, &dashboard_state, &storage).await {
+                                    error!("Error handling WebSocket message: {:?}", e);
                                     break;
                                 }
                             } else {
-                                log_error!(logger, "Failed to parse WebSocket message");
+                                error!("Failed to parse WebSocket message");
                             }
                         }
                     }
                     Some(Err(e)) => {
-                        log_error!(logger, "WebSocket error: {:?}", e);
+                        error!("WebSocket error: {:?}", e);
                         break;
                     }
                     None => break,
@@ -219,33 +216,32 @@ pub async fn handle_websocket(
                     Ok(msg) => {
                         if let Ok(msg_str) = serde_json::to_string(&msg) {
                             if let Err(e) = ws_tx.send(Message::text(msg_str)).await {
-                                log_error!(logger, "Failed to send WebSocket message: {:?}", e);
+                                error!("Failed to send WebSocket message: {:?}", e);
                                 break;
                             }
                         }
                     }
                     Err(e) => {
-                        log_error!(logger, "Failed to receive broadcast message: {:?}", e);
+                        error!("Failed to receive broadcast message: {:?}", e);
                         break;
                     }
                 }
             }
             _ = ping_interval.tick() => {
                 if let Err(e) = ws_tx.send(Message::ping(vec![])).await {
-                    log_error!(logger, "Failed to send ping: {:?}", e);
+                    error!("Failed to send ping: {:?}", e);
                     break;
                 }
             }
         }
     }
-    log_info!(logger, "WebSocket connection closed");
+    info!("WebSocket connection closed");
 }
 
 async fn handle_ws_message(
     message: &WebSocketMessage,
     dashboard_state: &Arc<RwLock<DashboardState>>,
     storage: &Arc<RwLock<StorageClient>>,
-    logger: &Arc<Logger>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match message.message_type.as_str() {
         "shareWorld" => {
@@ -332,7 +328,7 @@ async fn handle_ws_message(
                     };
                     dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
                 } else {
-                    log_error!(logger, "Failed to parse VRChat world data");
+                    error!("Failed to parse VRChat world data");
                 }
             }
         }
@@ -348,11 +344,11 @@ async fn handle_ws_message(
                 };
                 dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
             } else {
-                log_error!(logger, "Received incomplete Twitch message");
+                error!("Received incomplete Twitch message");
             }
         }
         _ => {
-            log_error!(logger, "Unknown message type: {}", message.message_type);
+            error!("Unknown message type: {}", message.message_type);
         }
     }
     Ok(())
@@ -388,7 +384,6 @@ pub async fn update_dashboard_state(
     state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
     discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
-    logger: Arc<Logger>,
 ) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
     let mut last_update: Option<WebSocketMessage> = None;
@@ -406,12 +401,12 @@ pub async fn update_dashboard_state(
             let world_state = state.world_state.read().await;
             let current_world = world_state.get();
 
-            log_warn!(logger, "Current VRChat world state (update dashboard): {:?}", current_world);
+            info!("Current VRChat world state (update dashboard): {:?}", current_world);
 
             let recent_messages = match storage.read().await.get_recent_messages(10).await {
                 Ok(messages) => messages,
                 Err(e) => {
-                    log_error!(logger, "Failed to fetch recent messages: {:?}", e);
+                    error!("Failed to fetch recent messages: {:?}", e);
                     Vec::new()
                 }
             };
@@ -437,7 +432,7 @@ pub async fn update_dashboard_state(
         if last_update.as_ref() != Some(&update_message) {
             let state = state.read().await;
             if let Err(e) = state.broadcast_message(update_message.clone()).await {
-                log_error!(logger, "Failed to broadcast update message: {:?}", e);
+                error!("Failed to broadcast update message: {:?}", e);
             } else {
                 last_update = Some(update_message);
             }
@@ -450,9 +445,8 @@ pub async fn create_websocket_connection(
     ws: WebSocket,
     dashboard_state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
-    logger: Arc<Logger>,
 ) {
-    tokio::spawn(handle_websocket(ws, dashboard_state, storage, logger));
+    tokio::spawn(handle_websocket(ws, dashboard_state, storage));
 }
 
 // This function can be called from your main server setup to start the dashboard state update task
@@ -460,7 +454,6 @@ pub async fn start_dashboard_update_task(
     dashboard_state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
     discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
-    logger: Arc<Logger>,
 ) {
-    tokio::spawn(update_dashboard_state(dashboard_state, storage, discord_client, logger));
+    tokio::spawn(update_dashboard_state(dashboard_state, storage, discord_client));
 }

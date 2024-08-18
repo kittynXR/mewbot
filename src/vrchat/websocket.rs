@@ -10,7 +10,6 @@ use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::http::{Request, Uri};
 use tokio_tungstenite::tungstenite::http::header;
 use tokio::sync::mpsc;
-use crate::log_info;
 use crate::vrchat::VRChatClient;
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage, WorldState};
 

@@ -2,8 +2,7 @@ use std::path::Path;
 use std::fs;
 use std::io::{self, Write};
 use serde::{Deserialize, Serialize};
-use serenity::all::standard::Reason::Log;
-use crate::logging::LogLevel;
+use log::LevelFilter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -22,8 +21,8 @@ pub struct Config {
     pub discord_guild_id: Option<String>,
     pub openai_secret: Option<String>,
     pub anthropic_secret: Option<String>,
-    #[serde(default)]
-    pub log_level: LogLevel,
+    #[serde(with = "log_level_serde")]
+    pub log_level: LevelFilter,
     pub web_ui_host: Option<String>,
     pub web_ui_port: Option<u16>,
     #[serde(default = "default_additional_streams")]
@@ -32,6 +31,34 @@ pub struct Config {
 
 fn default_additional_streams() -> Vec<String> {
     vec!["".to_string(); 4]
+}
+
+// Custom serialization for log::LevelFilter
+mod log_level_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use log::LevelFilter;
+
+    pub fn serialize<S>(level: &LevelFilter, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{:?}", level))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<LevelFilter, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_uppercase().as_str() {
+            "ERROR" => Ok(LevelFilter::Error),
+            "WARN" => Ok(LevelFilter::Warn),
+            "INFO" => Ok(LevelFilter::Info),
+            "DEBUG" => Ok(LevelFilter::Debug),
+            "TRACE" => Ok(LevelFilter::Trace),
+            _ => Ok(LevelFilter::Info), // Default to Info if unrecognized
+        }
+    }
 }
 
 impl Config {
@@ -238,7 +265,7 @@ impl Config {
             discord_guild_id: Some(discord_guild_id),
             openai_secret: if openai_secret.is_empty() { None } else { Some(openai_secret) },
             anthropic_secret: if anthropic_secret.is_empty() { None } else { Some(anthropic_secret) },
-            log_level: LogLevel::INFO,
+            log_level: LevelFilter::Trace,
             web_ui_host,
             web_ui_port,
             additional_streams,
@@ -300,7 +327,7 @@ impl Config {
             self.discord_guild_id.is_some()
     }
 
-    pub fn set_log_level(&mut self, level: LogLevel) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn set_log_level(&mut self, level: LevelFilter) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.log_level = level;
         println!("Log level set to {:?}", self.log_level);
         self.save()?;

@@ -1,26 +1,23 @@
 use std::env;
 use warp::Filter;
 use std::sync::Arc;
+use log::info;
 use tokio::sync::{broadcast, RwLock};
 use warp::http::{HeaderMap, HeaderValue};
 use crate::bot_status::BotStatus;
 use crate::config::Config;
-use crate::log_info;
-use crate::LogLevel;
 use crate::storage::StorageClient;
-use crate::logging::Logger;
 use crate::osc::VRChatOSC;
 use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient}; // Updated import
 use crate::web_ui::websocket;
 use crate::web_ui::websocket::{DashboardState, update_dashboard_state};
 use super::websocket::{handle_websocket, WebSocketMessage};
-use super::api_routes::{api_routes, with_storage, with_logger};
+use super::api_routes::{api_routes, with_storage};
 use crate::discord::DiscordClient;
 
 pub struct WebUI {
     config: Arc<RwLock<Config>>,
     storage: Arc<RwLock<StorageClient>>,
-    logger: Arc<Logger>,
     pub dashboard_state: Arc<RwLock<websocket::DashboardState>>,
     discord_client: Option<Arc<DiscordClient>>,
 }
@@ -29,7 +26,6 @@ impl WebUI {
     pub fn new(
         config: Arc<RwLock<Config>>,
         storage: Arc<RwLock<StorageClient>>,
-        logger: Arc<Logger>,
         bot_status: Arc<RwLock<BotStatus>>,
         twitch_irc_manager: Arc<TwitchIRCManager>, // Updated parameter
         vrchat_osc: Option<Arc<VRChatOSC>>,
@@ -45,7 +41,6 @@ impl WebUI {
         WebUI {
             config,
             storage,
-            logger,
             dashboard_state,
             discord_client,
         }
@@ -54,32 +49,30 @@ impl WebUI {
     pub async fn run(&self) {
         let config = self.config.clone();
         let storage = self.storage.clone();
-        let logger = self.logger.clone();
         let dashboard_state = self.dashboard_state.clone();
 
         // Get the path of the current executable
         let exe_path = env::current_exe().expect("Failed to get executable path");
-        log_info!(self.logger, "Executable path: {:?}", exe_path);
+        info!("Executable path: {:?}", exe_path);
 
         // Navigate to the project root (assuming the executable is in target/debug or target/release)
         let project_root = exe_path.parent().unwrap().parent().unwrap().parent().unwrap();
-        log_info!(self.logger, "Project root: {:?}", project_root);
+        info!("Project root: {:?}", project_root);
 
         // Construct the path to the build directory
         let build_path = project_root.join("web_ui").join("frontend").join("build");
-        log_info!(self.logger, "Full path to build directory: {:?}", build_path);
+        info!("Full path to build directory: {:?}", build_path);
 
         // Convert build_path to a String
         let build_path_str = build_path.to_str().unwrap().to_string();
 
         // Serve React app
         let static_files = {
-            let logger = logger.clone();
             let build_path_str = build_path_str.clone();
             warp::path("ui").and(warp::fs::dir(build_path_str.clone()))
                 .or(warp::path("static").and(warp::fs::dir(format!("{}/static", build_path_str))))
                 .with(warp::log::custom(move |info| {
-                    log_info!(logger, "Static file request: {} {} {}",
+                    info!("Static file request: {} {} {}",
                         info.method(),
                         info.path(),
                         info.status().as_u16()
@@ -106,27 +99,24 @@ impl WebUI {
             .and(warp::ws())
             .and(with_dashboard_state(dashboard_state.clone()))
             .and(with_storage(storage.clone()))
-            .and(with_logger(logger.clone()))
-            .map(|ws: warp::ws::Ws, dashboard_state, storage, logger| {
-                ws.on_upgrade(move |socket| handle_websocket(socket, dashboard_state, storage, logger))
+            .map(|ws: warp::ws::Ws, dashboard_state, storage| {
+                ws.on_upgrade(move |socket| handle_websocket(socket, dashboard_state, storage))
             });
 
         let api = api_routes(
             config.clone(),
             storage.clone(),
-            logger.clone(),
             dashboard_state.clone()
         );
 
         let routes = {
-            let logger = logger.clone();
             root_redirect
                 .or(static_files)
                 .or(catch_all)
                 .or(ws_route)
                 .or(api)
                 .with(warp::log::custom(move |info| {
-                    log_info!(logger, "Request: {} {} {}",
+                    info!("Request: {} {} {}",
                         info.method(),
                         info.path(),
                         info.status().as_u16()
@@ -141,7 +131,7 @@ impl WebUI {
         let port = config_read.web_ui_port.unwrap_or(3333);
         drop(config_read);
 
-        log_info!(self.logger, "Starting web UI server on {}:{}", host, port);
+        info!("Starting web UI server on {}:{}", host, port);
 
         // Create a broadcast channel for WebSocket messages
         let (_tx, _rx) = broadcast::channel::<WebSocketMessage>(100); // Changed to _tx to avoid unused variable warning
@@ -151,7 +141,6 @@ impl WebUI {
             self.dashboard_state.clone(),
             self.storage.clone(),
             Arc::new(RwLock::new(self.discord_client.clone())),
-            self.logger.clone(),
         ));
 
         // Run the server

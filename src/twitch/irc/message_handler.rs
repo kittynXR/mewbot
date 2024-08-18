@@ -7,14 +7,11 @@ use crate::twitch::redeems::RedeemManager;
 use crate::storage::StorageClient;
 use crate::twitch::role_cache::RoleCache;
 use crate::discord::UserLinks;
-use crate::logging::Logger;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::timeout;
 use twitch_irc::message::ServerMessage;
-use crate::{log_debug, log_error, log_info};
-use crate::LogLevel;
 use crate::twitch::irc::TwitchBotClient;
 use crate::web_ui::websocket::WebSocketMessage;
 
@@ -26,7 +23,6 @@ pub struct MessageHandler {
     storage: Arc<RwLock<StorageClient>>,
     role_cache: Arc<RwLock<RoleCache>>,
     user_links: Arc<UserLinks>,
-    logger: Arc<Logger>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
     deduplicator: Mutex<MessageDeduplicator>,
     world_info: Arc<Mutex<Option<World>>>,
@@ -42,7 +38,6 @@ impl MessageHandler {
         storage: Arc<RwLock<StorageClient>>,
         role_cache: Arc<RwLock<RoleCache>>,
         user_links: Arc<UserLinks>,
-        logger: Arc<Logger>,
         websocket_sender: mpsc::Sender<WebSocketMessage>,
         world_info: Arc<Mutex<Option<World>>>,
         vrchat_client: Arc<VRChatClient>,
@@ -55,7 +50,6 @@ impl MessageHandler {
             storage,
             role_cache,
             user_links,
-            logger,
             websocket_sender,
             deduplicator: Mutex::new(MessageDeduplicator::new(100, Duration::from_secs(60))),
             world_info,
@@ -67,10 +61,10 @@ impl MessageHandler {
         let mut receiver = self.irc_client.subscribe();
 
         while let Ok(message) = receiver.recv().await {
-            log_debug!(self.logger, "Received message in handle_messages: {:?}", message);
-            log_info!(self.logger, "Received Twitch message: {:?}", message);
+            debug!("Received message in handle_messages: {:?}", message);
+            info!("Received Twitch message: {:?}", message);
             if let Err(e) = self.handle_message(message).await {
-                log_error!(self.logger, "Error handling message: {:?}", e);
+                error!("Error handling message: {:?}", e);
             }
         }
 
@@ -78,14 +72,14 @@ impl MessageHandler {
     }
 
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        log_debug!(self.logger, "Processing message in handle_message: {:?}", message);
+        debug!("Processing message in handle_message: {:?}", message);
         if let ServerMessage::Privmsg(msg) = message {
             let message_id = msg.message_id.clone();
 
             // Check if this message is a duplicate
             let mut deduplicator = self.deduplicator.lock().await;
             if deduplicator.is_duplicate(&message_id) {
-                log_debug!(self.logger, "Skipping duplicate message: {}", message_id);
+                debug!("Skipping duplicate message: {}", message_id);
                 return Ok(());
             }
             let channel_id = self.api_client.get_broadcaster_id().await?;
@@ -108,9 +102,9 @@ impl MessageHandler {
                 additional_streams: None,
             };
             if let Err(e) = self.websocket_sender.send(websocket_message).await {
-                log_error!(self.logger, "Failed to send message to WebSocket: {:?}", e);
+                error!("Failed to send message to WebSocket: {:?}", e);
             } else {
-                log_info!(self.logger, "Successfully sent message to WebSocket");
+                info!("Successfully sent message to WebSocket");
             }
 
             let lowercase_message = cleaned_message.to_lowercase();
@@ -136,7 +130,6 @@ impl MessageHandler {
                             &self.user_links,
                             &params,
                             &self.config,
-                            &self.logger,
                             &self.vrchat_client,
                             is_stream_online
                         ).await?;
@@ -153,6 +146,7 @@ impl MessageHandler {
 
 use std::collections::VecDeque;
 use std::time::{Instant};
+use log::{debug, error, info};
 use crate::vrchat::{VRChatClient, World};
 
 struct MessageDeduplicator {

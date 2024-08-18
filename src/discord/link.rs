@@ -1,5 +1,3 @@
-// src/discord/link.rs
-
 use serenity::model::id::UserId;
 use std::collections::HashMap;
 use tokio::sync::RwLock;

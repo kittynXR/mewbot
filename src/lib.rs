@@ -2,7 +2,6 @@ pub mod config;
 pub mod twitch;
 pub mod vrchat;
 pub mod discord;
-pub mod logging;
 pub mod ai;
 pub mod osc;
 pub mod storage;
@@ -22,9 +21,9 @@ use crate::vrchat::World;
 use crate::twitch::redeems::RedeemManager;
 use crate::ai::AIClient;
 use std::time::Duration;
+use log::{error, info};
 use tokio::task::JoinHandle;
 use crate::discord::UserLinks;
-use crate::logging::{LogLevel, Logger};
 use crate::osc::VRChatOSC;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
@@ -47,7 +46,6 @@ pub struct BotClients {
     pub storage: Arc<RwLock<storage::StorageClient>>,
     pub role_cache: Arc<RwLock<RoleCache>>,
     pub user_links: Arc<UserLinks>,
-    pub logger: Arc<Logger>,
     pub bot_status: Arc<RwLock<BotStatus>>,
     pub dashboard_state: Arc<RwLock<DashboardState>>,
     pub websocket_tx: mpsc::Sender<WebSocketMessage>,
@@ -95,12 +93,11 @@ impl BotClients {
 }
 
 pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std::error::Error + Send + Sync>> {
-    let logger = Arc::new(Logger::new(config.clone()));
-    let bot_status = BotStatus::new(logger.clone());
+    let bot_status = BotStatus::new();
 
     let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), logger.clone()));
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
 
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
@@ -199,7 +196,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
             ai_client.clone(),
             vrchat_osc.clone(),
             osc_configs.clone(),
-            logger.clone(),
         )))
     } else {
         return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
@@ -230,7 +226,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     let web_ui = Arc::new(web_ui::WebUI::new(
         config.clone(),
         storage.clone(),
-        logger.clone(),
         bot_status.clone(),
         twitch_irc_manager.clone(),
         vrchat_osc.clone(),
@@ -251,7 +246,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         storage,
         role_cache,
         user_links,
-        logger: logger.clone(),
         bot_status,
         dashboard_state,
         websocket_tx,
@@ -279,7 +273,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     let web_ui = Arc::new(web_ui::WebUI::new(
         config.clone(),
         clients.storage.clone(),
-        clients.logger.clone(),
         clients.bot_status.clone(),
         clients.twitch_irc_manager.clone(),
         clients.vrchat_osc.clone(),
@@ -329,7 +322,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             clients.storage.clone(),
             clients.role_cache.clone(),
             clients.user_links.clone(),
-            clients.logger.clone(),
             clients.websocket_tx.clone(),
             world_info.clone(),
             clients.vrchat.clone().expect("VRChatClient should be initialized") // Add this line
@@ -338,11 +330,10 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let twitch_handler = tokio::spawn({
             let message_handler = message_handler.clone();
             let dashboard_state = clients.dashboard_state.clone();
-            let logger = clients.logger.clone();
             async move {
                 let result = message_handler.handle_messages().await;
                 if let Err(e) = &result {
-                    log_error!(logger, "Twitch handler error: {:?}", e);
+                    error!("Twitch handler error: {:?}", e);
                     dashboard_state.write().await.update_twitch_status(false);
                 }
                 result
@@ -357,12 +348,11 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn({
             let discord_client = Arc::clone(discord_client);
             let dashboard_state = clients.dashboard_state.clone();
-            let logger_clone = clients.logger.clone();
             async move {
                 let result = discord_client.start().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
 
                 if let Err(e) = &result {
-                    log_error!(logger_clone, "Discord client error: {:?}", e);
+                    error!("Discord client error: {:?}", e);
                     dashboard_state.write().await.update_discord_status(false);
                 }
                 result
@@ -375,11 +365,10 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     // EventSub client handling
     let eventsub_client = clients.eventsub_client.clone();
     let eventsub_handle = tokio::spawn({
-        let logger_clone = clients.logger.clone();
         async move {
-            log_info!(logger_clone, "Starting EventSub client");
+            info!("Starting EventSub client");
             if let Err(e) = eventsub_client.lock().await.connect_and_listen().await {
-                log_error!(logger_clone, "EventSub client error: {:?}", e);
+                error!("EventSub client error: {:?}", e);
             }
             Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
         }
@@ -402,7 +391,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let current_user_id = vrchat_client.get_current_user_id().await?;
         let auth_cookie = vrchat_client.get_auth_cookie().await;
         let vrchat_handle = tokio::spawn({
-            let logger_clone = clients.logger.clone();
             let dashboard_state = clients.dashboard_state.clone();
             let dashboard_state_clone = dashboard_state.clone(); // Clone for use inside the closure
             let vrchat_client = Arc::clone(vrchat_client);
@@ -415,7 +403,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
                     dashboard_state_clone // Use the cloned version here
                 ).await;
                 if let Err(e) = &result {
-                    log_error!(logger_clone, "VRChat websocket handler error: {:?}", e);
+                    error!("VRChat websocket handler error: {:?}", e);
                     dashboard_state.write().await.update_vrchat_status(false);
                 }
                 result

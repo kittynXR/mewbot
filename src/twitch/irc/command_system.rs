@@ -11,7 +11,6 @@ use std::pin::Pin;
 use crate::twitch::redeems::RedeemManager;
 use crate::twitch::role_cache::RoleCache;
 use crate::config::Config;
-use crate::logging::Logger;
 use crate::twitch::irc::TwitchBotClient;
 use crate::vrchat::VRChatClient;
 use super::commands;
@@ -32,7 +31,6 @@ pub struct Command {
         &'a Arc<UserLinks>,
         &'a [&'a str],
         &'a Arc<RwLock<Config>>,
-        &'a Arc<Logger>,
         &'a Arc<VRChatClient>,
         bool
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>,
@@ -43,35 +41,35 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "!world",
         required_role: UserRole::Subscriber,
-        handler: |msg, client, channel, _api_client, world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _logger, vrchat_client, is_stream_online|
+        handler: |msg, client, channel, _api_client, world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, vrchat_client, is_stream_online|
             Box::pin(commands::handle_world(msg, client, channel, world_info, storage, user_links, vrchat_client, is_stream_online)),
         description: "Shows information about the current VRChat world",
     },
     Command {
         name: "!uptime",
         required_role: UserRole::Viewer,
-        handler: |msg, client, channel, api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_uptime(msg, client, channel, api_client, storage, user_links)),
         description: "Shows how long the stream has been live",
     },
     Command {
         name: "!ping",
         required_role: UserRole::Viewer,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_ping(msg, client, channel, storage, user_links)),
         description: "Responds with Pong!",
     },
     Command {
         name: "!so",
         required_role: UserRole::Subscriber,
-        handler: |msg, client, channel, api_client, _world_info, cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, api_client, _world_info, cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_shoutout(msg, client, channel, api_client, cooldowns, params, redeem_manager, storage, user_links)),
         description: "Gives a shoutout to another streamer",
     },
     Command {
         name: "!clearcache",
         required_role: UserRole::Broadcaster,
-        handler: |_msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, role_cache, _storage, _user_links, _params, _config, _logger, _vrchat_client, _is_stream_online| Box::pin(async move {
+        handler: |_msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, role_cache, _storage, _user_links, _params, _config, _vrchat_client, _is_stream_online| Box::pin(async move {
             role_cache.write().await.clear();
             client.send_message(channel, "Role cache has been cleared.").await?;
             Ok(())
@@ -81,51 +79,44 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "!complete",
         required_role: UserRole::Subscriber,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_complete_redemption(msg, client, channel, redeem_manager, storage, user_links, params)),
         description: "Marks a queued redemption as complete",
     },
     Command {
         name: "!add_redeem",
         required_role: UserRole::Moderator,
-        handler: |msg, client, channel, api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_add_redeem(msg, client, channel, api_client, redeem_manager, storage, user_links, params)),
         description: "Adds a new channel point redemption. Usage: !add_redeem \"<title>\" <cost> <action_type> <cooldown> \"<prompt>\" [queued] [announce]",
     },
     Command {
         name: "!setactivegames",
         required_role: UserRole::Moderator,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_set_active_games(msg, client, channel, redeem_manager, storage, user_links, params)),
         description: "Sets the games for which a redeem is active",
     },
     Command {
         name: "!toggleredeem",
         required_role: UserRole::Moderator,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_toggle_redeem(msg, client, channel, redeem_manager, storage, user_links, params)),
         description: "Toggles a channel point redeem on or off",
     },
     Command {
         name: "!setofflineredeem",
         required_role: UserRole::Moderator,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, redeem_manager, _role_cache, storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::handle_set_offline_redeem(msg, client, channel, redeem_manager, storage, user_links, params)),
         description: "Sets whether a redeem is available in offline chat",
     },
     Command {
         name: "!verify",
         required_role: UserRole::Viewer,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, _storage, user_links, params, _config, _logger, _vrchat_client, _is_stream_online|
+        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, _storage, user_links, params, _config, _vrchat_client, _is_stream_online|
             Box::pin(commands::verify::handle_verify(msg, client, channel, user_links, params)),
         description: "Verifies and links your Twitch account to your Discord account",
-    },
-    Command {
-        name: "!debug",
-        required_role: UserRole::Broadcaster,
-        handler: |msg, client, channel, _api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, _storage, _user_links, params, config, logger, _vrchat_client, _is_stream_online|
-            Box::pin(commands::debug::handle_debug(msg, client, channel, config, logger, params)),
-        description: "Manages logging levels. Usage: !debug [verbose|debug|status]",
     },
 ];
 
@@ -143,7 +134,6 @@ pub async fn execute_command(
     user_links: &Arc<UserLinks>,
     params: &[&str],
     config: &Arc<RwLock<Config>>,
-    logger: &Arc<Logger>,
     vrchat_client: &Arc<VRChatClient>,
     is_stream_online: bool
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -160,7 +150,6 @@ pub async fn execute_command(
         user_links,
         params,
         config,
-        logger,
         vrchat_client,
         is_stream_online
     ).await
