@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use log::{debug, error, info};
-use tokio::sync::{RwLock, mpsc, broadcast};
+use tokio::sync::{RwLock, mpsc, broadcast, Mutex};
 use tokio::sync::broadcast::error::SendError;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::TwitchIRCClient as TwitchIRC;
@@ -20,6 +21,8 @@ pub struct TwitchIRCManager {
     clients: RwLock<HashMap<String, IRCClient>>,
     message_sender: broadcast::Sender<ServerMessage>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
+    initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
+    receivers_ready: Arc<AtomicBool>,
 }
 
 impl TwitchIRCManager {
@@ -29,6 +32,8 @@ impl TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
             message_sender,
             websocket_sender,
+            initial_messages: Arc::new(Mutex::new(Vec::new())),
+            receivers_ready: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -59,9 +64,18 @@ impl TwitchIRCManager {
         // Spawn a task to handle incoming messages for this client
         let message_sender = self.message_sender.clone();
         let websocket_sender = self.websocket_sender.clone();
-        let username_clone = username.clone();  // Clone username for the spawned task
+        let username_clone = username.clone();
+        let initial_messages = self.initial_messages.clone();
+        let receivers_ready = self.receivers_ready.clone();
         tokio::spawn(async move {
-            Self::handle_client_messages(username_clone, incoming_messages, message_sender, websocket_sender).await;
+            Self::handle_client_messages(
+                username_clone,
+                incoming_messages,
+                message_sender,
+                websocket_sender,
+                initial_messages,
+                receivers_ready
+            ).await;
         });
 
         info!("Successfully added Twitch IRC client for user: {}", username);
@@ -73,10 +87,11 @@ impl TwitchIRCManager {
         mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
         message_sender: broadcast::Sender<ServerMessage>,
         websocket_sender: mpsc::Sender<WebSocketMessage>,
+        initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
+        receivers_ready: Arc<AtomicBool>,
     ) {
         while let Some(message) = incoming_messages.recv().await {
             debug!("Received message in handle_client_messages for user {}: {:?}", username, message);
-            info!("Received message in TwitchIRCManager: {:?}", message);
             Self::log_message(&username, &message);
 
             if let ServerMessage::Privmsg(msg) = &message {
@@ -92,74 +107,92 @@ impl TwitchIRCManager {
                 if let Err(e) = websocket_sender.send(websocket_message).await {
                     error!("Failed to send message to WebSocket: {:?}", e);
                 } else {
-                    info!("Successfully sent message to WebSocket");
+                    debug!("Successfully sent message to WebSocket");
                 }
             }
 
-            if let Err(e) = message_sender.send(message) {
-                error!("Failed to broadcast message: {:?}", e);
+            if receivers_ready.load(Ordering::SeqCst) {
+                if let Err(e) = message_sender.send(message) {
+                    error!("Failed to broadcast message: {:?}", e);
+                } else {
+                    debug!("Successfully broadcasted message");
+                }
             } else {
-                debug!("Successfully broadcasted message");
+                initial_messages.lock().await.push(message);
+                debug!("Message queued in initial_messages");
             }
         }
         info!("Exiting handle_client_messages for {}", username);
     }
 
+    pub async fn flush_initial_messages(&self) {
+        self.receivers_ready.store(true, Ordering::SeqCst);
+        let messages = std::mem::take(&mut *self.initial_messages.lock().await);
+        for message in messages {
+            if let Err(e) = self.message_sender.send(message) {
+                error!("Failed to broadcast initial message: {:?}", e);
+            } else {
+                debug!("Successfully broadcasted initial message");
+            }
+        }
+        info!("Flushed all initial messages");
+    }
+
     fn log_message(username: &str, message: &ServerMessage) {
         match message {
             ServerMessage::Privmsg(msg) => {
-                println!("[{}] {}: {}", msg.channel_login, msg.sender.name, msg.message_text);
+                debug!("[{}] {}: {}", msg.channel_login, msg.sender.name, msg.message_text);
             },
             ServerMessage::Notice(msg) => {
-                println!("[NOTICE] {}: {}",
+                debug!("[NOTICE] {}: {}",
                          msg.channel_login.as_deref().unwrap_or("*"),
                          msg.message_text);
             },
             ServerMessage::Join(msg) => {
-                println!("[JOIN] {} joined {}", msg.user_login, msg.channel_login);
+                debug!("[JOIN] {} joined {}", msg.user_login, msg.channel_login);
             },
             ServerMessage::Part(msg) => {
-                println!("[PART] {} left {}", msg.user_login, msg.channel_login);
+                debug!("[PART] {} left {}", msg.user_login, msg.channel_login);
             },
             ServerMessage::UserNotice(msg) => {
-                println!("[USER NOTICE] {}: {}",
+                debug!("[USER NOTICE] {}: {}",
                          msg.channel_login,
                          msg.message_text.as_deref().unwrap_or(""));
             },
             ServerMessage::GlobalUserState(msg) => {
-                println!("[GLOBAL USER STATE] User: {}", msg.user_id);
+                debug!("[GLOBAL USER STATE] User: {}", msg.user_id);
             },
             ServerMessage::UserState(msg) => {
-                println!("[USER STATE] Channel: {}, User: {}",
+                debug!("[USER STATE] Channel: {}, User: {}",
                          msg.channel_login,
                          msg.user_name);
             },
             ServerMessage::RoomState(msg) => {
-                println!("[ROOM STATE] Channel: {}", msg.channel_login);
+                debug!("[ROOM STATE] Channel: {}", msg.channel_login);
             },
             ServerMessage::Whisper(msg) => {
-                println!("[WHISPER] From {}: {}", msg.sender.name, msg.message_text);
+                debug!("[WHISPER] From {}: {}", msg.sender.name, msg.message_text);
             },
             ServerMessage::ClearChat(msg) => {
                 match &msg.action {
                     ClearChatAction::UserBanned { user_login, user_id } => {
-                        println!("[CLEAR CHAT] User {} (ID: {}) was banned in channel {}",
+                        debug!("[CLEAR CHAT] User {} (ID: {}) was banned in channel {}",
                                  user_login, user_id, msg.channel_login);
                     },
                     ClearChatAction::UserTimedOut { user_login, user_id, timeout_length } => {
-                        println!("[CLEAR CHAT] User {} (ID: {}) was timed out for {} seconds in channel {}",
+                        debug!("[CLEAR CHAT] User {} (ID: {}) was timed out for {} seconds in channel {}",
                                  user_login, user_id, timeout_length.as_secs(), msg.channel_login);
                     },
                     ClearChatAction::ChatCleared => {
-                        println!("[CLEAR CHAT] All chat was cleared in channel {}", msg.channel_login);
+                        debug!("[CLEAR CHAT] All chat was cleared in channel {}", msg.channel_login);
                     },
                 }
             },
             ServerMessage::ClearMsg(msg) => {
-                println!("[CLEAR MSG] Message from {} was deleted in channel {}", msg.sender_login, msg.channel_login);
+                debug!("[CLEAR MSG] Message from {} was deleted in channel {}", msg.sender_login, msg.channel_login);
             },
             _ => {
-                println!("[{}] Received: {:?}", username, message);
+                debug!("[{}] Received: {:?}", username, message);
             }
         }
     }

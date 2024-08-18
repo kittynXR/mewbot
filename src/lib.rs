@@ -414,6 +414,8 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.dashboard_state.write().await.update_vrchat_status(true);
     }
 
+    clients.twitch_irc_manager.flush_initial_messages().await;
+
     println!("Bot is now running. Press Ctrl+C to exit.");
 
     tokio::select! {
