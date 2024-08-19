@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Home, Settings, Layout as LayoutIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Home, Settings, Layout as LayoutIcon, ChevronLeft, ChevronRight, Tv } from 'lucide-react';
 import Chatbox from './Chatbox';
+import OBSControl from './OBSControl';  // Import the new OBSControl component
 
 const Sidebar = ({ activeItem, setActiveItem, isCollapsed, toggleSidebar }) => {
     const menuItems = [
         { name: 'Dashboard', icon: Home },
         { name: 'OBS Overlay', icon: LayoutIcon },
+        { name: 'OBS Control', icon: Tv },  // Add the new OBS Control menu item
         { name: 'Settings', icon: Settings },
     ];
 
@@ -58,7 +60,7 @@ const Layout = ({ children, activeView, setActiveView }) => {
                         <Chatbox messages={messages} />
                     </div>
                     <main className="flex-1 p-4 overflow-y-auto">
-                        {children}
+                        {activeView === 'OBS Control' ? <OBSControl /> : children}
                     </main>
                 </div>
             </div>
