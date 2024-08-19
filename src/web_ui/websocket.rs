@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -248,14 +248,26 @@ async fn handle_ws_message(
             let world_info = {
                 let state = dashboard_state.read().await;
                 state.vrchat_world.as_ref().map(|world| {
-                    format!("Current VRChat World: {} by {}", world.name, world.author_name)
+                    (
+                        format!(
+                            "Current World: {} | Author: {} | Capacity: {} | Description: {} | Status: {}",
+                            world.name, world.author_name, world.capacity, world.description, world.release_status
+                        ),
+                        format!(
+                            "Published: {} | Last Updated: {} | World Link: https://vrchat.com/home/world/{}",
+                            world.created_at.format("%Y-%m-%d"),
+                            world.updated_at.format("%Y-%m-%d"),
+                            world.id
+                        )
+                    )
                 })
             };
 
-            if let Some(world_info) = world_info {
+            if let Some((first_message, second_message)) = world_info {
                 let twitch_channel = dashboard_state.read().await.get_twitch_channel().await?;
                 if let Some(twitch_client) = dashboard_state.read().await.get_twitch_bot_client().await {
-                    twitch_client.send_message(&twitch_channel, &world_info).await?;
+                    twitch_client.send_message(&twitch_channel, &first_message).await?;
+                    twitch_client.send_message(&twitch_channel, &second_message).await?;
                 }
             }
 
@@ -399,7 +411,7 @@ pub async fn update_dashboard_state(
                     let status = if bot_status.is_online() { "online" } else { "offline" };
                     let uptime = bot_status.uptime_string();
 
-                    info!("Current VRChat world state (update dashboard): {:?}", state.vrchat_world);
+                    debug!("Current VRChat world state (update dashboard): {:?}", state.vrchat_world);
 
                     // let world_state = state.world_state.read().await;
                     // let current_world = world_state.get();

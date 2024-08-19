@@ -27,6 +27,7 @@ pub struct MessageHandler {
     deduplicator: Mutex<MessageDeduplicator>,
     world_info: Arc<Mutex<Option<World>>>,
     vrchat_client: Arc<VRChatClient>,
+    ai_client: Option<Arc<AIClient>>,
 }
 
 impl MessageHandler {
@@ -41,6 +42,7 @@ impl MessageHandler {
         websocket_sender: mpsc::Sender<WebSocketMessage>,
         world_info: Arc<Mutex<Option<World>>>,
         vrchat_client: Arc<VRChatClient>,
+        ai_client: Option<Arc<AIClient>>,
     ) -> Self {
         MessageHandler {
             irc_client,
@@ -54,6 +56,7 @@ impl MessageHandler {
             deduplicator: Mutex::new(MessageDeduplicator::new(100, Duration::from_secs(60))),
             world_info,
             vrchat_client,
+            ai_client,
         }
     }
 
@@ -131,6 +134,7 @@ impl MessageHandler {
                             &params,
                             &self.config,
                             &self.vrchat_client,
+                            &self.ai_client,  // Add this line
                             is_stream_online
                         ).await?;
                     } else {
@@ -147,6 +151,7 @@ impl MessageHandler {
 use std::collections::VecDeque;
 use std::time::{Instant};
 use log::{debug, error, info};
+use crate::ai::AIClient;
 use crate::vrchat::{VRChatClient, World};
 
 struct MessageDeduplicator {

@@ -61,8 +61,6 @@ impl BotClients {
 
         // Gracefully stop Twitch IRC clients
         warn!("Stopping Twitch IRC clients...");
-        let channel = self.get_twitch_channel()?;
-        self.twitch_bot_client.send_message(&channel, "MewBot is shutting down. Goodbye!").await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Disconnect from VRChat
@@ -121,7 +119,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone()));
+    let discord_link = config.read().await.discord_link.clone().unwrap_or_default();
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), discord_link));
 
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
@@ -328,14 +327,15 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         let message_handler = Arc::new(MessageHandler::new(
             clients.twitch_bot_client.clone(),
             config.clone(),
-            api_client,
+            api_client.clone(),
             clients.redeem_manager.clone(),
             clients.storage.clone(),
             clients.role_cache.clone(),
             clients.user_links.clone(),
             clients.websocket_tx.clone(),
             world_info.clone(),
-            clients.vrchat.clone().expect("VRChatClient should be initialized")
+            clients.vrchat.clone().expect("VRChatClient should be initialized"),
+            clients.ai_client.clone(),  // Add this line to pass the AI client
         ));
 
         let twitch_handler = tokio::spawn({

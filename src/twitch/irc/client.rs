@@ -23,10 +23,11 @@ pub struct TwitchIRCManager {
     websocket_sender: mpsc::Sender<WebSocketMessage>,
     initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
     receivers_ready: Arc<AtomicBool>,
+    discord_link: String,
 }
 
 impl TwitchIRCManager {
-    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>) -> Self {
+    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>, discord_link: String) -> Self {
         let (message_sender, _) = broadcast::channel(1000);
         TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
@@ -34,6 +35,7 @@ impl TwitchIRCManager {
             websocket_sender,
             initial_messages: Arc::new(Mutex::new(Vec::new())),
             receivers_ready: Arc::new(AtomicBool::new(false)),
+            discord_link,
         }
     }
 
@@ -212,5 +214,9 @@ impl TwitchIRCManager {
 
     pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
         self.message_sender.subscribe()
+    }
+
+    pub fn get_discord_link(&self) -> &str {
+        &self.discord_link
     }
 }

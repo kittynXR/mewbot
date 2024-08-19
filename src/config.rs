@@ -27,6 +27,7 @@ pub struct Config {
     pub web_ui_port: Option<u16>,
     #[serde(default = "default_additional_streams")]
     pub additional_streams: Vec<String>,
+    pub discord_link: Option<String>,
 }
 
 fn default_additional_streams() -> Vec<String> {
@@ -102,6 +103,10 @@ impl Config {
         // Discord
         if self.discord_token.is_none() {
             self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token (leave empty if not using Discord): ")?);
+        }
+
+        if self.discord_link.is_none() {
+            self.discord_link = Some(Self::prompt_input("Enter your Discord server invite link: ")?);
         }
 
         // OpenAI
@@ -217,6 +222,7 @@ impl Config {
         let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
         let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
         let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
+        let discord_link = Self::prompt_input("Enter your Discord server invite link: ")?;
 
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
@@ -269,6 +275,7 @@ impl Config {
             web_ui_host,
             web_ui_port,
             additional_streams,
+            discord_link: Some(discord_link),
         };
 
         config.save()?;

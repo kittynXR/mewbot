@@ -10,6 +10,7 @@ mod set_active_games;
 mod toggle_redeem;
 mod set_offline_redeem;
 pub(crate) mod verify;
+pub(crate) mod discord;
 
 pub use verify::*;
 // ... other mod declarations ...
