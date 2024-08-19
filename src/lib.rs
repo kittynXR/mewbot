@@ -7,6 +7,7 @@ pub mod osc;
 pub mod storage;
 pub mod web_ui;
 mod bot_status;
+pub mod obs;
 
 use bot_status::BotStatus;
 use crate::twitch::role_cache::RoleCache;
