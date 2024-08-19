@@ -16,6 +16,9 @@ use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
 use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
+use crate::obs::OBSManager;
+use crate::obs::models::OBSInstance as OBSModelInstance;
+use crate::obs::websocket::OBSInstanceState;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ChatDestination {
@@ -45,6 +48,22 @@ pub struct WebSocketMessage {
 pub struct WorldState {
     current_world: Option<World>,
     last_updated: std::time::Instant,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct OBSInstance {
+    pub id: u32,
+    pub name: String,
+    pub scenes: Vec<String>,
+    pub current_scene: String,
+    pub sources: std::collections::HashMap<String, Vec<OBSSource>>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct OBSSource {
+    pub name: String,
+    pub type_: String,
+    pub enabled: bool,
 }
 
 impl WorldState {
@@ -83,6 +102,8 @@ pub struct DashboardState {
     pub(crate) tx: broadcast::Sender<WebSocketMessage>,
     pub(crate) rx: broadcast::Receiver<WebSocketMessage>,
     world_state: Arc<RwLock<WorldState>>,
+    pub obs_manager: Arc<OBSManager>,
+    pub obs_instances: Vec<OBSInstanceState>,
 }
 
 impl DashboardState {
@@ -91,6 +112,7 @@ impl DashboardState {
         config: Arc<RwLock<Config>>,
         twitch_irc_manager: Option<Arc<TwitchIRCManager>>,
         vrchat_osc: Option<Arc<VRChatOSC>>,
+        obs_manager: Arc<OBSManager>,
     ) -> Self {
         let (tx, rx) = broadcast::channel::<WebSocketMessage>(100);
         Self {
@@ -107,6 +129,8 @@ impl DashboardState {
             tx,
             rx,
             world_state: Arc::new(RwLock::new(WorldState::new())),
+            obs_manager,
+            obs_instances: Vec::new(),
         }
     }
 
@@ -163,6 +187,9 @@ impl DashboardState {
 
     pub fn update_obs_status(&mut self, status: bool) {
         self.obs_status = status;
+    }
+    pub async fn update_obs_instances(&mut self) {
+        self.obs_instances = self.obs_manager.get_instances().await;
     }
 }
 
@@ -363,6 +390,101 @@ async fn handle_ws_message(
                 dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
             } else {
                 error!("Received incomplete Twitch message");
+            }
+        }
+        "get_obs_info" => {
+            let mut state = dashboard_state.write().await;
+            state.update_obs_instances().await;
+            let obs_info = serde_json::to_value(&state.obs_instances)?;
+
+            let response = WebSocketMessage {
+                message_type: "obs_update".to_string(),
+                message: None,
+                world: Some(obs_info),
+                ..Default::default()
+            };
+            state.broadcast_message(response).await?;
+        }
+        "change_scene" => {
+            if let Some(obs_data) = &message.world {
+                if let (Some(instance_name), Some(scene_name)) = (
+                    obs_data.get("instance_name").and_then(|v| v.as_str()),
+                    obs_data.get("scene_name").and_then(|v| v.as_str())
+                ) {
+                    let state = dashboard_state.read().await;
+                    state.obs_manager.set_current_scene(instance_name, scene_name).await?;
+
+                    // After changing the scene, update the OBS instances and broadcast the update
+                    drop(state);
+                    let mut state = dashboard_state.write().await;
+                    state.update_obs_instances().await;
+                    let obs_info = serde_json::to_value(&state.obs_instances)?;
+
+                    let response = WebSocketMessage {
+                        message_type: "obs_update".to_string(),
+                        message: None,
+                        world: Some(obs_info),
+                        ..Default::default()
+                    };
+                    state.broadcast_message(response).await?;
+                }
+            }
+        }
+        "toggle_source" => {
+            if let Some(obs_data) = &message.world {
+                if let (
+                    Some(instance_name),
+                    Some(scene_name),
+                    Some(source_name),
+                    Some(enabled)
+                ) = (
+                    obs_data.get("instance_name").and_then(|v| v.as_str()),
+                    obs_data.get("scene_name").and_then(|v| v.as_str()),
+                    obs_data.get("source_name").and_then(|v| v.as_str()),
+                    obs_data.get("enabled").and_then(|v| v.as_bool())
+                ) {
+                    let state = dashboard_state.read().await;
+                    state.obs_manager.set_scene_item_enabled(instance_name, scene_name, source_name, enabled).await?;
+
+                    // After toggling the source, update the OBS instances and broadcast the update
+                    drop(state);
+                    let mut state = dashboard_state.write().await;
+                    state.update_obs_instances().await;
+                    let obs_info = serde_json::to_value(&state.obs_instances)?;
+
+                    let response = WebSocketMessage {
+                        message_type: "obs_update".to_string(),
+                        message: None,
+                        world: Some(obs_info),
+                        ..Default::default()
+                    };
+                    state.broadcast_message(response).await?;
+                }
+            }
+        }
+        "refresh_source" => {
+            if let Some(obs_data) = &message.world {
+                if let (Some(instance_name), Some(source_name)) = (
+                    obs_data.get("instance_name").and_then(|v| v.as_str()),
+                    obs_data.get("source_name").and_then(|v| v.as_str())
+                ) {
+                    let state = dashboard_state.read().await;
+                    state.obs_manager.refresh_browser_source(instance_name, source_name).await?;
+
+                    // After refreshing the source, update the OBS instances and broadcast the update
+                    drop(state);
+                    let mut state = dashboard_state.write().await;
+                    state.update_obs_instances().await;
+                    let obs_info = serde_json::to_value(&state.obs_instances)?;
+
+                    let response = WebSocketMessage {
+                        message_type: "obs_update".to_string(),
+                        message: None,
+                        world: Some(obs_info),
+                        ..Default::default()
+                    };
+                    state.broadcast_message(response).await?;
+                }
             }
         }
         _ => {

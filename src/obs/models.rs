@@ -1,9 +1,9 @@
-// src/obs/models.rs
+// src/OBS/models.rs
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObsInstance {
+pub struct OBSInstance {
     pub name: String,
     pub address: String,
     pub port: u16,
@@ -11,13 +11,13 @@ pub struct ObsInstance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObsScene {
+pub struct OBSScene {
     pub name: String,
-    pub items: Vec<ObsSceneItem>,
+    pub items: Vec<OBSSceneItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObsSceneItem {
+pub struct OBSSceneItem {
     pub name: String,
     pub source_type: String,
     pub visible: bool,

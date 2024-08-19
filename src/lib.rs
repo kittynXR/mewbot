@@ -31,6 +31,7 @@ use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
 use crate::web_ui::websocket::{DashboardState, WorldState};
 use tokio::sync::mpsc;
+use crate::obs::{OBSInstance, OBSManager};
 use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct BotClients {
@@ -39,6 +40,7 @@ pub struct BotClients {
     pub twitch_broadcaster_client: Option<Arc<TwitchBroadcasterClient>>,
     pub twitch_api: Option<Arc<TwitchAPIClient>>,
     pub vrchat: Option<Arc<VRChatClient>>,
+    pub obs: Option<Arc<OBSManager>>,
     pub discord: Option<Arc<discord::DiscordClient>>,
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
     pub ai_client: Option<Arc<AIClient>>,
@@ -132,6 +134,32 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     } else {
         None
     };
+
+    let obs_manager = Arc::new(OBSManager::new());
+
+    // Initialize OBS instances from config
+    let obs_config = config.read().await.obs_manager.clone();
+    if let Err(e) = obs_manager.add_instance("Instance1".to_string(), OBSInstance {
+        name: "Instance1".to_string(),
+        address: obs_config.instance1.ip.clone(),
+        port: obs_config.instance1.port,
+        password: obs_config.instance1.password.clone(),
+    }).await {
+        warn!("Failed to add OBS Instance1: {}. Continuing without this instance.", e);
+    }
+
+    if obs_config.is_dual_pc_setup {
+        if let Some(instance2) = obs_config.instance2 {
+            if let Err(e) = obs_manager.add_instance("Instance2".to_string(), OBSInstance {
+                name: "Instance2".to_string(),
+                address: instance2.ip.clone(),
+                port: instance2.port,
+                password: instance2.password.clone(),
+            }).await {
+                warn!("Failed to add OBS Instance2: {}. Continuing without this instance.", e);
+            }
+        }
+    }
 
     let config_read = config.read().await;
     let ai_client = if let Some(openai_secret) = &config_read.openai_secret {
@@ -241,6 +269,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         config.clone(),
         Some(twitch_irc_manager.clone()),
         vrchat_osc.clone(),
+        obs_manager.clone(),  // Pass the OBS manager to the dashboard state
     )));
 
     let clients = BotClients {
@@ -249,6 +278,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         twitch_broadcaster_client,
         twitch_api,
         vrchat,
+        obs: Some(obs_manager),
         discord,
         redeem_manager,
         ai_client,

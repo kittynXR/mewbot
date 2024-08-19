@@ -1,10 +1,11 @@
 // src/obs/mod.rs
 
-mod models;
-mod websocket;
+pub(crate) mod models;
+pub(crate) mod websocket;
 
 pub use models::*;
-pub use websocket::{ObsWebSocketClient, ObsManager};
+pub use websocket::{OBSWebSocketClient, OBSManager};
+
 
 // If you add more files in the future, you can include them here
 // mod additional_feature;

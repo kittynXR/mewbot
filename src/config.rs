@@ -13,6 +13,22 @@ pub struct SocialLinks {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OBSInstanceConfig {
+    pub ip: String,
+    pub port: u16,
+    pub auth_required: bool,
+    pub password: Option<String>,
+    pub use_ssl: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OBSManagerConfig {
+    pub is_dual_pc_setup: bool,
+    pub instance1: OBSInstanceConfig,
+    pub instance2: Option<OBSInstanceConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub twitch_bot_username: Option<String>,
     pub twitch_user_id: Option<String>,
@@ -37,6 +53,8 @@ pub struct Config {
     pub additional_streams: Vec<String>,
     #[serde(default)]
     pub social_links: SocialLinks,
+    #[serde(default)]
+    pub obs_manager: OBSManagerConfig,
 }
 
 fn default_additional_streams() -> Vec<String> {
@@ -78,6 +96,26 @@ impl Default for SocialLinks {
             xdotcom: None,
             vrchat_group: None,
             business_url: None,
+        }
+    }
+}
+impl Default for OBSInstanceConfig {
+    fn default() -> Self {
+        Self {
+            ip: "127.0.0.1".to_string(),
+            port: 4455,
+            auth_required: false,
+            password: None,
+            use_ssl: false,
+        }
+    }
+}
+impl Default for OBSManagerConfig {
+    fn default() -> Self {
+        Self {
+            is_dual_pc_setup: false,
+            instance1: OBSInstanceConfig::default(),
+            instance2: None,
         }
     }
 }
@@ -125,11 +163,25 @@ impl Config {
             self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token (leave empty if not using Discord): ")?);
         }
 
-        // Prompt for missing social links
-        self.social_links.discord = Self::prompt_social_link("Discord server invite link", self.social_links.discord.clone())?;
-        self.social_links.xdotcom = Self::prompt_social_link("X (formerly Twitter) profile link", self.social_links.xdotcom.clone())?;
-        self.social_links.vrchat_group = Self::prompt_social_link("VRChat group link", self.social_links.vrchat_group.clone())?;
-        self.social_links.business_url = Self::prompt_social_link("Business website URL", self.social_links.business_url.clone())?;
+        // OBS Manager Configuration
+        if self.obs_manager.instance1.ip == "127.0.0.1" && self.obs_manager.instance1.port == 4455 && !self.obs_manager.is_dual_pc_setup {
+            println!("\nLet's configure your OBS setup.");
+            let setup_type = Self::prompt_input("Are you using a 1 PC or 2 PC streaming setup? (1/2): ")?;
+            self.obs_manager.is_dual_pc_setup = setup_type == "2";
+
+            // Configure Instance 1
+            println!("\nConfiguring OBS Instance 1:");
+            self.obs_manager.instance1.ip = Self::prompt_input_with_default("Enter IP address for OBS Instance 1", &self.obs_manager.instance1.ip)?;
+            self.obs_manager.instance1.port = Self::prompt_input_with_default("Enter port for OBS Instance 1", &self.obs_manager.instance1.port.to_string())?.parse()?;
+
+            // Configure Instance 2 if it's a dual PC setup
+            if self.obs_manager.is_dual_pc_setup {
+                println!("\nConfiguring OBS Instance 2:");
+                let instance2 = self.obs_manager.instance2.get_or_insert(OBSInstanceConfig::default());
+                instance2.ip = Self::prompt_input_with_default("Enter IP address for OBS Instance 2", &instance2.ip)?;
+                instance2.port = Self::prompt_input_with_default("Enter port for OBS Instance 2", &instance2.port.to_string())?.parse()?;
+            }
+        }
 
         // OpenAI
         if self.openai_secret.is_none() {
@@ -179,6 +231,12 @@ impl Config {
             }
         }
 
+        // Prompt for missing social links
+        self.social_links.discord = Self::prompt_social_link("Discord server invite link", self.social_links.discord.clone())?;
+        self.social_links.xdotcom = Self::prompt_social_link("X (formerly Twitter) profile link", self.social_links.xdotcom.clone())?;
+        self.social_links.vrchat_group = Self::prompt_social_link("VRChat group link", self.social_links.vrchat_group.clone())?;
+        self.social_links.business_url = Self::prompt_social_link("Business website URL", self.social_links.business_url.clone())?;
+
         self.save()?;
         Ok(())
     }
@@ -202,6 +260,19 @@ impl Config {
             Ok(None)
         } else {
             Ok(Some(input))
+        }
+    }
+
+    fn prompt_input_with_default(prompt: &str, default: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        print!("{} (default: {}): ", prompt, default);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            Ok(default.to_string())
+        } else {
+            Ok(input.to_string())
         }
     }
 
@@ -263,17 +334,44 @@ impl Config {
         let mut buffer = String::new();
         io::stdin().read_line(&mut buffer)?;
 
+        // OBS Manager Configuration
+        println!("\nNow, let's configure your OBS setup.");
+        let setup_type = Self::prompt_input("Are you using a 1 PC or 2 PC streaming setup? (1/2): ")?;
+        let is_dual_pc_setup = setup_type == "2";
+
+        // Configure Instance 1
+        println!("\nConfiguring OBS Instance 1:");
+        let instance1 = OBSInstanceConfig {
+            ip: Self::prompt_input_with_default("Enter IP address for OBS Instance 1", "127.0.0.1")?,
+            port: Self::prompt_input_with_default("Enter port for OBS Instance 1", "4455")?.parse()?,
+            auth_required: false,
+            password: None,
+            use_ssl: false,
+        };
+
+        // Configure Instance 2 if it's a dual PC setup
+        let instance2 = if is_dual_pc_setup {
+            println!("\nConfiguring OBS Instance 2:");
+            Some(OBSInstanceConfig {
+                ip: Self::prompt_input_with_default("Enter IP address for OBS Instance 2", "10.0.0.1")?,
+                port: Self::prompt_input_with_default("Enter port for OBS Instance 2", "4455")?.parse()?,
+                auth_required: false,
+                password: None,
+                use_ssl: false,
+            })
+        } else {
+            None
+        };
+
+        let obs_manager = OBSManagerConfig {
+            is_dual_pc_setup,
+            instance1,
+            instance2,
+        };
+
         let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
         let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
         let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
-
-        println!("\nNow, let's set up your social links. You can skip any by pressing Enter.");
-        let social_links = SocialLinks {
-            discord: Self::prompt_optional_input("Enter your Discord server invite link: ")?,
-            xdotcom: Self::prompt_optional_input("Enter your X (formerly Twitter) profile link: ")?,
-            vrchat_group: Self::prompt_optional_input("Enter your VRChat group link: ")?,
-            business_url: Self::prompt_optional_input("Enter your business website URL: ")?,
-        };
 
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
@@ -294,6 +392,14 @@ impl Config {
         };
 
         let mut additional_streams = vec!["".to_string(); 4];
+
+        println!("\nNow, let's set up your social links. You can skip any by pressing Enter.");
+        let social_links = SocialLinks {
+            discord: Self::prompt_optional_input("Enter your Discord server invite link: ")?,
+            xdotcom: Self::prompt_optional_input("Enter your X (formerly Twitter) profile link: ")?,
+            vrchat_group: Self::prompt_optional_input("Enter your VRChat group link: ")?,
+            business_url: Self::prompt_optional_input("Enter your business website URL: ")?,
+        };
 
         println!("Enter up to 4 additional Twitch streams to embed (leave empty to skip):");
 
@@ -327,6 +433,7 @@ impl Config {
             web_ui_port,
             additional_streams,
             social_links,
+            obs_manager,
         };
 
         config.save()?;
