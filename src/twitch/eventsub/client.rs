@@ -139,7 +139,7 @@ impl TwitchEventSubClient {
                         }
                         Some("session_reconnect") => {
                             if let Some(new_url) = response["payload"]["session"]["reconnect_url"].as_str() {
-                                println!("Received reconnect message. New URL: {}", new_url);
+                                warn!("Received reconnect message. New URL: {}", new_url);
                                 self.handle_reconnect(new_url.to_string()).await?;
                                 return Ok(());
                             }
@@ -156,7 +156,7 @@ impl TwitchEventSubClient {
                     }
                 }
                 Ok(Message::Close(frame)) => {
-                    info!("EventSub WebSocket closed with frame: {:?}", frame);
+                    warn!("EventSub WebSocket closed with frame: {:?}", frame);
                     return Ok(());
                 }
                 Ok(Message::Ping(data)) => {
@@ -347,10 +347,10 @@ impl TwitchEventSubClient {
                 .await?;
 
             if response.status().is_success() {
-                println!("EventSub subscription created successfully for {} (version {})", subscription_type, version);
+                info!("EventSub subscription created successfully for {} (version {})", subscription_type, version);
             } else {
                 let error_body = response.text().await?;
-                eprintln!("Failed to create EventSub subscription for {} (version {}): {}", subscription_type, version, error_body);
+                error!("Failed to create EventSub subscription for {} (version {}): {}", subscription_type, version, error_body);
             }
         }
 

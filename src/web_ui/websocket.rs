@@ -1,7 +1,7 @@
 use std::cmp::PartialEq;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
 use log::{error, info};
@@ -384,60 +384,87 @@ pub async fn update_dashboard_state(
     state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
     discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
+    mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
     let mut last_update: Option<WebSocketMessage> = None;
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {
+                let update_message = {
+                    let state = state.read().await;
+                    let bot_status = state.bot_status.read().await;
+                    let discord_status = discord_client.read().await.is_some();
+                    let status = if bot_status.is_online() { "online" } else { "offline" };
+                    let uptime = bot_status.uptime_string();
 
-        let update_message = {
-            let state = state.read().await;
-            let bot_status = state.bot_status.read().await;
-            let discord_status = discord_client.read().await.is_some();
-            let status = if bot_status.is_online() { "online" } else { "offline" };
-            let uptime = bot_status.uptime_string();
+                    let world_state = state.world_state.read().await;
+                    let current_world = world_state.get();
 
-            let world_state = state.world_state.read().await;
-            let current_world = world_state.get();
+                    info!("Current VRChat world state (update dashboard): {:?}", current_world);
 
-            info!("Current VRChat world state (update dashboard): {:?}", current_world);
+                    let recent_messages = match storage.read().await.get_recent_messages(10).await {
+                        Ok(messages) => messages,
+                        Err(e) => {
+                            error!("Failed to fetch recent messages: {:?}", e);
+                            Vec::new()
+                        }
+                    };
 
-            let recent_messages = match storage.read().await.get_recent_messages(10).await {
-                Ok(messages) => messages,
-                Err(e) => {
-                    error!("Failed to fetch recent messages: {:?}", e);
-                    Vec::new()
+                    WebSocketMessage {
+                        message_type: "update".to_string(),
+                        message: Some(status.to_string()),
+                        destination: None,
+                        world: Some(serde_json::json!({
+                            "uptime": uptime,
+                            "vrchat_world": state.vrchat_world,
+                            "recent_messages": recent_messages,
+                            "twitch_status": state.twitch_status,
+                            "discord_status": discord_status,
+                            "vrchat_status": state.vrchat_status,
+                            "obs_status": state.obs_status,
+                        })),
+                        additional_streams: None,
+                        user_id: None,
+                    }
+                };
+
+                if last_update.as_ref() != Some(&update_message) {
+                    let state = state.read().await;
+                    if let Err(e) = state.broadcast_message(update_message.clone()).await {
+                        error!("Failed to broadcast update message: {:?}", e);
+                    } else {
+                        last_update = Some(update_message);
+                    }
                 }
-            };
-
-            WebSocketMessage {
-                message_type: "update".to_string(),
-                message: Some(status.to_string()),
-                destination: None,
-                world: Some(serde_json::json!({
-                    "uptime": uptime,
-                    "vrchat_world": state.vrchat_world,
-                    "recent_messages": recent_messages,
-                    "twitch_status": state.twitch_status,
-                    "discord_status": discord_status,
-                    "vrchat_status": state.vrchat_status,
-                    "obs_status": state.obs_status,
-                })),
-                additional_streams: None,
-                user_id: None,
             }
-        };
-
-        if last_update.as_ref() != Some(&update_message) {
-            let state = state.read().await;
-            if let Err(e) = state.broadcast_message(update_message.clone()).await {
-                error!("Failed to broadcast update message: {:?}", e);
-            } else {
-                last_update = Some(update_message);
+            _ = &mut shutdown_rx => {
+                info!("Received shutdown signal, stopping dashboard updates.");
+                break;
             }
         }
     }
+
+    info!("Dashboard update task has stopped.");
+}
+
+// This function can be called from your main server setup to start the dashboard state update task
+pub async fn start_dashboard_update_task(
+    dashboard_state: Arc<RwLock<DashboardState>>,
+    storage: Arc<RwLock<StorageClient>>,
+    discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
+) -> oneshot::Sender<()> {
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    tokio::spawn(update_dashboard_state(
+        dashboard_state,
+        storage,
+        discord_client,
+        shutdown_rx
+    ));
+
+    shutdown_tx
 }
 
 // Helper function to create a new WebSocket connection
@@ -447,13 +474,4 @@ pub async fn create_websocket_connection(
     storage: Arc<RwLock<StorageClient>>,
 ) {
     tokio::spawn(handle_websocket(ws, dashboard_state, storage));
-}
-
-// This function can be called from your main server setup to start the dashboard state update task
-pub async fn start_dashboard_update_task(
-    dashboard_state: Arc<RwLock<DashboardState>>,
-    storage: Arc<RwLock<StorageClient>>,
-    discord_client: Arc<RwLock<Option<Arc<DiscordClient>>>>,
-) {
-    tokio::spawn(update_dashboard_state(dashboard_state, storage, discord_client));
 }

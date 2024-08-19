@@ -42,7 +42,7 @@ pub async fn handler(
                                     // Update dashboard state
                                     let mut dashboard = dashboard_state.write().await;
                                     dashboard.update_vrchat_world(Some(new_world.clone()));
-                                    debug!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                    info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
 
                                     // Broadcast the VRChat world update immediately
                                     let broadcast_msg = WebSocketMessage {

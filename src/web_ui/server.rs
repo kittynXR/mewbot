@@ -1,8 +1,10 @@
 use std::env;
+use std::future::Future;
 use warp::Filter;
 use std::sync::Arc;
-use log::info;
-use tokio::sync::{broadcast, RwLock};
+use log::{info, warn};
+use tokio::sync::{broadcast, oneshot, RwLock};
+use tokio::task::JoinHandle;
 use warp::http::{HeaderMap, HeaderValue};
 use crate::bot_status::BotStatus;
 use crate::config::Config;
@@ -46,7 +48,7 @@ impl WebUI {
         }
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&self, shutdown_signal: impl Future<Output = ()> + Send + 'static) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.clone();
         let storage = self.storage.clone();
         let dashboard_state = self.dashboard_state.clone();
@@ -134,21 +136,41 @@ impl WebUI {
         info!("Starting web UI server on {}:{}", host, port);
 
         // Create a broadcast channel for WebSocket messages
-        let (_tx, _rx) = broadcast::channel::<WebSocketMessage>(100); // Changed to _tx to avoid unused variable warning
+        let (_tx, _rx) = broadcast::channel::<WebSocketMessage>(100);
 
         // Start the periodic update task
+        let (update_task_shutdown_tx, update_task_shutdown_rx) = oneshot::channel();
         let update_task = tokio::spawn(update_dashboard_state(
             self.dashboard_state.clone(),
             self.storage.clone(),
             Arc::new(RwLock::new(self.discord_client.clone())),
+            update_task_shutdown_rx,
         ));
 
         // Run the server
         let addr: std::net::SocketAddr = format!("{}:{}", host, port).parse().expect("Invalid address");
-        warp::serve(routes).run(addr).await;
+        let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
 
-        // Wait for the update task to finish (it should run indefinitely)
-        let _ = update_task.await;
+        // Run the server in a separate task
+        let server_handle = tokio::spawn(server);
+
+        // Wait for the server to complete (this will happen when shutdown_signal is triggered)
+        server_handle.await?;
+
+        // Stop the update task
+        warn!("Stopping dashboard update task...");
+        if let Err(e) = update_task_shutdown_tx.send(()) {
+            warn!("Failed to send shutdown signal to update task: {:?}", e);
+        }
+
+        // Wait for the update task to finish
+        match update_task.await {
+            Ok(_) => info!("Dashboard update task stopped successfully"),
+            Err(e) => warn!("Error while stopping dashboard update task: {:?}", e),
+        }
+
+        info!("Web UI server has shut down.");
+        Ok(())
     }
 }
 

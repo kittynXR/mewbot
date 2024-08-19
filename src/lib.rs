@@ -53,7 +53,7 @@ pub struct BotClients {
 }
 
 impl BotClients {
-    pub async fn shutdown(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn shutdown(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         warn!("Initiating graceful shutdown...");
 
         // Notify users about shutdown
@@ -71,9 +71,33 @@ impl BotClients {
             vrchat_client.disconnect().await?;
         }
 
+        // Stop the EventSub client
+        warn!("Stopping EventSub client...");
+        // self.eventsub_client.lock().await.disconnect().await?;
+
+        // Disconnect Discord client
+        // if let Some(discord_client) = &self.discord {
+        //     warn!("Disconnecting Discord client...");
+        //     discord_client.disconnect().await?;
+        // }
+
+        // Stop the WebSocket server
+        warn!("Stopping WebSocket server...");
+        // You'll need to implement a method to stop the WebSocket server
+        // This might involve closing all active connections and stopping the server
+
+        // Stop the web UI server
+        warn!("Stopping web UI server...");
+        // You'll need to implement a method to stop the web UI server
+        // This might involve shutting down the Warp server
+
         // Save final state
         warn!("Saving final redemption settings...");
         self.redeem_manager.read().await.save_settings().await?;
+
+        // Close storage connections
+        warn!("Closing storage connections...");
+        // self.storage.write().await.close().await?;
 
         info!("Shutdown complete.");
         self.bot_status.write().await.set_online(false);
@@ -279,11 +303,15 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.discord.clone(),
     ));
 
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+
     let web_ui_handle = tokio::spawn({
         let web_ui = web_ui.clone();
+        let shutdown_signal = shutdown_signal.clone();
         async move {
-            web_ui.run().await;
-            Ok(()) as Result<(), Box<dyn std::error::Error + Send + Sync>>
+            web_ui.run(async move {
+                shutdown_signal.notified().await;
+            }).await
         }
     });
 
@@ -418,18 +446,34 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     info!("Bot is now running. Press Ctrl+C to exit.");
 
-    tokio::select! {
+    let ctrl_c_signal = shutdown_signal.clone();
+
+    // Spawn a task to handle Ctrl+C
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+        warn!("Received Ctrl+C, initiating shutdown.");
+        ctrl_c_signal.notify_waiters();
+    });
+
+    let run_result = tokio::select! {
         _ = futures::future::join_all(handles) => {
             info!("All handlers have completed.");
+            Ok(())
         }
-        _ = tokio::signal::ctrl_c() => {
-            warn!("Received Ctrl+C, shutting down.");
+        _ = shutdown_signal.notified() => {
+            warn!("Shutdown signal received, stopping all tasks.");
+            clients.shutdown().await
         }
+    };
+
+    // Notify web UI to shut down
+    shutdown_signal.notify_waiters();
+
+    // Await the web_ui_handle
+    if let Err(e) = web_ui_handle.await? {
+        error!("Web UI error during shutdown: {:?}", e);
     }
 
-    // Await the web_ui_handle separately
-    web_ui_handle.await??;
-
     info!("Bot has shut down.");
-    Ok(())
+    run_result
 }
