@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -18,6 +18,18 @@ use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ChatDestination {
+    #[serde(rename = "oscTextbox", alias = "osc_textbox")]
+    pub osc_textbox: bool,
+    #[serde(rename = "twitchChat", alias = "twitch_chat")]
+    pub twitch_chat: bool,
+    #[serde(rename = "twitchBot", alias = "twitch_bot")]
+    pub twitch_bot: bool,
+    #[serde(rename = "twitchBroadcaster", alias = "twitch_broadcaster")]
+    pub twitch_broadcaster: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[derive(Default)]
 pub struct WebSocketMessage {
     #[serde(rename = "type")]
@@ -25,16 +37,9 @@ pub struct WebSocketMessage {
     pub message: Option<String>,
     pub destination: Option<ChatDestination>,
     pub world: Option<serde_json::Value>,
+    #[serde(rename = "additionalStreams", alias = "additional_streams")]
     pub additional_streams: Option<Vec<String>>,
     pub user_id: Option<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ChatDestination {
-    pub osc_textbox: bool,
-    pub twitch_chat: bool,
-    pub twitch_bot: bool,
-    pub twitch_broadcaster: bool,
 }
 
 pub struct WorldState {
@@ -201,6 +206,7 @@ pub async fn handle_websocket(
                                 }
                             } else {
                                 error!("Failed to parse WebSocket message");
+                                warn!("Received WebSocket message: {}", text);
                             }
                         }
                     }
