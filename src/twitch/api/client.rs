@@ -329,7 +329,7 @@ impl TwitchAPIClient {
         let config = self.config.read().await;
         let bot_name = config.twitch_bot_username.clone().ok_or("Bot name not set")?;
         drop(config);
-
+        info!("bot username: {}", bot_name);
         let user_info = self.get_user_info(&bot_name).await?;
         let bot_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get bot ID")?.to_string();
 

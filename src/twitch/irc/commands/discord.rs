@@ -28,7 +28,7 @@ pub async fn handle_discord(
 
     // Send an announcement
     let broadcaster_id = api_client.get_broadcaster_id().await?;
-    let moderator_id =
+    let bot_id = api_client.get_bot_id().await?;
 
     send_announcement(api_client, &broadcaster_id, &broadcaster_id, &discord_message, Some("primary")).await?;
 
