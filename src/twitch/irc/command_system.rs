@@ -128,6 +128,14 @@ pub const COMMANDS: &[Command] = &[
         },
         description: "Provides a link to join our Discord community and sends an announcement",
     },
+    Command {
+        name: "!vrc",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, api_client, _world_info, _cooldowns, _redeem_manager, _role_cache, storage, user_links, _params, _config, _vrchat_client, ai_client, _is_stream_online| {
+            Box::pin(commands::vrc::handle_discord(msg, client, channel, api_client, storage, user_links, ai_client))
+        },
+        description: "Provides a link to join our VRChat community and sends an announcement",
+    },
 ];
 
 pub async fn execute_command(

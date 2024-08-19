@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterClient};
 use crate::twitch::irc::message_handler::MessageHandler;
-use crate::config::Config;
+use crate::config::{Config, SocialLinks};
 use crate::twitch::api::TwitchAPIClient;
 use crate::vrchat::VRChatClient;
 use crate::vrchat::World;
@@ -51,6 +51,7 @@ pub struct BotClients {
     pub dashboard_state: Arc<RwLock<DashboardState>>,
     pub websocket_tx: mpsc::Sender<WebSocketMessage>,
     pub websocket_rx: Option<mpsc::Receiver<WebSocketMessage>>,
+    pub social_links: Arc<RwLock<SocialLinks>>,
 }
 
 impl BotClients {
@@ -120,8 +121,9 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
 
-    let discord_link = config.read().await.discord_link.clone().unwrap_or_default();
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), discord_link));
+    let social_links = Arc::new(RwLock::new(config.read().await.social_links.clone()));
+
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), social_links.clone()));
 
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
@@ -259,6 +261,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         dashboard_state,
         websocket_tx,
         websocket_rx: Some(websocket_rx),
+        social_links,
     };
 
     clients.redeem_manager.write().await.reset_coin_game().await?;

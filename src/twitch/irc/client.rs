@@ -10,6 +10,7 @@ use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
 use crate::web_ui::websocket::WebSocketMessage;
+use crate::config::SocialLinks;
 
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
@@ -23,11 +24,11 @@ pub struct TwitchIRCManager {
     websocket_sender: mpsc::Sender<WebSocketMessage>,
     initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
     receivers_ready: Arc<AtomicBool>,
-    discord_link: String,
+    social_links: Arc<RwLock<SocialLinks>>,
 }
 
 impl TwitchIRCManager {
-    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>, discord_link: String) -> Self {
+    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>, social_links: Arc<RwLock<SocialLinks>>) -> Self {
         let (message_sender, _) = broadcast::channel(1000);
         TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
@@ -35,7 +36,7 @@ impl TwitchIRCManager {
             websocket_sender,
             initial_messages: Arc::new(Mutex::new(Vec::new())),
             receivers_ready: Arc::new(AtomicBool::new(false)),
-            discord_link,
+            social_links,
         }
     }
 
@@ -216,7 +217,19 @@ impl TwitchIRCManager {
         self.message_sender.subscribe()
     }
 
-    pub fn get_discord_link(&self) -> &str {
-        &self.discord_link
+    pub async fn get_discord_link(&self) -> String {
+        self.social_links.read().await.discord.clone().unwrap_or_default()
+    }
+
+    pub async fn get_xdotcom_link(&self) -> String {
+        self.social_links.read().await.xdotcom.clone().unwrap_or_default()
+    }
+
+    pub async fn get_vrchat_group_link(&self) -> String {
+        self.social_links.read().await.vrchat_group.clone().unwrap_or_default()
+    }
+
+    pub async fn get_business_url(&self) -> String {
+        self.social_links.read().await.business_url.clone().unwrap_or_default()
     }
 }

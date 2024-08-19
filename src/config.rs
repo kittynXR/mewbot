@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 use log::LevelFilter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SocialLinks {
+    pub discord: Option<String>,
+    pub xdotcom: Option<String>,
+    pub vrchat_group: Option<String>,
+    pub business_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub twitch_bot_username: Option<String>,
     pub twitch_user_id: Option<String>,
@@ -27,7 +35,8 @@ pub struct Config {
     pub web_ui_port: Option<u16>,
     #[serde(default = "default_additional_streams")]
     pub additional_streams: Vec<String>,
-    pub discord_link: Option<String>,
+    #[serde(default)]
+    pub social_links: SocialLinks,
 }
 
 fn default_additional_streams() -> Vec<String> {
@@ -58,6 +67,17 @@ mod log_level_serde {
             "DEBUG" => Ok(LevelFilter::Debug),
             "TRACE" => Ok(LevelFilter::Trace),
             _ => Ok(LevelFilter::Info), // Default to Info if unrecognized
+        }
+    }
+}
+
+impl Default for SocialLinks {
+    fn default() -> Self {
+        SocialLinks {
+            discord: None,
+            xdotcom: None,
+            vrchat_group: None,
+            business_url: None,
         }
     }
 }
@@ -105,9 +125,11 @@ impl Config {
             self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token (leave empty if not using Discord): ")?);
         }
 
-        if self.discord_link.is_none() {
-            self.discord_link = Some(Self::prompt_input("Enter your Discord server invite link: ")?);
-        }
+        // Prompt for missing social links
+        self.social_links.discord = Self::prompt_social_link("Discord server invite link", self.social_links.discord.clone())?;
+        self.social_links.xdotcom = Self::prompt_social_link("X (formerly Twitter) profile link", self.social_links.xdotcom.clone())?;
+        self.social_links.vrchat_group = Self::prompt_social_link("VRChat group link", self.social_links.vrchat_group.clone())?;
+        self.social_links.business_url = Self::prompt_social_link("Business website URL", self.social_links.business_url.clone())?;
 
         // OpenAI
         if self.openai_secret.is_none() {
@@ -159,6 +181,28 @@ impl Config {
 
         self.save()?;
         Ok(())
+    }
+
+    fn prompt_social_link(prompt: &str, current_value: Option<String>) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        if current_value.is_none() {
+            let input = Self::prompt_input(&format!("Enter your {} (press Enter to skip): ", prompt))?;
+            if !input.is_empty() {
+                Ok(Some(input))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(current_value)
+        }
+    }
+
+    fn prompt_optional_input(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let input = Self::prompt_input(prompt)?;
+        if input.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(input))
+        }
     }
 
     fn initial_setup() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -222,7 +266,14 @@ impl Config {
         let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
         let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
         let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
-        let discord_link = Self::prompt_input("Enter your Discord server invite link: ")?;
+
+        println!("\nNow, let's set up your social links. You can skip any by pressing Enter.");
+        let social_links = SocialLinks {
+            discord: Self::prompt_optional_input("Enter your Discord server invite link: ")?,
+            xdotcom: Self::prompt_optional_input("Enter your X (formerly Twitter) profile link: ")?,
+            vrchat_group: Self::prompt_optional_input("Enter your VRChat group link: ")?,
+            business_url: Self::prompt_optional_input("Enter your business website URL: ")?,
+        };
 
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
@@ -275,7 +326,7 @@ impl Config {
             web_ui_host,
             web_ui_port,
             additional_streams,
-            discord_link: Some(discord_link),
+            social_links,
         };
 
         config.save()?;

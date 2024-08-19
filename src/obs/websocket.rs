@@ -13,6 +13,7 @@ use tokio_tungstenite::{
 use tokio_tungstenite::tungstenite::http::Uri;
 use serde_json::{json, Value};
 use crate::obs::models::{ObsInstance, ObsScene};
+use crate::obs::ObsSceneItem;
 
 #[derive(Clone)]
 pub struct ObsWebSocketClient {
@@ -148,7 +149,93 @@ impl ObsWebSocketClient {
 
         Ok(())
     }
+
+    pub async fn get_scene_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let payload = json!({
+            "op": 6,
+            "d": {
+                "requestType": "GetSceneList",
+                "requestId": "get_scene_list"
+            }
+        });
+
+        self.send_message(payload).await?;
+
+        // In a real implementation, you would wait for and parse the response
+        // For now, we'll return a dummy list
+        Ok(vec!["Scene 1".to_string(), "Scene 2".to_string()])
+    }
+
+    pub async fn get_scene_items(&self, scene_name: &str) -> Result<Vec<ObsSceneItem>, Box<dyn std::error::Error + Send + Sync>> {
+        let payload = json!({
+            "op": 6,
+            "d": {
+                "requestType": "GetSceneItemList",
+                "requestId": "get_scene_items",
+                "requestData": {
+                    "sceneName": scene_name
+                }
+            }
+        });
+
+        self.send_message(payload).await?;
+
+        // In a real implementation, you would wait for and parse the response
+        // For now, we'll return dummy items
+        Ok(vec![
+            ObsSceneItem {
+                name: "Item 1".to_string(),
+                source_type: "image_source".to_string(),
+                visible: true,
+            },
+            ObsSceneItem {
+                name: "Item 2".to_string(),
+                source_type: "browser_source".to_string(),
+                visible: true,
+            },
+        ])
+    }
+
+    pub async fn set_scene_item_enabled(&self, scene_name: &str, item_name: &str, enabled: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let payload = json!({
+            "op": 6,
+            "d": {
+                "requestType": "SetSceneItemEnabled",
+                "requestId": "set_scene_item_enabled",
+                "requestData": {
+                    "sceneName": scene_name,
+                    "sceneItemName": item_name,
+                    "sceneItemEnabled": enabled
+                }
+            }
+        });
+
+        self.send_message(payload).await?;
+
+        // In a real implementation, you would wait for and check the response
+        Ok(())
+    }
+
+    pub async fn refresh_browser_source(&self, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let payload = json!({
+            "op": 6,
+            "d": {
+                "requestType": "PressInputPropertiesButton",
+                "requestId": "refresh_browser_source",
+                "requestData": {
+                    "inputName": source_name,
+                    "propertyName": "refreshNoCache"
+                }
+            }
+        });
+
+        self.send_message(payload).await?;
+
+        // In a real implementation, you would wait for and check the response
+        Ok(())
+    }
 }
+
 pub struct ObsManager {
     clients: Arc<RwLock<HashMap<String, ObsWebSocketClient>>>,
 }
@@ -176,15 +263,23 @@ impl ObsManager {
         self.clients.read().await.get(name).cloned()
     }
 
-    pub async fn get_current_scene(&self, instance_name: &str) -> Result<ObsScene, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_scene_list(&self, instance_name: &str) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
         let client = self.get_client(instance_name).await.ok_or("OBS instance not found")?;
-        client.get_current_scene().await
+        client.get_scene_list().await
     }
 
-    pub async fn set_current_scene(&self, instance_name: &str, scene_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_scene_items(&self, instance_name: &str, scene_name: &str) -> Result<Vec<ObsSceneItem>, Box<dyn std::error::Error + Send + Sync>> {
         let client = self.get_client(instance_name).await.ok_or("OBS instance not found")?;
-        client.set_current_scene(scene_name).await
+        client.get_scene_items(scene_name).await
     }
 
-    // Add more methods that work across all instances or target specific instances
+    pub async fn set_scene_item_enabled(&self, instance_name: &str, scene_name: &str, item_name: &str, enabled: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let client = self.get_client(instance_name).await.ok_or("OBS instance not found")?;
+        client.set_scene_item_enabled(scene_name, item_name, enabled).await
+    }
+
+    pub async fn refresh_browser_source(&self, instance_name: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let client = self.get_client(instance_name).await.ok_or("OBS instance not found")?;
+        client.refresh_browser_source(source_name).await
+    }
 }
