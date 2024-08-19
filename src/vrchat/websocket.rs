@@ -44,13 +44,8 @@ pub async fn handler(
                                     dashboard.update_vrchat_world(Some(new_world.clone()));
                                     info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
 
-                                    // Broadcast the VRChat world update immediately
-                                    let broadcast_msg = WebSocketMessage {
-                                        message_type: "vrchat_world_update".to_string(),
-                                        world: Some(serde_json::to_value(&new_world)?),
-                                        ..Default::default()
-                                    };
-                                    dashboard.broadcast_message(broadcast_msg).await?;
+                                    // Explicitly drop the lock to release it
+                                    drop(dashboard);
                                 }
                             }
                         }

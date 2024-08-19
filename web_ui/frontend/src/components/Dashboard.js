@@ -174,9 +174,9 @@ const Dashboard = ({ setTwitchMessages }) => {
     }, [state.currentVRCWorld, sendMessage, isConnected]);
 
     return (
-        <div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {wsConnectionError && (
-                <div className="bg-red-500 text-white p-4 mb-4">
+                <div className="col-span-full bg-red-500 text-white p-4 mb-4">
                     WebSocket Error: {wsConnectionError}
                 </div>
             )}
@@ -205,23 +205,24 @@ const Dashboard = ({ setTwitchMessages }) => {
             <div className="bg-gray-800 p-6 rounded-lg shadow-md">
                 <h2 className="text-2xl font-bold mb-4 text-white">Connection Status</h2>
                 <p className="text-gray-300">Twitch: <span
-                    className={`font-bold ${state.twitchStatus ? 'text-green-500' : 'text-red-500'}`}>{state.twitchStatus ? 'Connected' : 'Disconnected'}</span>
-                </p>
+                    className={`font-bold ${state.twitchStatus ? 'text-green-500' : 'text-red-500'}`}>
+                {state.twitchStatus ? 'Connected' : 'Disconnected'}
+            </span></p>
                 <p className="text-gray-300">Discord: <span
-                    className={`font-bold ${state.discordStatus ? 'text-green-500' : 'text-red-500'}`}>{state.discordStatus ? 'Connected' : 'Disconnected'}</span>
-                </p>
+                    className={`font-bold ${state.discordStatus ? 'text-green-500' : 'text-red-500'}`}>
+                {state.discordStatus ? 'Connected' : 'Disconnected'}
+            </span></p>
                 <p className="text-gray-300">VRChat: <span
-                    className={`font-bold ${state.vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>{state.vrchatStatus ? 'Connected' : 'Disconnected'}</span>
-                </p>
+                    className={`font-bold ${state.vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>
+                {state.vrchatStatus ? 'Connected' : 'Disconnected'}
+            </span></p>
             </div>
-            <VRChatWorldStatus
-                currentVRCWorld={state.currentVRCWorld}
-                vrchatStatus={state.vrchatStatus}
-                handleShareWorld={handleShareWorld}
-            />
-            <div>
-                {wsConnectionError && <div className="error">WebSocket Error: {wsConnectionError}</div>}
-                {!isConnected && <div className="warning">WebSocket is disconnected. Attempting to reconnect...</div>}
+            <div className="bg-gray-800 p-6 rounded-lg shadow-md">
+                <VRChatWorldStatus
+                    currentVRCWorld={state.currentVRCWorld}
+                    vrchatStatus={state.vrchatStatus}
+                    handleShareWorld={handleShareWorld}
+                />
             </div>
             <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                 <h2 className="text-2xl font-bold mb-4 text-white">Chat</h2>
@@ -276,8 +277,7 @@ const Dashboard = ({ setTwitchMessages }) => {
             {state.additionalStreams.length > 0 && (
                 <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
                     <h2 className="text-2xl font-bold mb-4 text-white">Additional Streams</h2>
-                    <div
-                        className={`grid ${state.additionalStreams.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
+                    <div className={`grid ${state.additionalStreams.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
                         {state.additionalStreams.map((stream, index) => (
                             <div key={index} className="w-full h-0 pb-[56.25%] relative">
                                 <div className="absolute inset-0">

@@ -399,10 +399,12 @@ pub async fn update_dashboard_state(
                     let status = if bot_status.is_online() { "online" } else { "offline" };
                     let uptime = bot_status.uptime_string();
 
-                    let world_state = state.world_state.read().await;
-                    let current_world = world_state.get();
+                    info!("Current VRChat world state (update dashboard): {:?}", state.vrchat_world);
 
-                    info!("Current VRChat world state (update dashboard): {:?}", current_world);
+                    // let world_state = state.world_state.read().await;
+                    // let current_world = world_state.get();
+                    //
+                    // info!("Current VRChat world state (update dashboard): {:?}", current_world);
 
                     let recent_messages = match storage.read().await.get_recent_messages(10).await {
                         Ok(messages) => messages,
