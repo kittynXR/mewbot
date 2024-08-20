@@ -15,17 +15,7 @@ use tokio_tungstenite::{
 use tokio_tungstenite::tungstenite::http::Uri;
 use serde_json::{json, Value};
 use crate::obs::models::{OBSInstance, OBSScene};
-use crate::obs::OBSSceneItem;
-
-#[derive(Clone)]
-pub struct OBSWebSocketClient {
-    instance: OBSInstance,
-    state: Arc<RwLock<OBSClientState>>,
-}
-
-struct OBSClientState {
-    connection: Option<mpsc::UnboundedSender<Message>>,
-}
+use crate::obs::{OBSClientState, OBSInstanceState, OBSManager, OBSSceneItem, OBSWebSocketClient};
 
 impl OBSWebSocketClient {
     pub fn new(instance: OBSInstance) -> Self {
@@ -238,17 +228,7 @@ impl OBSWebSocketClient {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct OBSInstanceState {
-    pub name: String,
-    pub scenes: Vec<String>,
-    pub current_scene: String,
-    pub sources: HashMap<String, Vec<OBSSceneItem>>,
-}
 
-pub struct OBSManager {
-    clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
-}
 
 impl OBSManager {
     pub fn new() -> Self {

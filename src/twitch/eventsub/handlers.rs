@@ -23,7 +23,7 @@ pub async fn handle_message(
     if let Some(event_type) = parsed["metadata"]["subscription_type"].as_str() {
         match event_type {
             "channel.update" => channel_update::handle(&parsed, irc_client, channel, &eventsub_client.redeem_manager).await?,
-            "channel.follow" => channel_follow::handle(&parsed, irc_client, channel).await?,
+            "channel.follow" => channel_follow::handle(&parsed, irc_client, channel, api_client).await?,
             "channel.raid" => channel_raid::handle(&parsed, irc_client, channel, api_client).await?,
             "channel.shoutout.create" => events::shoutout::handle_shoutout_create(&parsed, irc_client, channel).await?,
             "channel.shoutout.receive" => events::shoutout::handle_shoutout_receive(&parsed, irc_client, channel).await?,

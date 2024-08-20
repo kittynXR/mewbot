@@ -18,7 +18,7 @@ use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
 use crate::obs::OBSManager;
 use crate::obs::models::OBSInstance as OBSModelInstance;
-use crate::obs::websocket::OBSInstanceState;
+use crate::obs::OBSInstanceState;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ChatDestination {

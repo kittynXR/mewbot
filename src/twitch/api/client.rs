@@ -336,6 +336,27 @@ impl TwitchAPIClient {
         Ok(bot_id)
     }
 
+    pub async fn get_follower_count(&self, broadcaster_id: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+
+        let response = self.client
+            .get(&format!("https://api.twitch.tv/helix/users/follows?to_id={}", broadcaster_id))
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(format!("Failed to get follower count. Status: {}", response.status()).into());
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        let total_followers = body["total"].as_u64().unwrap_or(0) as u32;
+
+        Ok(total_followers)
+    }
+
     pub async fn update_redemption_status(
         &self,
         reward_id: &str,

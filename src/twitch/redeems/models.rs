@@ -16,8 +16,6 @@ pub struct Redemption {
     pub announce_in_chat: bool,
 }
 
-
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RedemptionCompletion {
     NotApplicable,
@@ -46,8 +44,6 @@ pub struct RedemptionActionConfig {
     pub announce_in_chat: bool,
     pub requires_manual_completion: bool,
 }
-
-
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum RedemptionActionType {
