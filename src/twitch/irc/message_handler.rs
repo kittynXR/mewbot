@@ -76,9 +76,7 @@ impl MessageHandler {
     }
 
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let debug_id = Uuid::new_v4();
-        warn!("Starting handle_message (Debug ID: {})", debug_id);
-        debug!("Processing message in handle_message: {:?} (Debug ID: {})", message, debug_id);
+        debug!("Processing message in handle_message: {:?}", message);
 
         if let ServerMessage::Privmsg(msg) = message {
             let channel_id = self.api_client.get_broadcaster_id().await?;
@@ -91,7 +89,6 @@ impl MessageHandler {
                 .trim()
                 .to_string();
 
-            warn!("Cleaned message: {} (Debug ID: {})", cleaned_message, debug_id);
 
             // Send the message to the WebSocket
             let websocket_message = WebSocketMessage {
@@ -103,9 +100,9 @@ impl MessageHandler {
                 additional_streams: None,
             };
             if let Err(e) = self.websocket_sender.send(websocket_message).await {
-                error!("Failed to send message to WebSocket: {:?} (Debug ID: {})", e, debug_id);
+                error!("Failed to send message to WebSocket: {:?}", e);
             } else {
-                debug!("Successfully sent message to WebSocket (Debug ID: {})", debug_id);
+                debug!("Successfully sent message to WebSocket");
             }
 
             let lowercase_message = cleaned_message.to_lowercase();
@@ -114,13 +111,10 @@ impl MessageHandler {
             let params: Vec<&str> = parts.collect();
 
             if let Some(cmd) = command {
-                warn!("Identified command: {} (Debug ID: {})", cmd, debug_id);
                 if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
-                    warn!("Found matching command: {} (Debug ID: {})", command.name, debug_id);
                     if user_role >= command.required_role {
                         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
                         let is_stream_online = self.api_client.is_stream_live(&broadcaster_id).await?;
-                        warn!("Executing command: {} (Debug ID: {})", command.name, debug_id);
                         (command.handler)(
                             &msg,
                             &self.irc_client,
@@ -138,18 +132,14 @@ impl MessageHandler {
                             &self.ai_client,
                             is_stream_online
                         ).await?;
-                        warn!("Finished executing command: {} (Debug ID: {})", command.name, debug_id);
                     } else {
                         let response = format!("@{}, this command is only available to {:?}s and above.", msg.sender.name, command.required_role);
                         self.irc_client.send_message(&msg.channel_login, &response).await?;
-                        warn!("User does not have required role for command: {} (Debug ID: {})", command.name, debug_id);
                     }
                 } else {
-                    warn!("No matching command found for: {} (Debug ID: {})", cmd, debug_id);
                 }
             }
         }
-        warn!("Completed handle_message (Debug ID: {})", debug_id);
         Ok(())
     }
 }
