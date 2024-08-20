@@ -32,17 +32,47 @@ pub struct ChatDestination {
     pub twitch_broadcaster: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-#[derive(Default)]
+// New struct for dashboard update data
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct DashboardUpdateData {
+    pub uptime: String,
+    pub vrchat_world: Option<World>,
+    pub recent_messages: Vec<String>,
+    pub twitch_status: bool,
+    pub discord_status: bool,
+    pub vrchat_status: bool,
+    pub obs_status: bool,
+    pub obs_instances: Vec<OBSInstanceState>,
+    // Fields for OBS operations
+    pub instance_name: Option<String>,
+    pub scene_name: Option<String>,
+    pub source_name: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+
+// Modified WebSocketMessage struct
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct WebSocketMessage {
     #[serde(rename = "type")]
     pub message_type: String,
     pub message: Option<String>,
     pub destination: Option<ChatDestination>,
-    pub world: Option<serde_json::Value>,
+    pub update_data: Option<DashboardUpdateData>,
     #[serde(rename = "additionalStreams", alias = "additional_streams")]
     pub additional_streams: Option<Vec<String>>,
     pub user_id: Option<String>,
+}
+
+impl PartialEq for WebSocketMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.message_type == other.message_type
+            && self.message == other.message
+            && self.destination == other.destination
+            && self.update_data == other.update_data
+            && self.additional_streams == other.additional_streams
+            && self.user_id == other.user_id
+    }
 }
 
 pub struct WorldState {
@@ -358,8 +388,8 @@ async fn handle_ws_message(
             }
         }
         "vrchat_world_update" => {
-            if let Some(world) = &message.world {
-                if let Ok(world_data) = serde_json::from_value::<World>(world.clone()) {
+            if let Some(update_data) = &message.update_data {
+                if let Some(world_data) = &update_data.vrchat_world {
                     {
                         let mut state = dashboard_state.write().await;
                         state.update_vrchat_world(Some(world_data.clone()));
@@ -368,13 +398,18 @@ async fn handle_ws_message(
 
                     let broadcast_msg = WebSocketMessage {
                         message_type: "vrchat_world_update".to_string(),
-                        world: Some(serde_json::to_value(&world_data)?),
+                        update_data: Some(DashboardUpdateData {
+                            vrchat_world: Some(world_data.clone()),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     };
                     dashboard_state.read().await.broadcast_message(broadcast_msg).await?;
                 } else {
-                    error!("Failed to parse VRChat world data");
+                    error!("VRChat world data not found in update_data");
                 }
+            } else {
+                error!("update_data not found in vrchat_world_update message");
             }
         }
         "twitch_message" => {
@@ -392,100 +427,29 @@ async fn handle_ws_message(
                 error!("Received incomplete Twitch message");
             }
         }
-        "get_obs_info" => {
+        "get_obs_info" | "change_scene" | "toggle_source" | "refresh_source" => {
             let mut state = dashboard_state.write().await;
             state.update_obs_instances().await;
-            let obs_info = serde_json::to_value(&state.obs_instances)?;
 
             let response = WebSocketMessage {
                 message_type: "obs_update".to_string(),
-                message: None,
-                world: Some(obs_info),
+                update_data: Some(DashboardUpdateData {
+                    uptime: state.bot_status.read().await.uptime_string(),
+                    vrchat_world: state.vrchat_world.clone(),
+                    recent_messages: Vec::new(), // You might want to populate this from somewhere
+                    twitch_status: state.twitch_status,
+                    discord_status: state.discord_status,
+                    vrchat_status: state.vrchat_status,
+                    obs_status: state.obs_status,
+                    obs_instances: state.obs_instances.clone(),
+                    instance_name: None,
+                    scene_name: None,
+                    source_name: None,
+                    enabled: None,
+                }),
                 ..Default::default()
             };
             state.broadcast_message(response).await?;
-        }
-        "change_scene" => {
-            if let Some(obs_data) = &message.world {
-                if let (Some(instance_name), Some(scene_name)) = (
-                    obs_data.get("instance_name").and_then(|v| v.as_str()),
-                    obs_data.get("scene_name").and_then(|v| v.as_str())
-                ) {
-                    let state = dashboard_state.read().await;
-                    state.obs_manager.set_current_scene(instance_name, scene_name).await?;
-
-                    // After changing the scene, update the OBS instances and broadcast the update
-                    drop(state);
-                    let mut state = dashboard_state.write().await;
-                    state.update_obs_instances().await;
-                    let obs_info = serde_json::to_value(&state.obs_instances)?;
-
-                    let response = WebSocketMessage {
-                        message_type: "obs_update".to_string(),
-                        message: None,
-                        world: Some(obs_info),
-                        ..Default::default()
-                    };
-                    state.broadcast_message(response).await?;
-                }
-            }
-        }
-        "toggle_source" => {
-            if let Some(obs_data) = &message.world {
-                if let (
-                    Some(instance_name),
-                    Some(scene_name),
-                    Some(source_name),
-                    Some(enabled)
-                ) = (
-                    obs_data.get("instance_name").and_then(|v| v.as_str()),
-                    obs_data.get("scene_name").and_then(|v| v.as_str()),
-                    obs_data.get("source_name").and_then(|v| v.as_str()),
-                    obs_data.get("enabled").and_then(|v| v.as_bool())
-                ) {
-                    let state = dashboard_state.read().await;
-                    state.obs_manager.set_scene_item_enabled(instance_name, scene_name, source_name, enabled).await?;
-
-                    // After toggling the source, update the OBS instances and broadcast the update
-                    drop(state);
-                    let mut state = dashboard_state.write().await;
-                    state.update_obs_instances().await;
-                    let obs_info = serde_json::to_value(&state.obs_instances)?;
-
-                    let response = WebSocketMessage {
-                        message_type: "obs_update".to_string(),
-                        message: None,
-                        world: Some(obs_info),
-                        ..Default::default()
-                    };
-                    state.broadcast_message(response).await?;
-                }
-            }
-        }
-        "refresh_source" => {
-            if let Some(obs_data) = &message.world {
-                if let (Some(instance_name), Some(source_name)) = (
-                    obs_data.get("instance_name").and_then(|v| v.as_str()),
-                    obs_data.get("source_name").and_then(|v| v.as_str())
-                ) {
-                    let state = dashboard_state.read().await;
-                    state.obs_manager.refresh_browser_source(instance_name, source_name).await?;
-
-                    // After refreshing the source, update the OBS instances and broadcast the update
-                    drop(state);
-                    let mut state = dashboard_state.write().await;
-                    state.update_obs_instances().await;
-                    let obs_info = serde_json::to_value(&state.obs_instances)?;
-
-                    let response = WebSocketMessage {
-                        message_type: "obs_update".to_string(),
-                        message: None,
-                        world: Some(obs_info),
-                        ..Default::default()
-                    };
-                    state.broadcast_message(response).await?;
-                }
-            }
         }
         _ => {
             error!("Unknown message type: {}", message.message_type);
@@ -509,17 +473,6 @@ impl PartialEq for ChatDestination {
     }
 }
 
-impl PartialEq for WebSocketMessage {
-    fn eq(&self, other: &Self) -> bool {
-        self.message_type == other.message_type
-            && self.message == other.message
-            && self.destination == other.destination
-            && self.world == other.world
-            && self.additional_streams == other.additional_streams
-            && self.user_id == other.user_id
-    }
-}
-
 pub async fn update_dashboard_state(
     state: Arc<RwLock<DashboardState>>,
     storage: Arc<RwLock<StorageClient>>,
@@ -529,9 +482,12 @@ pub async fn update_dashboard_state(
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
     let mut last_update: Option<WebSocketMessage> = None;
 
+    warn!("Starting dashboard state update loop");
+
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                debug!("Tick: Preparing to update dashboard state");
                 let update_message = {
                     let state = state.read().await;
                     let bot_status = state.bot_status.read().await;
@@ -540,33 +496,42 @@ pub async fn update_dashboard_state(
                     let uptime = bot_status.uptime_string();
 
                     debug!("Current VRChat world state (update dashboard): {:?}", state.vrchat_world);
-
-                    // let world_state = state.world_state.read().await;
-                    // let current_world = world_state.get();
-                    //
-                    // info!("Current VRChat world state (update dashboard): {:?}", current_world);
+                    warn!("Bot status: {}, Uptime: {}", status, uptime);
 
                     let recent_messages = match storage.read().await.get_recent_messages(10).await {
                         Ok(messages) => messages,
                         Err(e) => {
                             error!("Failed to fetch recent messages: {:?}", e);
+                            warn!("Using empty vector for recent messages due to fetch failure");
                             Vec::new()
                         }
                     };
+
+                    debug!("Fetched {} recent messages", recent_messages.len());
+
+                    let update_data = DashboardUpdateData {
+                        uptime,
+                        vrchat_world: state.vrchat_world.clone(),
+                        recent_messages,
+                        twitch_status: state.twitch_status,
+                        discord_status,
+                        vrchat_status: state.vrchat_status,
+                        obs_status: state.obs_status,
+                        obs_instances: state.obs_instances.clone(),
+                        instance_name: None,
+                        scene_name: None,
+                        source_name: None,
+                        enabled: None,
+                    };
+
+                    warn!("Prepared update data: Discord status: {}, VRChat status: {}, OBS status: {}",
+                          discord_status, state.vrchat_status, state.obs_status);
 
                     WebSocketMessage {
                         message_type: "update".to_string(),
                         message: Some(status.to_string()),
                         destination: None,
-                        world: Some(serde_json::json!({
-                            "uptime": uptime,
-                            "vrchat_world": state.vrchat_world,
-                            "recent_messages": recent_messages,
-                            "twitch_status": state.twitch_status,
-                            "discord_status": discord_status,
-                            "vrchat_status": state.vrchat_status,
-                            "obs_status": state.obs_status,
-                        })),
+                        update_data: Some(update_data),
                         additional_streams: None,
                         user_id: None,
                     }
@@ -574,21 +539,26 @@ pub async fn update_dashboard_state(
 
                 if last_update.as_ref() != Some(&update_message) {
                     let state = state.read().await;
+                    warn!("Full WebSocketMessage to be sent: {:?}", update_message);
+                    warn!("Attempting to broadcast new update message");
                     if let Err(e) = state.broadcast_message(update_message.clone()).await {
                         error!("Failed to broadcast update message: {:?}", e);
                     } else {
+                        warn!("Successfully broadcasted update message");
                         last_update = Some(update_message);
                     }
+                } else {
+                    warn!("No changes detected, skipping update broadcast");
                 }
             }
             _ = &mut shutdown_rx => {
-                info!("Received shutdown signal, stopping dashboard updates.");
+                warn!("Received shutdown signal, stopping dashboard updates.");
                 break;
             }
         }
     }
 
-    info!("Dashboard update task has stopped.");
+    warn!("Dashboard update task has stopped.");
 }
 
 // This function can be called from your main server setup to start the dashboard state update task

@@ -19,6 +19,8 @@ const initialState = {
     twitchStatus: false,
     discordStatus: false,
     vrchatStatus: false,
+    obsStatus: false,
+    obsInstances: [],
     twitchChannel: '',
     additionalStreams: [],
     additionalStreamToggles: [],
@@ -55,6 +57,10 @@ function reducer(state, action) {
             return { ...state, twitchChannel: action.payload };
         case 'SET_ADDITIONAL_STREAMS':
             return { ...state, additionalStreams: action.payload, additionalStreamToggles: action.payload.map(() => false) };
+        case 'SET_OBS_STATUS':
+            return { ...state, obsStatus: action.payload };
+        case 'SET_OBS_INSTANCES':
+            return { ...state, obsInstances: action.payload };
         case 'TOGGLE_ADDITIONAL_STREAM':
             return {
                 ...state,
@@ -78,21 +84,22 @@ const Dashboard = ({ setTwitchMessages }) => {
     const handleWebSocketMessage = useCallback((data) => {
         console.log('Received WebSocket message:', data);
 
-        switch (data.type) {
+        switch (data.message_type) {
             case 'update':
-            case 'bot_status':
                 dispatch({ type: 'SET_BOT_STATUS', payload: data.message || 'Unknown' });
-                if (data.world) {
-                    dispatch({ type: 'SET_UPTIME', payload: data.world.uptime || '-' });
-                    dispatch({ type: 'SET_VRC_WORLD', payload: data.world.vrchat_world });
-                    dispatch({ type: 'SET_TWITCH_STATUS', payload: data.world.twitch_status });
-                    dispatch({ type: 'SET_DISCORD_STATUS', payload: data.world.discord_status });
-                    dispatch({ type: 'SET_VRCHAT_STATUS', payload: data.world.vrchat_status });
-                    dispatch({ type: 'SET_OBS_STATUS', payload: data.world.obs_status });
-                    if (data.world.recent_messages) {
-                        dispatch({ type: 'SET_RECENT_MESSAGES', payload: prevMessages =>
-                                [...prevMessages, ...data.world.recent_messages].slice(-10)
-                        });
+                if (data.update_data) {
+                    const { uptime, vrchat_world, recent_messages, twitch_status, discord_status, vrchat_status, obs_status, obs_instances } = data.update_data;
+                    dispatch({ type: 'SET_UPTIME', payload: uptime || '-' });
+                    dispatch({ type: 'SET_VRC_WORLD', payload: vrchat_world });
+                    dispatch({ type: 'SET_TWITCH_STATUS', payload: twitch_status });
+                    dispatch({ type: 'SET_DISCORD_STATUS', payload: discord_status });
+                    dispatch({ type: 'SET_VRCHAT_STATUS', payload: vrchat_status });
+                    dispatch({ type: 'SET_OBS_STATUS', payload: obs_status });
+                    if (recent_messages) {
+                        dispatch({ type: 'SET_RECENT_MESSAGES', payload: recent_messages });
+                    }
+                    if (obs_instances) {
+                        dispatch({ type: 'SET_OBS_INSTANCES', payload: obs_instances });
                     }
                 }
                 break;

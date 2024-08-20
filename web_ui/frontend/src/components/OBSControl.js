@@ -45,15 +45,16 @@ const OBSControl = () => {
         );
     };
 
-    const handleSceneChange = (instanceId) => {
-        const instance = obsInstances.find(i => i.id === instanceId);
-        if (instance && instance.selectedScene) {
-            sendMessage({ type: 'change_scene', instanceId, sceneName: instance.selectedScene });
+    const handleSceneChange = (instanceId, sceneName) => {
+        if (isConnected) {
+            sendMessage({ type: 'change_scene', instanceId, sceneName });
         }
     };
 
     const handleSourceToggle = (instanceId, sceneName, sourceName, isEnabled) => {
-        sendMessage({ type: 'toggle_source', instanceId, sceneName, sourceName, isEnabled });
+        if (isConnected) {
+            sendMessage({ type: 'toggle_source', instanceId, sceneName, sourceName, isEnabled });
+        }
     };
 
     const handleSourceRefresh = (instanceId, sceneName, sourceName) => {

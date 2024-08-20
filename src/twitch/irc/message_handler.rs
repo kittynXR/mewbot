@@ -90,21 +90,6 @@ impl MessageHandler {
                 .to_string();
 
 
-            // Send the message to the WebSocket
-            let websocket_message = WebSocketMessage {
-                message_type: "twitch_message".to_string(),
-                message: Some(cleaned_message.clone()),
-                user_id: Some(msg.sender.id.clone()),
-                destination: None,
-                world: None,
-                additional_streams: None,
-            };
-            if let Err(e) = self.websocket_sender.send(websocket_message).await {
-                error!("Failed to send message to WebSocket: {:?}", e);
-            } else {
-                debug!("Successfully sent message to WebSocket");
-            }
-
             let lowercase_message = cleaned_message.to_lowercase();
             let mut parts = lowercase_message.split_whitespace();
             let command = parts.next();

@@ -103,7 +103,7 @@ impl TwitchIRCManager {
                     message: Some(msg.message_text.clone()),
                     user_id: Some(msg.sender.id.clone()),
                     destination: None,
-                    world: None,
+                    update_data: None,
                     additional_streams: None,
                 };
                 debug!("Sending message to WebSocket: {:?}", websocket_message);
