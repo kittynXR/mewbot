@@ -61,6 +61,14 @@ function reducer(state, action) {
             return { ...state, obsStatus: action.payload };
         case 'SET_OBS_INSTANCES':
             return { ...state, obsInstances: action.payload };
+        case 'SET_INSTANCE_NAME':
+            return { ...state, instanceName: action.payload };
+        case 'SET_SCENE_NAME':
+            return { ...state, sceneName: action.payload };
+        case 'SET_SOURCE_NAME':
+            return { ...state, sourceName: action.payload };
+        case 'SET_ENABLED':
+            return { ...state, enabled: action.payload };
         case 'TOGGLE_ADDITIONAL_STREAM':
             return {
                 ...state,
@@ -84,22 +92,53 @@ const Dashboard = ({ setTwitchMessages }) => {
     const handleWebSocketMessage = useCallback((data) => {
         console.log('Received WebSocket message:', data);
 
-        switch (data.message_type) {
+        switch (data.type) {
             case 'update':
-                dispatch({ type: 'SET_BOT_STATUS', payload: data.message || 'Unknown' });
+                if (data.message) {
+                    dispatch({ type: 'SET_BOT_STATUS', payload: data.message });
+                }
                 if (data.update_data) {
-                    const { uptime, vrchat_world, recent_messages, twitch_status, discord_status, vrchat_status, obs_status, obs_instances } = data.update_data;
+                    const {
+                        uptime,
+                        vrchat_world,
+                        recent_messages,
+                        twitch_status,
+                        discord_status,
+                        vrchat_status,
+                        obs_status,
+                        obs_instances,
+                        instance_name,
+                        scene_name,
+                        source_name,
+                        enabled
+                    } = data.update_data;
+
                     dispatch({ type: 'SET_UPTIME', payload: uptime || '-' });
                     dispatch({ type: 'SET_VRC_WORLD', payload: vrchat_world });
                     dispatch({ type: 'SET_TWITCH_STATUS', payload: twitch_status });
                     dispatch({ type: 'SET_DISCORD_STATUS', payload: discord_status });
                     dispatch({ type: 'SET_VRCHAT_STATUS', payload: vrchat_status });
                     dispatch({ type: 'SET_OBS_STATUS', payload: obs_status });
+
                     if (recent_messages) {
                         dispatch({ type: 'SET_RECENT_MESSAGES', payload: recent_messages });
                     }
                     if (obs_instances) {
                         dispatch({ type: 'SET_OBS_INSTANCES', payload: obs_instances });
+                    }
+
+                    // Handle new fields from the message structure
+                    if (instance_name) {
+                        dispatch({ type: 'SET_INSTANCE_NAME', payload: instance_name });
+                    }
+                    if (scene_name) {
+                        dispatch({ type: 'SET_SCENE_NAME', payload: scene_name });
+                    }
+                    if (source_name) {
+                        dispatch({ type: 'SET_SOURCE_NAME', payload: source_name });
+                    }
+                    if (enabled !== undefined) {
+                        dispatch({ type: 'SET_ENABLED', payload: enabled });
                     }
                 }
                 break;
