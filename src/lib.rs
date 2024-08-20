@@ -137,24 +137,29 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let obs_manager = Arc::new(OBSManager::new());
 
+    warn!("adding instance1");
     // Initialize OBS instances from config
     let obs_config = config.read().await.obs_manager.clone();
     if let Err(e) = obs_manager.add_instance("Instance1".to_string(), OBSInstance {
         name: "Instance1".to_string(),
         address: obs_config.instance1.ip.clone(),
         port: obs_config.instance1.port,
+        auth_required: obs_config.instance1.auth_required,
         password: obs_config.instance1.password.clone(),
+        use_ssl: obs_config.instance1.use_ssl,
     }).await {
         warn!("Failed to add OBS Instance1: {}. Continuing without this instance.", e);
     }
-
+    warn!("adding instance2");
     if obs_config.is_dual_pc_setup {
         if let Some(instance2) = obs_config.instance2 {
             if let Err(e) = obs_manager.add_instance("Instance2".to_string(), OBSInstance {
                 name: "Instance2".to_string(),
                 address: instance2.ip.clone(),
                 port: instance2.port,
+                auth_required: instance2.auth_required,
                 password: instance2.password.clone(),
+                use_ssl: instance2.use_ssl,
             }).await {
                 warn!("Failed to add OBS Instance2: {}. Continuing without this instance.", e);
             }

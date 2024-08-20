@@ -1,7 +1,7 @@
-// src/OBS/models.rs
-
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tungstenite::Message;
@@ -11,7 +11,9 @@ pub struct OBSInstance {
     pub name: String,
     pub address: String,
     pub port: u16,
+    pub auth_required: bool,
     pub password: Option<String>,
+    pub use_ssl: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,15 +29,15 @@ pub struct OBSSceneItem {
     pub visible: bool,
 }
 
-
-#[derive(Clone)]
+// Remove the #[derive(Clone)] attribute
 pub struct OBSWebSocketClient {
-    pub(crate) instance: OBSInstance,
-    pub(crate) state: Arc<RwLock<OBSClientState>>,
+    pub instance: OBSInstance,
+    pub state: Arc<RwLock<OBSClientState>>,
+    pub response_channels: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>>,
 }
 
 pub struct OBSClientState {
-    pub(crate) connection: Option<mpsc::UnboundedSender<Message>>,
+    pub connection: Option<mpsc::UnboundedSender<Message>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -47,5 +49,50 @@ pub struct OBSInstanceState {
 }
 
 pub struct OBSManager {
-    pub(crate) clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
+    pub clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
+}
+
+impl OBSManager {
+    pub fn new() -> Self {
+        Self {
+            clients: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub async fn add_instance(&self, name: String, instance: OBSInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let client = OBSWebSocketClient::new(instance);
+
+        info!("Attempting to add OBS instance: {}", name);
+        match tokio::time::timeout(Duration::from_secs(35), client.connect()).await {
+            Ok(result) => {
+                match result {
+                    Ok(_) => {
+                        self.clients.write().await.insert(name.clone(), client);
+                        info!("Successfully added OBS instance: {}", name);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("Failed to connect to OBS instance {}: {}. This instance will be unavailable.", name, e);
+                        Ok(()) // We return Ok to allow the program to continue with other instances
+                    }
+                }
+            }
+            Err(_) => {
+                error!("Timeout occurred while connecting to OBS instance {}. This instance will be unavailable.", name);
+                Ok(()) // We return Ok to allow the program to continue with other instances
+            }
+        }
+    }
+    pub async fn get_instances(&self) -> Vec<OBSInstanceState> {
+        let clients = self.clients.read().await;
+        let mut instances = Vec::new();
+
+        for (name, client) in clients.iter() {
+            match client.get_instance_state().await {
+                Ok(state) => instances.push(state),
+                Err(e) => error!("Failed to get state for OBS instance {}: {}", name, e),
+            }
+        }
+        instances
+    }
 }
