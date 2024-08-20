@@ -2,7 +2,8 @@ import React, { useReducer, useEffect, useCallback, useState } from 'react';
 import TwitchPlayer from './TwitchPlayer';
 import VRChatWorldStatus from './VRChatWorldStatus';
 import useWebSocket from './useWebSocket';
-import Chat from './Chat';  // Import the new Chat component
+import Chat from './Chat';
+import BotStatus from './BotStatus';
 
 const initialState = {
     botStatus: 'Unknown',
@@ -206,14 +207,15 @@ const Dashboard = ({ setTwitchMessages }) => {
         }
     }, [state.currentVRCWorld, sendMessage, isConnected]);
 
+    /// JSX Starts here
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {wsConnectionError && (
                 <div className="col-span-full bg-red-500 text-white p-4 mb-4">
                     WebSocket Error: {wsConnectionError}
                 </div>
             )}
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
+            <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-3">
                 <h2 className="text-2xl font-bold mb-4 text-white">Twitch Stream</h2>
                 {state.twitchError ? (
                     <p className="text-red-500">Error loading Twitch stream: {state.twitchError}</p>
@@ -230,40 +232,31 @@ const Dashboard = ({ setTwitchMessages }) => {
                     <p className="text-gray-300">Loading Twitch stream...</p>
                 )}
             </div>
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-4 text-white">Bot Status</h2>
-                <p className="text-gray-300">Status: <span className="font-bold text-white">{state.botStatus}</span></p>
-                <p className="text-gray-300">Uptime: <span className="font-bold text-white">{state.uptime}</span></p>
-            </div>
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-4 text-white">Connection Status</h2>
-                <p className="text-gray-300">Twitch: <span
-                    className={`font-bold ${state.twitchStatus ? 'text-green-500' : 'text-red-500'}`}>
-                {state.twitchStatus ? 'Connected' : 'Disconnected'}
-            </span></p>
-                <p className="text-gray-300">Discord: <span
-                    className={`font-bold ${state.discordStatus ? 'text-green-500' : 'text-red-500'}`}>
-                {state.discordStatus ? 'Connected' : 'Disconnected'}
-            </span></p>
-                <p className="text-gray-300">VRChat: <span
-                    className={`font-bold ${state.vrchatStatus ? 'text-green-500' : 'text-red-500'}`}>
-                {state.vrchatStatus ? 'Connected' : 'Disconnected'}
-            </span></p>
-            </div>
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md">
+            <div className="md:col-span-2">
                 <VRChatWorldStatus
                     currentVRCWorld={state.currentVRCWorld}
                     vrchatStatus={state.vrchatStatus}
                     handleShareWorld={handleShareWorld}
                 />
             </div>
-            <Chat
-                state={state}
-                dispatch={dispatch}
-                sendMessage={sendMessage}
-                isConnected={isConnected}
-            />
-            <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
+            <div className="md:col-span-1">
+                <BotStatus
+                    botStatus={state.botStatus}
+                    uptime={state.uptime}
+                    twitchStatus={state.twitchStatus}
+                    discordStatus={state.discordStatus}
+                    vrchatStatus={state.vrchatStatus}
+                />
+            </div>
+            <div className="md:col-span-3">
+                <Chat
+                    state={state}
+                    dispatch={dispatch}
+                    sendMessage={sendMessage}
+                    isConnected={isConnected}
+                />
+            </div>
+            <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-3">
                 <h2 className="text-2xl font-bold mb-4 text-white">Recent Messages</h2>
                 <ul className="list-disc list-inside text-gray-300">
                     {state.recentMessages.map((message, index) => (
@@ -272,7 +265,7 @@ const Dashboard = ({ setTwitchMessages }) => {
                 </ul>
             </div>
             {state.additionalStreams.length > 0 && (
-                <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-2">
+                <div className="bg-gray-800 p-6 rounded-lg shadow-md md:col-span-3">
                     <h2 className="text-2xl font-bold mb-4 text-white">Additional Streams</h2>
                     <div className={`grid ${state.additionalStreams.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-4`}>
                         {state.additionalStreams.map((stream, index) => (
