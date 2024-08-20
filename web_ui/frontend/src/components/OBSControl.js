@@ -2,22 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from './useWebSocket';
 
 const OBSControl = () => {
-    const [obsInstances, setOBSInstances] = useState([
-        { id: 1, name: 'OBS Instance 1', scenes: [], currentScene: '', selectedScene: '', sources: {} },
-        { id: 2, name: 'OBS Instance 2', scenes: [], currentScene: '', selectedScene: '', sources: {} }
-    ]);
+    const [obsInstances, setOBSInstances] = useState([]);
 
     const handleWebSocketMessage = useCallback((data) => {
-        if (data.type === 'obs_update') {
-            setOBSInstances(prevInstances =>
-                prevInstances.map(instance =>
-                    instance.id === data.instanceId ? {
-                        ...instance,
-                        ...data.update,
-                        selectedScene: instance.selectedScene || data.update.currentScene
-                    } : instance
-                )
-            );
+        if (data.type === 'update' && data.update_data && data.update_data.obs_instances) {
+            setOBSInstances(data.update_data.obs_instances.map(instance => ({
+                id: instance.name,
+                name: instance.name,
+                scenes: instance.scenes,
+                currentScene: instance.current_scene,
+                selectedScene: instance.current_scene,
+                sources: instance.sources
+            })));
         }
     }, []);
 
