@@ -9,10 +9,14 @@ use crate::twitch::role_cache::RoleCache;
 use crate::discord::UserLinks;
 use std::sync::Arc;
 use std::time::Duration;
+use log::{debug, error, warn};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::timeout;
 use twitch_irc::message::ServerMessage;
+use uuid::Uuid;
+use crate::ai::AIClient;
 use crate::twitch::irc::TwitchBotClient;
+use crate::vrchat::{VRChatClient, World};
 use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct MessageHandler {
@@ -24,7 +28,6 @@ pub struct MessageHandler {
     role_cache: Arc<RwLock<RoleCache>>,
     user_links: Arc<UserLinks>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
-    deduplicator: Mutex<MessageDeduplicator>,
     world_info: Arc<Mutex<Option<World>>>,
     vrchat_client: Arc<VRChatClient>,
     ai_client: Option<Arc<AIClient>>,
@@ -53,7 +56,6 @@ impl MessageHandler {
             role_cache,
             user_links,
             websocket_sender,
-            deduplicator: Mutex::new(MessageDeduplicator::new(100, Duration::from_secs(60))),
             world_info,
             vrchat_client,
             ai_client,
@@ -70,21 +72,15 @@ impl MessageHandler {
                 error!("Error handling message: {:?}", e);
             }
         }
-
         Ok(())
     }
 
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        debug!("Processing message in handle_message: {:?}", message);
-        if let ServerMessage::Privmsg(msg) = message {
-            let message_id = msg.message_id.clone();
+        let debug_id = Uuid::new_v4();
+        warn!("Starting handle_message (Debug ID: {})", debug_id);
+        debug!("Processing message in handle_message: {:?} (Debug ID: {})", message, debug_id);
 
-            // Check if this message is a duplicate
-            let mut deduplicator = self.deduplicator.lock().await;
-            if deduplicator.is_duplicate(&message_id) {
-                debug!("Skipping duplicate message: {}", message_id);
-                return Ok(());
-            }
+        if let ServerMessage::Privmsg(msg) = message {
             let channel_id = self.api_client.get_broadcaster_id().await?;
             let user_role = get_user_role(&msg.sender.id, &channel_id, &self.api_client, &self.storage, &self.role_cache).await?;
 
@@ -94,6 +90,8 @@ impl MessageHandler {
                 .collect::<String>()
                 .trim()
                 .to_string();
+
+            warn!("Cleaned message: {} (Debug ID: {})", cleaned_message, debug_id);
 
             // Send the message to the WebSocket
             let websocket_message = WebSocketMessage {
@@ -105,9 +103,9 @@ impl MessageHandler {
                 additional_streams: None,
             };
             if let Err(e) = self.websocket_sender.send(websocket_message).await {
-                error!("Failed to send message to WebSocket: {:?}", e);
+                error!("Failed to send message to WebSocket: {:?} (Debug ID: {})", e, debug_id);
             } else {
-                debug!("Successfully sent message to WebSocket");
+                debug!("Successfully sent message to WebSocket (Debug ID: {})", debug_id);
             }
 
             let lowercase_message = cleaned_message.to_lowercase();
@@ -116,10 +114,13 @@ impl MessageHandler {
             let params: Vec<&str> = parts.collect();
 
             if let Some(cmd) = command {
+                warn!("Identified command: {} (Debug ID: {})", cmd, debug_id);
                 if let Some(command) = COMMANDS.iter().find(|c| c.name == cmd) {
+                    warn!("Found matching command: {} (Debug ID: {})", command.name, debug_id);
                     if user_role >= command.required_role {
                         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
                         let is_stream_online = self.api_client.is_stream_live(&broadcaster_id).await?;
+                        warn!("Executing command: {} (Debug ID: {})", command.name, debug_id);
                         (command.handler)(
                             &msg,
                             &self.irc_client,
@@ -134,66 +135,21 @@ impl MessageHandler {
                             &params,
                             &self.config,
                             &self.vrchat_client,
-                            &self.ai_client,  // Add this line
+                            &self.ai_client,
                             is_stream_online
                         ).await?;
+                        warn!("Finished executing command: {} (Debug ID: {})", command.name, debug_id);
                     } else {
                         let response = format!("@{}, this command is only available to {:?}s and above.", msg.sender.name, command.required_role);
                         self.irc_client.send_message(&msg.channel_login, &response).await?;
+                        warn!("User does not have required role for command: {} (Debug ID: {})", command.name, debug_id);
                     }
+                } else {
+                    warn!("No matching command found for: {} (Debug ID: {})", cmd, debug_id);
                 }
             }
         }
+        warn!("Completed handle_message (Debug ID: {})", debug_id);
         Ok(())
-    }
-}
-
-use std::collections::VecDeque;
-use std::time::{Instant};
-use log::{debug, error, info};
-use crate::ai::AIClient;
-use crate::vrchat::{VRChatClient, World};
-
-struct MessageDeduplicator {
-    recent_messages: VecDeque<(String, Instant)>,
-    max_size: usize,
-    ttl: Duration,
-}
-
-impl MessageDeduplicator {
-    fn new(max_size: usize, ttl: Duration) -> Self {
-        MessageDeduplicator {
-            recent_messages: VecDeque::with_capacity(max_size),
-            max_size,
-            ttl,
-        }
-    }
-
-    fn is_duplicate(&mut self, message_id: &str) -> bool {
-        let now = Instant::now();
-
-        // Remove expired entries
-        while let Some((_, timestamp)) = self.recent_messages.front() {
-            if now.duration_since(*timestamp) > self.ttl {
-                self.recent_messages.pop_front();
-            } else {
-                break;
-            }
-        }
-
-        // Check if message_id already exists
-        let is_duplicate = self.recent_messages.iter().any(|(id, _)| id == message_id);
-
-        if !is_duplicate {
-            // Add new message_id
-            self.recent_messages.push_back((message_id.to_string(), now));
-
-            // Ensure we don't exceed max_size
-            if self.recent_messages.len() > self.max_size {
-                self.recent_messages.pop_front();
-            }
-        }
-
-        is_duplicate
     }
 }

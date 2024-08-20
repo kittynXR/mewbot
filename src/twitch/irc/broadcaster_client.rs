@@ -1,5 +1,8 @@
 use super::client::{TwitchIRCManager, TwitchIRCClientType};
 use std::sync::Arc;
+use log::{debug, error, warn};
+use tokio::sync::broadcast;
+use twitch_irc::message::ServerMessage;
 
 pub struct TwitchBroadcasterClient {
     username: String,
@@ -16,10 +19,25 @@ impl TwitchBroadcasterClient {
     }
 
     pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let client = self.get_client().await.ok_or("Client not initialized")?;
-        client.say(channel.to_string(), message.to_string()).await?;
-        Ok(())
+        warn!("TwitchBroadcasterClient: Attempting to send message to channel {}: {}", channel, message);
+        match self.manager.send_message(&self.username, channel, message).await {
+            Ok(_) => {
+                warn!("TwitchBroadcasterClient: Message sent successfully: {}", message);
+                Ok(())
+            },
+            Err(e) => {
+                error!("TwitchBroadcasterClient: Error sending message: {:?}", e);
+                Err(e)
+            }
+        }
     }
 
-    // Add more broadcaster-specific methods here
+    pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
+        self.manager.subscribe()
+    }
+
+    pub fn get_manager(&self) -> Arc<TwitchIRCManager> {
+        self.manager.clone()
+    }
+
 }

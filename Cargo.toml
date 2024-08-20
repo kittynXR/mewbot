@@ -48,6 +48,7 @@ colored = "2.1.0"
 log = "^0.4"
 fern = { version = "^0.6", features = ["colored"] }
 hyper = "0.14.30"
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [dependencies.tokio]
 version = "^1.39"

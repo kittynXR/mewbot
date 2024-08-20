@@ -53,7 +53,10 @@ impl AIResponseManager {
             AIResponseConfig {
                 provider: AIProvider::OpenAI,
                 model: "gpt-4o-mini".to_string(),
-                prompt: "You are an entertaining chatbot in a cute and funny catgirl named kittyn's twitch channel".to_string(),
+                prompt: "You are an entertaining chatbot.  Your owner is the cute and funny catgirl named kittyn.\
+                        Answer questions humorously and in a playful manner.  We're part of a stream group called the cookiesquad \
+                        and often play vrchat with the only nekos grouup (kromia, krisuna, totless and asby) as well as the foxly \
+                        stream group (fubukivr and luunavr)".to_string(),
                 max_tokens: 150,
                 temperature: 0.7,
                 response_type: AIResponseType::WithHistory,
