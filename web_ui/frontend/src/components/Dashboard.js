@@ -152,6 +152,11 @@ const Dashboard = ({ setTwitchMessages }) => {
             case 'vrchat_world_update':
                 dispatch({ type: 'SET_VRC_WORLD', payload: data.world });
                 break;
+            case 'obs_update':
+                if (data.update_data && data.update_data.obs_instances) {
+                    dispatch({ type: 'SET_OBS_INSTANCES', payload: data.update_data.obs_instances });
+                }
+                break;
             default:
                 console.log('Unhandled message type:', data.type);
         }

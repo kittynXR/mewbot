@@ -3,17 +3,21 @@ import useWebSocket from './useWebSocket';
 
 const OBSControl = () => {
     const [obsInstances, setOBSInstances] = useState([]);
+    const [error, setError] = useState(null);
 
     const handleWebSocketMessage = useCallback((data) => {
+        console.log("Full WebSocket message in OBSControl:", data);
         if (data.type === 'update' && data.update_data && data.update_data.obs_instances) {
-            setOBSInstances(data.update_data.obs_instances.map(instance => ({
+            const processedInstances = data.update_data.obs_instances.map(instance => ({
                 id: instance.name,
                 name: instance.name,
                 scenes: instance.scenes,
                 currentScene: instance.current_scene,
                 selectedScene: instance.current_scene,
                 sources: instance.sources
-            })));
+            }));
+            console.log("Processed OBS instances:", processedInstances);
+            setOBSInstances(processedInstances);
         }
     }, []);
 
@@ -32,6 +36,10 @@ const OBSControl = () => {
             sendMessage({ type: 'get_obs_info' });
         }
     }, [isConnected, sendMessage]);
+
+    useEffect(() => {
+        console.log('OBS Instances updated:', obsInstances);
+    }, [obsInstances]);
 
     const handleSceneSelect = (instanceId, sceneName) => {
         setOBSInstances(prevInstances =>
@@ -56,6 +64,14 @@ const OBSControl = () => {
     const handleSourceRefresh = (instanceId, sceneName, sourceName) => {
         sendMessage({ type: 'refresh_source', instanceId, sceneName, sourceName });
     };
+
+    if (error) {
+        return <div>Error loading OBS data: {error}</div>;
+    }
+
+    if (obsInstances.length === 0) {
+        return <div>No OBS instances available</div>;
+    }
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

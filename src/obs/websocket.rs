@@ -344,14 +344,12 @@ impl OBSWebSocketClient {
     }
 
     pub async fn get_instance_state(&self) -> Result<OBSInstanceState, Box<dyn std::error::Error + Send + Sync>> {
-        let timeout = Duration::from_secs(5); // Increase timeout for state retrieval
-
-        let scenes = tokio::time::timeout(timeout, self.get_scene_list()).await??;
-        let current_scene = tokio::time::timeout(timeout, self.get_current_scene()).await??;
+        let scenes = self.get_scene_list().await?;
+        let current_scene = self.get_current_scene().await?;
         let mut sources = HashMap::new();
 
         for scene in &scenes {
-            let items = tokio::time::timeout(timeout, self.get_scene_items(scene)).await??;
+            let items = self.get_scene_items(&scene).await?;
             sources.insert(scene.clone(), items);
         }
 
@@ -402,7 +400,7 @@ impl OBSWebSocketClient {
         Ok(())
     }
 
-    pub async fn get_scene_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn get_scene_list(&self) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
         let request_id = "get_scene_list";
         let payload = json!({
             "op": 6,
@@ -414,7 +412,7 @@ impl OBSWebSocketClient {
 
         let response = self.send_request(payload, request_id).await?;
 
-        let scenes = response["scenes"].as_array()
+        let scenes = response["responseData"]["scenes"].as_array()
             .ok_or("Invalid response: missing scenes array")?;
 
         Ok(scenes.iter()

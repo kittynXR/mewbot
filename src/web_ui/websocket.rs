@@ -1,13 +1,14 @@
 use std::cmp::PartialEq;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
+use tokio::io::AsyncWriteExt;
 use crate::config::Config;
 use crate::vrchat::models::World;
 use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterClient};
@@ -16,9 +17,10 @@ use crate::bot_status::BotStatus;
 use crate::discord::DiscordClient;
 use crate::osc::VRChatOSC;
 use crate::web_ui::storage_ext::StorageClientExt;
-use crate::obs::OBSManager;
+use crate::obs::{OBSManager, OBSStateUpdate};
 use crate::obs::models::OBSInstance as OBSModelInstance;
 use crate::obs::OBSInstanceState;
+
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ChatDestination {
@@ -96,6 +98,14 @@ pub struct OBSSource {
     pub enabled: bool,
 }
 
+#[async_trait]
+impl OBSStateUpdate for Arc<RwLock<DashboardState>> {
+    async fn update_obs_state(&self, instances: Vec<OBSInstanceState>) {
+        let mut state = self.write().await;
+        state.obs_instances = instances;
+    }
+}
+
 impl WorldState {
     pub fn new() -> Self {
         Self {
@@ -132,7 +142,7 @@ pub struct DashboardState {
     pub(crate) tx: broadcast::Sender<WebSocketMessage>,
     pub(crate) rx: broadcast::Receiver<WebSocketMessage>,
     world_state: Arc<RwLock<WorldState>>,
-    pub obs_manager: Arc<OBSManager>,
+    obs_manager: Option<Arc<OBSManager>>,
     pub obs_instances: Vec<OBSInstanceState>,
 }
 
@@ -142,7 +152,7 @@ impl DashboardState {
         config: Arc<RwLock<Config>>,
         twitch_irc_manager: Option<Arc<TwitchIRCManager>>,
         vrchat_osc: Option<Arc<VRChatOSC>>,
-        obs_manager: Arc<OBSManager>,
+        obs_manager: Option<Arc<OBSManager>>,
     ) -> Self {
         let (tx, rx) = broadcast::channel::<WebSocketMessage>(100);
         Self {
@@ -168,6 +178,9 @@ impl DashboardState {
         self.tx.send(message)
     }
 
+    pub fn set_obs_manager(&mut self, manager: Arc<OBSManager>) {
+        self.obs_manager = Some(manager);
+    }
 
     pub async fn get_twitch_channel(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         self.config.read().await.twitch_channel_to_join
@@ -219,7 +232,11 @@ impl DashboardState {
         self.obs_status = status;
     }
     pub async fn update_obs_instances(&mut self) {
-        self.obs_instances = self.obs_manager.get_instances().await;
+        if let Some(obs_manager) = &self.obs_manager {
+            self.obs_instances = obs_manager.get_instances().await;
+        } else {
+            warn!("Attempted to update OBS instances, but OBS manager is not initialized.");
+        }
     }
 }
 

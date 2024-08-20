@@ -5,6 +5,13 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tungstenite::Message;
+use async_trait::async_trait;
+use crate::web_ui::websocket::DashboardState;
+
+#[async_trait]
+pub trait OBSStateUpdate: Send + Sync {
+    async fn update_obs_state(&self, instances: Vec<OBSInstanceState>);
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OBSInstance {
@@ -50,13 +57,21 @@ pub struct OBSInstanceState {
 
 pub struct OBSManager {
     pub clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
+    state_updater: Arc<RwLock<DashboardState>>,
 }
 
 impl OBSManager {
-    pub fn new() -> Self {
+    pub fn new(state_updater: Arc<RwLock<DashboardState>>) -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
+            state_updater,
         }
+    }
+
+    pub async fn update_dashboard_state(&self) {
+        let instances = self.get_instances().await;
+        let mut dashboard_state = self.state_updater.write().await;
+        dashboard_state.obs_instances = instances;
     }
 
     pub async fn add_instance(&self, name: String, instance: OBSInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
