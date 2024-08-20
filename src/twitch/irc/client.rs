@@ -40,7 +40,7 @@ impl TwitchIRCManager {
         }
     }
 
-    pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>, handle_messages: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Adding Twitch IRC client for user: {}", username);
 
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
@@ -64,22 +64,24 @@ impl TwitchIRCManager {
 
         self.clients.write().await.insert(username.clone(), irc_client);
 
-        // Spawn a task to handle incoming messages for this client
-        let message_sender = self.message_sender.clone();
-        let websocket_sender = self.websocket_sender.clone();
-        let username_clone = username.clone();
-        let initial_messages = self.initial_messages.clone();
-        let receivers_ready = self.receivers_ready.clone();
-        tokio::spawn(async move {
-            Self::handle_client_messages(
-                username_clone,
-                incoming_messages,
-                message_sender,
-                websocket_sender,
-                initial_messages,
-                receivers_ready
-            ).await;
-        });
+        if handle_messages {
+            // Spawn a task to handle incoming messages for this client
+            let message_sender = self.message_sender.clone();
+            let websocket_sender = self.websocket_sender.clone();
+            let username_clone = username.clone();
+            let initial_messages = self.initial_messages.clone();
+            let receivers_ready = self.receivers_ready.clone();
+            tokio::spawn(async move {
+                Self::handle_client_messages(
+                    username_clone,
+                    incoming_messages,
+                    message_sender,
+                    websocket_sender,
+                    initial_messages,
+                    receivers_ready
+                ).await;
+            });
+        }
 
         info!("Successfully added Twitch IRC client for user: {}", username);
         Ok(())

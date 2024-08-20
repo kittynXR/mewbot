@@ -190,12 +190,12 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         let broadcaster_username = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
         let channel = broadcaster_username.clone();
 
-        // Only add one client for receiving messages
-        twitch_irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()]).await?;
-        twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username, twitch_irc_manager.clone())));
+        twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username.clone(), twitch_irc_manager.clone())));
 
-        // Use a separate client for sending messages as the broadcaster if needed
+        twitch_irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()], true).await?;
+
         if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
+            twitch_irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token, vec![channel.clone()], false).await?;
             twitch_broadcaster_client = Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, twitch_irc_manager.clone())));
         }
 
