@@ -16,7 +16,7 @@ use twitch_irc::message::ServerMessage;
 use uuid::Uuid;
 use crate::ai::AIClient;
 use crate::twitch::irc::TwitchBotClient;
-use crate::vrchat::{VRChatClient, World};
+use crate::vrchat::{VRChatClient, VRChatManager, World};
 use crate::web_ui::websocket::WebSocketMessage;
 
 pub struct MessageHandler {
@@ -27,9 +27,9 @@ pub struct MessageHandler {
     storage: Arc<RwLock<StorageClient>>,
     role_cache: Arc<RwLock<RoleCache>>,
     user_links: Arc<UserLinks>,
-    websocket_sender: mpsc::Sender<WebSocketMessage>,
+    websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
     world_info: Arc<Mutex<Option<World>>>,
-    vrchat_client: Arc<VRChatClient>,
+    vrchat_manager: Arc<VRChatManager>,
     ai_client: Option<Arc<AIClient>>,
 }
 
@@ -42,9 +42,9 @@ impl MessageHandler {
         storage: Arc<RwLock<StorageClient>>,
         role_cache: Arc<RwLock<RoleCache>>,
         user_links: Arc<UserLinks>,
-        websocket_sender: mpsc::Sender<WebSocketMessage>,
+        websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
         world_info: Arc<Mutex<Option<World>>>,
-        vrchat_client: Arc<VRChatClient>,
+        vrchat_client: Arc<VRChatManager>,
         ai_client: Option<Arc<AIClient>>,
     ) -> Self {
         MessageHandler {
@@ -57,7 +57,7 @@ impl MessageHandler {
             user_links,
             websocket_sender,
             world_info,
-            vrchat_client,
+            vrchat_manager: vrchat_client,
             ai_client,
         }
     }
@@ -113,7 +113,7 @@ impl MessageHandler {
                             &self.user_links,
                             &params,
                             &self.config,
-                            &self.vrchat_client,
+                            &self.vrchat_manager,
                             &self.ai_client,
                             is_stream_online
                         ).await?;

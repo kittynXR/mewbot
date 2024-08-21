@@ -17,7 +17,7 @@ use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterCli
 use crate::twitch::irc::message_handler::MessageHandler;
 use crate::config::{Config, SocialLinks};
 use crate::twitch::api::TwitchAPIClient;
-use crate::vrchat::VRChatClient;
+use crate::vrchat::{VRChatClient, VRChatManager};
 use crate::vrchat::World;
 use crate::twitch::redeems::RedeemManager;
 use crate::ai::AIClient;
@@ -29,7 +29,7 @@ use crate::osc::VRChatOSC;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
-use crate::web_ui::websocket::{DashboardState, WorldState};
+use crate::web_ui::websocket::{DashboardState};
 use tokio::sync::mpsc;
 use crate::obs::{OBSInstance, OBSManager, OBSStateUpdate};
 use crate::web_ui::websocket::WebSocketMessage;
@@ -39,7 +39,7 @@ pub struct BotClients {
     pub twitch_bot_client: Arc<TwitchBotClient>,
     pub twitch_broadcaster_client: Option<Arc<TwitchBroadcasterClient>>,
     pub twitch_api: Option<Arc<TwitchAPIClient>>,
-    pub vrchat: Option<Arc<VRChatClient>>,
+    pub vrchat: Option<Arc<VRChatManager>>,
     pub obs: Option<Arc<OBSManager>>,
     pub discord: Option<Arc<discord::DiscordClient>>,
     pub redeem_manager: Arc<RwLock<RedeemManager>>,
@@ -51,8 +51,8 @@ pub struct BotClients {
     pub user_links: Arc<UserLinks>,
     pub bot_status: Arc<RwLock<BotStatus>>,
     pub dashboard_state: Arc<RwLock<DashboardState>>,
-    pub websocket_tx: mpsc::Sender<WebSocketMessage>,
-    pub websocket_rx: Option<mpsc::Receiver<WebSocketMessage>>,
+    pub websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
+    pub websocket_rx: Option<mpsc::UnboundedReceiver<WebSocketMessage>>,
     pub social_links: Arc<RwLock<SocialLinks>>,
 }
 
@@ -121,7 +121,7 @@ impl BotClients {
 pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std::error::Error + Send + Sync>> {
     let bot_status = BotStatus::new();
 
-    let (websocket_tx, websocket_rx) = mpsc::channel::<WebSocketMessage>(100);
+    let (websocket_tx, websocket_rx) = mpsc::unbounded_channel::<WebSocketMessage>();
 
     let social_links = Arc::new(RwLock::new(config.read().await.social_links.clone()));
 
@@ -185,16 +185,13 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let role_cache = Arc::new(RwLock::new(RoleCache::new()));
 
+
     let dashboard_state = Arc::new(RwLock::new(DashboardState::new(
         bot_status.clone(),
         config.clone(),
-        None, // We'll set this after TwitchIRCManager is created
-        vrchat_osc.clone(),
-        None,
     )));
 
-    let obs_manager = Arc::new(OBSManager::new(dashboard_state.clone()));
-    dashboard_state.write().await.set_obs_manager(obs_manager.clone());
+    let obs_manager = Arc::new(OBSManager::new(websocket_tx.clone()));
 
     // Initialize OBS instances from config
     let obs_config = config.read().await.obs_manager.clone();
@@ -225,8 +222,11 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     }
 
     // Initialize Twitch IRC Manager
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), social_links.clone()));
-    dashboard_state.write().await.set_twitch_irc_manager(Some(twitch_irc_manager.clone()));
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(
+        websocket_tx.clone(),
+        social_links.clone(),
+        dashboard_state.clone()
+    ));
 
     let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
         ai_client.clone(),
@@ -280,12 +280,19 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
     };
 
+    let vrchat_manager = vrchat.as_ref().map(|vrchat_client| {
+        Arc::new(VRChatManager::new(
+            Arc::clone(vrchat_client),
+            dashboard_state.clone()
+        ))
+    });
+
     let clients = BotClients {
         twitch_irc_manager,
         twitch_bot_client: twitch_bot_client.ok_or("Twitch bot client not initialized")?,
         twitch_broadcaster_client,
         twitch_api,
-        vrchat,
+        vrchat: vrchat_manager,
         obs: Some(obs_manager),
         discord,
         redeem_manager,
@@ -327,6 +334,8 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.vrchat_osc.clone(),
         clients.discord.clone(),
         clients.dashboard_state.clone(),
+        clients.obs.clone().expect("OBS manager should be initialized"),
+        clients.vrchat.clone().expect("VRChat manager should be initialized"),
     ));
 
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
@@ -341,9 +350,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         }
     });
 
-    let world_info = Arc::new(Mutex::new(None::<World>));
-    let world_state = Arc::new(RwLock::new(WorldState::new()));
-
     info!("Initializing channel point redeems...");
     if let Err(e) = clients.redeem_manager.write().await.initialize_redeems().await {
         error!("Failed to initialize channel point redeems: {}. Some redeems may not be available.", e);
@@ -351,9 +357,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     if let Some(api_client) = &clients.twitch_api {
         info!("Setting up Twitch IRC message handling...");
-
-        let world_info_clone = Arc::clone(&world_info);
-        let api_client = Arc::clone(api_client);
 
         let channel = config.read().await.twitch_channel_to_join.clone()
             .ok_or("Twitch channel to join not set")?;
@@ -366,6 +369,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             error!("Failed to get IRC client for announcing redeems");
         }
 
+        let world_info = Arc::new(Mutex::new(None::<World>));
         let message_handler = Arc::new(MessageHandler::new(
             clients.twitch_bot_client.clone(),
             config.clone(),
@@ -375,7 +379,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             clients.role_cache.clone(),
             clients.user_links.clone(),
             clients.websocket_tx.clone(),
-            world_info.clone(),
+            world_info,
             clients.vrchat.clone().expect("VRChatClient should be initialized"),
             clients.ai_client.clone(),
         ));
@@ -447,7 +451,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             async move {
                 let result = crate::vrchat::websocket::handler(
                     auth_cookie,
-                    world_state.clone(),
                     current_user_id,
                     vrchat_client,
                     dashboard_state.clone()
@@ -464,8 +467,31 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.dashboard_state.write().await.update_vrchat_status(true);
     }
 
-    // Remove the flush_initial_messages call
-    // clients.twitch_irc_manager.flush_initial_messages().await;
+    // Start the WebSocket handler
+    let ws_handle = tokio::spawn({
+        let dashboard_state = clients.dashboard_state.clone();
+        let storage = clients.storage.clone();
+        let obs_manager = clients.obs.clone().expect("OBS manager should be initialized");
+        let twitch_manager = clients.twitch_irc_manager.clone();
+        let vrchat_manager = clients.vrchat.clone().expect("VRChat manager should be initialized");
+        let mut websocket_rx = clients.websocket_rx.take();
+        async move {
+            if let Some(mut rx) = websocket_rx {
+                while let Some(msg) = rx.recv().await {
+                    web_ui::websocket::handle_websocket(
+                        msg,
+                        dashboard_state.clone(),
+                        storage.clone(),
+                        obs_manager.clone(),
+                        twitch_manager.clone(),
+                        vrchat_manager.clone(),
+                    ).await;
+                }
+            }
+            Ok(())
+        }
+    });
+    handles.push(ws_handle);
 
     info!("Bot is now running. Press Ctrl+C to exit.");
 

@@ -1,5 +1,8 @@
-pub mod client;
+mod client;
+pub(crate) mod models;
 pub mod websocket;
-pub mod models;
+mod manager;
+
 pub use client::VRChatClient;
-pub use models::{World, VRChatError};
+pub use models::*;
+pub use manager::VRChatManager;

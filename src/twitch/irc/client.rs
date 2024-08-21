@@ -7,10 +7,9 @@ use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
-use crate::web_ui::websocket::WebSocketMessage;
+use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 use crate::config::SocialLinks;
 use crate::twitch::connection_monitor::ConnectionMonitor;
-
 
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
@@ -22,18 +21,24 @@ pub struct IRCClient {
 pub struct TwitchIRCManager {
     clients: RwLock<HashMap<String, IRCClient>>,
     message_sender: broadcast::Sender<ServerMessage>,
-    websocket_sender: mpsc::Sender<WebSocketMessage>,
+    websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
     social_links: Arc<RwLock<SocialLinks>>,
+    dashboard_state: Arc<RwLock<DashboardState>>,
 }
 
 impl TwitchIRCManager {
-    pub fn new(websocket_sender: mpsc::Sender<WebSocketMessage>, social_links: Arc<RwLock<SocialLinks>>) -> Self {
+    pub fn new(
+        websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
+        social_links: Arc<RwLock<SocialLinks>>,
+        dashboard_state: Arc<RwLock<DashboardState>>,
+    ) -> Self {
         let (message_sender, _) = broadcast::channel(1000);
         TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
             message_sender,
             websocket_sender,
             social_links,
+            dashboard_state,
         }
     }
 
@@ -71,6 +76,7 @@ impl TwitchIRCManager {
             let websocket_sender = self.websocket_sender.clone();
             let username_clone = username.clone();
             let monitor_clone = monitor.clone();
+            let dashboard_state = self.dashboard_state.clone();
             tokio::spawn(async move {
                 Self::handle_client_messages(
                     username_clone,
@@ -78,21 +84,24 @@ impl TwitchIRCManager {
                     message_sender,
                     websocket_sender,
                     monitor_clone,
+                    dashboard_state,
                 ).await;
             });
         }
 
         monitor.lock().await.on_connect();
+        self.dashboard_state.write().await.update_twitch_status(true);
         info!("Successfully added Twitch IRC client for user: {}", username);
         Ok(())
     }
 
-    async fn handle_client_messages(
+    pub async fn handle_client_messages(
         username: String,
         mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
         message_sender: broadcast::Sender<ServerMessage>,
-        websocket_sender: mpsc::Sender<WebSocketMessage>,
+        websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
         monitor: Arc<Mutex<ConnectionMonitor>>,
+        dashboard_state: Arc<RwLock<DashboardState>>,
     ) {
         while let Some(message) = incoming_messages.recv().await {
             debug!("Received message in handle_client_messages for user {}: {:?}", username, message);
@@ -101,20 +110,23 @@ impl TwitchIRCManager {
             match &message {
                 ServerMessage::Privmsg(msg) => {
                     let websocket_message = WebSocketMessage {
-                        message_type: "twitch_message".to_string(),
-                        message: Some(msg.message_text.clone()),
-                        user_id: Some(msg.sender.id.clone()),
-                        destination: None,
-                        update_data: None,
-                        additional_streams: None,
+                        module: "twitch".to_string(),
+                        action: "new_message".to_string(),
+                        data: serde_json::json!({
+                            "message": msg.message_text,
+                            "user_id": msg.sender.id,
+                            "user_name": msg.sender.name,
+                            "channel": msg.channel_login,
+                        }),
                     };
-                    if let Err(e) = websocket_sender.send(websocket_message).await {
+                    if let Err(e) = websocket_sender.send(websocket_message) {
                         error!("Failed to send message to WebSocket: {:?}", e);
                     }
                 },
                 ServerMessage::Reconnect(_) => {
                     warn!("Received reconnect message for user: {}", username);
                     monitor.lock().await.on_disconnect();
+                    dashboard_state.write().await.update_twitch_status(false);
                 },
                 _ => {}
             }
@@ -125,6 +137,79 @@ impl TwitchIRCManager {
         }
         warn!("Exiting handle_client_messages for {}", username);
         monitor.lock().await.on_disconnect();
+        dashboard_state.write().await.update_twitch_status(false);
+    }
+
+    pub async fn handle_message(&self, message: WebSocketMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match message.action.as_str() {
+            "send_message" => {
+                let channel = message.data["channel"].as_str().ok_or("Missing channel")?;
+                let content = message.data["content"].as_str().ok_or("Missing content")?;
+                let username = message.data["username"].as_str().ok_or("Missing username")?;
+
+                self.send_message(username, channel, content).await?;
+                Ok(())
+            },
+            "join_channel" => {
+                let channel = message.data["channel"].as_str().ok_or("Missing channel")?;
+                let username = message.data["username"].as_str().ok_or("Missing username")?;
+
+                if let Some(client) = self.get_client(username).await {
+                    client.join(channel.to_string());
+                    Ok(())
+                } else {
+                    Err("Client not found".into())
+                }
+            },
+            "leave_channel" => {
+                let channel = message.data["channel"].as_str().ok_or("Missing channel")?;
+                let username = message.data["username"].as_str().ok_or("Missing username")?;
+
+                if let Some(client) = self.get_client(username).await {
+                    client.part(channel.to_string());
+                    Ok(())
+                } else {
+                    Err("Client not found".into())
+                }
+            },
+            "get_channel_info" => {
+                let channel = message.data["channel"].as_str().ok_or("Missing channel")?;
+                // Implement logic to get channel info
+                // This might involve using the Twitch API, which is not part of the IRC client
+                // For now, we'll just return a placeholder
+                let response = WebSocketMessage {
+                    module: "twitch".to_string(),
+                    action: "channel_info".to_string(),
+                    data: serde_json::json!({
+                        "channel": channel,
+                        "viewers": 0,
+                        "followers": 0,
+                        "subscribers": 0,
+                    }),
+                };
+                self.websocket_sender.send(response)?;
+                Ok(())
+            },
+            "get_bot_status" => {
+                let username = message.data["username"].as_str().ok_or("Missing username")?;
+                let status = if self.get_client(username).await.is_some() {
+                    "connected"
+                } else {
+                    "disconnected"
+                };
+                let response = WebSocketMessage {
+                    module: "twitch".to_string(),
+                    action: "bot_status".to_string(),
+                    data: serde_json::json!({
+                        "username": username,
+                        "status": status,
+                    }),
+                };
+                self.websocket_sender.send(response)?;
+                Ok(())
+            },
+            _ => Err(format!("Unknown Twitch IRC action: {}", message.action).into()),
+        }
     }
 
     fn log_message(username: &str, message: &ServerMessage) {

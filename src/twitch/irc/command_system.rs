@@ -13,7 +13,7 @@ use crate::twitch::redeems::RedeemManager;
 use crate::twitch::role_cache::RoleCache;
 use crate::config::Config;
 use crate::twitch::irc::TwitchBotClient;
-use crate::vrchat::VRChatClient;
+use crate::vrchat::{VRChatClient, VRChatManager};
 use super::commands;
 
 pub struct Command {
@@ -32,7 +32,7 @@ pub struct Command {
         &'a Arc<UserLinks>,
         &'a [&'a str],
         &'a Arc<RwLock<Config>>,
-        &'a Arc<VRChatClient>,
+        &'a Arc<VRChatManager>,
         &'a Option<Arc<AIClient>>,
         bool
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>,
@@ -152,7 +152,7 @@ pub async fn execute_command(
     user_links: &Arc<UserLinks>,
     params: &[&str],
     config: &Arc<RwLock<Config>>,
-    vrchat_client: &Arc<VRChatClient>,
+    vrchat_manager: &Arc<VRChatManager>,
     ai_client: &Option<Arc<AIClient>>,
     is_stream_online: bool
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -169,7 +169,7 @@ pub async fn execute_command(
         user_links,
         params,
         config,
-        vrchat_client,
+        vrchat_manager,
         ai_client,
         is_stream_online
     ).await

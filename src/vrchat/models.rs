@@ -20,7 +20,7 @@ impl From<Box<dyn Error + Send + Sync>> for VRChatError {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct World {
     pub id: String,
     pub name: String,
@@ -49,4 +49,20 @@ pub struct ErrorMessage {
     #[serde(rename = "authToken")]
     pub auth_token: String,
     pub ip: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Friend {
+    pub id: String,
+    pub username: String,
+    pub display_name: String,
+    pub status: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VRChatStatus {
+    pub online: bool,
+    pub current_world: Option<World>,
+    pub friend_count: usize,
 }

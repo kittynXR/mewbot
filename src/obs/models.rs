@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tungstenite::Message;
 use async_trait::async_trait;
-use crate::web_ui::websocket::DashboardState;
+use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
+use serde_json::{json, Value};
+
 
 #[async_trait]
 pub trait OBSStateUpdate: Send + Sync {
@@ -56,52 +58,89 @@ pub struct OBSInstanceState {
 }
 
 pub struct OBSManager {
-    pub clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
-    state_updater: Arc<RwLock<DashboardState>>,
+    clients: Arc<RwLock<HashMap<String, OBSWebSocketClient>>>,
+    ws_sender: mpsc::UnboundedSender<WebSocketMessage>,
 }
 
 impl OBSManager {
-    pub fn new(state_updater: Arc<RwLock<DashboardState>>) -> Self {
+    pub fn new(ws_sender: mpsc::UnboundedSender<WebSocketMessage>) -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
-            state_updater,
+            ws_sender,
         }
     }
 
-    pub async fn update_dashboard_state(&self) {
+    pub async fn handle_message(&self, message: WebSocketMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match message.action.as_str() {
+            "get_info" => self.get_info().await,
+            "change_scene" => {
+                let instance_name = message.data["instance_name"].as_str().ok_or("Missing instance_name")?;
+                let scene_name = message.data["scene_name"].as_str().ok_or("Missing scene_name")?;
+                self.change_scene(instance_name, scene_name).await
+            },
+            "toggle_source" => {
+                let instance_name = message.data["instance_name"].as_str().ok_or("Missing instance_name")?;
+                let scene_name = message.data["scene_name"].as_str().ok_or("Missing scene_name")?;
+                let source_name = message.data["source_name"].as_str().ok_or("Missing source_name")?;
+                let enabled = message.data["enabled"].as_bool().ok_or("Missing enabled status")?;
+                self.toggle_source(instance_name, scene_name, source_name, enabled).await
+            },
+            "refresh_source" => {
+                let instance_name = message.data["instance_name"].as_str().ok_or("Missing instance_name")?;
+                let source_name = message.data["source_name"].as_str().ok_or("Missing source_name")?;
+                self.refresh_source(instance_name, source_name).await
+            },
+            _ => Err("Unknown OBS action".into()),
+        }
+    }
+
+    async fn get_info(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let instances = self.get_instances().await;
-        let mut dashboard_state = self.state_updater.write().await;
-        dashboard_state.obs_instances = instances;
+        self.send_update(json!({
+            "instances": instances,
+            "status": true,
+        })).await
     }
 
-    pub async fn add_instance(&self, name: String, instance: OBSInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let client = OBSWebSocketClient::new(instance);
-
-        info!("Attempting to add OBS instance: {}", name);
-        match tokio::time::timeout(Duration::from_secs(35), client.connect()).await {
-            Ok(result) => {
-                match result {
-                    Ok(_) => {
-                        self.clients.write().await.insert(name.clone(), client);
-                        info!("Successfully added OBS instance: {}", name);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!("Failed to connect to OBS instance {}: {}. This instance will be unavailable.", name, e);
-                        Ok(()) // We return Ok to allow the program to continue with other instances
-                    }
-                }
-            }
-            Err(_) => {
-                error!("Timeout occurred while connecting to OBS instance {}. This instance will be unavailable.", name);
-                Ok(()) // We return Ok to allow the program to continue with other instances
-            }
+    async fn change_scene(&self, instance_name: &str, scene_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut clients = self.clients.write().await;
+        if let Some(client) = clients.get_mut(instance_name) {
+            client.set_current_scene(scene_name).await?;
+            drop(clients);
+            self.get_info().await?;
+        } else {
+            return Err(format!("OBS instance not found: {}", instance_name).into());
         }
+        Ok(())
     }
-    pub async fn get_instances(&self) -> Vec<OBSInstanceState> {
+
+    async fn toggle_source(&self, instance_name: &str, scene_name: &str, source_name: &str, enabled: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut clients = self.clients.write().await;
+        if let Some(client) = clients.get_mut(instance_name) {
+            client.set_scene_item_enabled(scene_name, source_name, enabled).await?;
+            drop(clients);
+            self.get_info().await?;
+        } else {
+            return Err(format!("OBS instance not found: {}", instance_name).into());
+        }
+        Ok(())
+    }
+
+    async fn refresh_source(&self, instance_name: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut clients = self.clients.write().await;
+        if let Some(client) = clients.get_mut(instance_name) {
+            client.refresh_browser_source(source_name).await?;
+            // Optionally get and send updated info
+            // self.get_info().await?;
+        } else {
+            return Err(format!("OBS instance not found: {}", instance_name).into());
+        }
+        Ok(())
+    }
+
+    async fn get_instances(&self) -> Vec<OBSInstanceState> {
         let clients = self.clients.read().await;
         let mut instances = Vec::new();
-
         for (name, client) in clients.iter() {
             match client.get_instance_state().await {
                 Ok(state) => instances.push(state),
@@ -109,5 +148,23 @@ impl OBSManager {
             }
         }
         instances
+    }
+
+    async fn send_update(&self, update: Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let message = WebSocketMessage {
+            module: "obs".to_string(),
+            action: "update".to_string(),
+            data: update,
+        };
+        self.ws_sender.send(message);
+        Ok(())
+    }
+
+    pub async fn add_instance(&self, name: String, instance: OBSInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let client = OBSWebSocketClient::new(instance);
+        client.connect().await?;
+        self.clients.write().await.insert(name, client);
+        self.get_info().await?;
+        Ok(())
     }
 }

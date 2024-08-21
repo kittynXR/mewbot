@@ -19,24 +19,24 @@ use tokio::net::TcpStream;
 use crate::obs::models::{OBSInstance, OBSScene, OBSSceneItem};
 use crate::obs::{OBSClientState, OBSInstanceState, OBSManager, OBSWebSocketClient};
 
-const TIMEOUT_DURATION: Duration = Duration::from_millis(1000);
-const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(10);
+pub const TIMEOUT_DURATION: Duration = Duration::from_millis(1000);
+pub const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Deserialize)]
-struct OBSResponse {
+pub struct OBSResponse {
     op: u8,
     d: Value,
 }
 
 #[derive(Debug, Deserialize)]
-struct HelloMessage {
+pub struct HelloMessage {
     obsWebSocketVersion: String,
     rpcVersion: i32,
     authentication: Option<AuthenticationInfo>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AuthenticationInfo {
+pub struct AuthenticationInfo {
     challenge: String,
     salt: String,
 }

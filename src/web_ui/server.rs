@@ -2,10 +2,12 @@ use std::env;
 use std::future::Future;
 use warp::Filter;
 use std::sync::Arc;
-use log::{info, warn};
+use futures_util::StreamExt;
+use log::{error, info, warn};
 use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio::task::JoinHandle;
 use warp::http::{HeaderMap, HeaderValue};
+use warp::ws::WebSocket;
 use crate::bot_status::BotStatus;
 use crate::config::Config;
 use crate::storage::StorageClient;
@@ -16,12 +18,17 @@ use crate::web_ui::websocket::{DashboardState, update_dashboard_state};
 use super::websocket::{handle_websocket, WebSocketMessage};
 use super::api_routes::{api_routes, with_storage};
 use crate::discord::DiscordClient;
+use crate::obs::OBSManager;
+use crate::vrchat::VRChatManager;
 
 pub struct WebUI {
     config: Arc<RwLock<Config>>,
     storage: Arc<RwLock<StorageClient>>,
     pub dashboard_state: Arc<RwLock<websocket::DashboardState>>,
     discord_client: Option<Arc<DiscordClient>>,
+    obs_manager: Arc<OBSManager>,
+    twitch_irc_manager: Arc<TwitchIRCManager>,
+    vrchat_manager: Arc<VRChatManager>,
 }
 
 impl WebUI {
@@ -33,12 +40,17 @@ impl WebUI {
         vrchat_osc: Option<Arc<VRChatOSC>>,
         discord_client: Option<Arc<DiscordClient>>,
         dashboard_state: Arc<RwLock<DashboardState>>,
+        obs_manager: Arc<OBSManager>,
+        vrchat_manager: Arc<VRChatManager>,
     ) -> Self {
         WebUI {
             config,
             storage,
             dashboard_state,
             discord_client,
+            obs_manager,
+            twitch_irc_manager,
+            vrchat_manager,
         }
     }
 
@@ -87,8 +99,13 @@ impl WebUI {
             .and(warp::ws())
             .and(with_dashboard_state(dashboard_state.clone()))
             .and(with_storage(storage.clone()))
-            .map(|ws: warp::ws::Ws, dashboard_state, storage| {
-                ws.on_upgrade(move |socket| handle_websocket(socket, dashboard_state, storage))
+            .and(with_obs_manager(self.obs_manager.clone()))
+            .and(with_twitch_irc_manager(self.twitch_irc_manager.clone()))
+            .and(with_vrchat_manager(self.vrchat_manager.clone()))
+            .map(|ws: warp::ws::Ws, dashboard_state, storage, obs_manager, twitch_irc_manager, vrchat_manager| {
+                ws.on_upgrade(move |socket| {
+                    handle_ws_connection(socket, dashboard_state, storage, obs_manager, twitch_irc_manager, vrchat_manager)
+                })
             });
 
         let api = api_routes(
@@ -126,7 +143,6 @@ impl WebUI {
         let update_task = tokio::spawn(update_dashboard_state(
             self.dashboard_state.clone(),
             self.storage.clone(),
-            Arc::new(RwLock::new(self.discord_client.clone())),
             update_task_shutdown_rx,
         ));
 
@@ -150,6 +166,37 @@ impl WebUI {
         info!("Web UI server has shut down.");
         Ok(())
     }
+
+
+}
+
+async fn handle_ws_connection(
+    ws: WebSocket,
+    dashboard_state: Arc<RwLock<DashboardState>>,
+    storage: Arc<RwLock<StorageClient>>,
+    obs_manager: Arc<OBSManager>,
+    twitch_irc_manager: Arc<TwitchIRCManager>,
+    vrchat_manager: Arc<VRChatManager>,
+) {
+    let (_, mut ws_recv) = ws.split();
+
+    while let Some(result) = ws_recv.next().await {
+        match result {
+            Ok(msg) => {
+                if let Ok(text) = msg.to_str() {
+                    if let Ok(ws_msg) = serde_json::from_str::<WebSocketMessage>(text) {
+                        handle_websocket(ws_msg, dashboard_state.clone(), storage.clone(), obs_manager.clone(), twitch_irc_manager.clone(), vrchat_manager.clone()).await;
+                    } else {
+                        error!("Failed to parse WebSocket message: {}", text);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("WebSocket error: {:?}", e);
+                break;
+            }
+        }
+    }
 }
 
 fn header_map() -> HeaderMap {
@@ -163,4 +210,22 @@ fn with_dashboard_state(
     dashboard_state: Arc<RwLock<DashboardState>>,
 ) -> impl Filter<Extract = (Arc<RwLock<DashboardState>>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || dashboard_state.clone())
+}
+
+fn with_obs_manager(
+    obs_manager: Arc<OBSManager>,
+) -> impl Filter<Extract = (Arc<OBSManager>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || obs_manager.clone())
+}
+
+fn with_twitch_irc_manager(
+    twitch_irc_manager: Arc<TwitchIRCManager>,
+) -> impl Filter<Extract = (Arc<TwitchIRCManager>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || twitch_irc_manager.clone())
+}
+
+fn with_vrchat_manager(
+    vrchat_manager: Arc<VRChatManager>,
+) -> impl Filter<Extract = (Arc<VRChatManager>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || vrchat_manager.clone())
 }
