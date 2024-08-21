@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::sync::{RwLock, mpsc, broadcast, Mutex};
-use tokio::sync::broadcast::error::SendError;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
@@ -11,19 +9,20 @@ use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
 use crate::web_ui::websocket::WebSocketMessage;
 use crate::config::SocialLinks;
+use crate::twitch::connection_monitor::ConnectionMonitor;
+
 
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
 pub struct IRCClient {
     pub client: Arc<TwitchIRCClientType>,
+    pub monitor: Arc<Mutex<ConnectionMonitor>>,
 }
 
 pub struct TwitchIRCManager {
     clients: RwLock<HashMap<String, IRCClient>>,
     message_sender: broadcast::Sender<ServerMessage>,
     websocket_sender: mpsc::Sender<WebSocketMessage>,
-    initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
-    receivers_ready: Arc<AtomicBool>,
     social_links: Arc<RwLock<SocialLinks>>,
 }
 
@@ -34,14 +33,12 @@ impl TwitchIRCManager {
             clients: RwLock::new(HashMap::new()),
             message_sender,
             websocket_sender,
-            initial_messages: Arc::new(Mutex::new(Vec::new())),
-            receivers_ready: Arc::new(AtomicBool::new(false)),
             social_links,
         }
     }
 
     pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>, handle_messages: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        debug!("Adding Twitch IRC client for user: {}", username);
+        info!("Adding Twitch IRC client for user: {}", username);
 
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
 
@@ -49,40 +46,43 @@ impl TwitchIRCManager {
             StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token))
         );
 
+        info!("Attempting to create Twitch IRC client for user: {}", username);
         let (incoming_messages, client) = TwitchIRC::<SecureTCPTransport, StaticLoginCredentials>::new(client_config);
+        info!("Twitch IRC client created successfully for user: {}", username);
 
         let client = Arc::new(client);
+        let monitor = Arc::new(Mutex::new(ConnectionMonitor::new()));
 
         for channel in channels.iter() {
-            info!("Joining channel: {}", channel);
+            info!("Joining channel: {} for user: {}", channel, username);
             client.join(channel.clone())?;
+            info!("Successfully joined channel: {} for user: {}", channel, username);
         }
 
         let irc_client = IRCClient {
             client: client.clone(),
+            monitor: monitor.clone(),
         };
 
         self.clients.write().await.insert(username.clone(), irc_client);
 
         if handle_messages {
-            // Spawn a task to handle incoming messages for this client
             let message_sender = self.message_sender.clone();
             let websocket_sender = self.websocket_sender.clone();
             let username_clone = username.clone();
-            let initial_messages = self.initial_messages.clone();
-            let receivers_ready = self.receivers_ready.clone();
+            let monitor_clone = monitor.clone();
             tokio::spawn(async move {
                 Self::handle_client_messages(
                     username_clone,
                     incoming_messages,
                     message_sender,
                     websocket_sender,
-                    initial_messages,
-                    receivers_ready
+                    monitor_clone,
                 ).await;
             });
         }
 
+        monitor.lock().await.on_connect();
         info!("Successfully added Twitch IRC client for user: {}", username);
         Ok(())
     }
@@ -92,55 +92,39 @@ impl TwitchIRCManager {
         mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
         message_sender: broadcast::Sender<ServerMessage>,
         websocket_sender: mpsc::Sender<WebSocketMessage>,
-        initial_messages: Arc<Mutex<Vec<ServerMessage>>>,
-        receivers_ready: Arc<AtomicBool>,
+        monitor: Arc<Mutex<ConnectionMonitor>>,
     ) {
         while let Some(message) = incoming_messages.recv().await {
             debug!("Received message in handle_client_messages for user {}: {:?}", username, message);
             Self::log_message(&username, &message);
 
-            if let ServerMessage::Privmsg(msg) = &message {
-                let websocket_message = WebSocketMessage {
-                    message_type: "twitch_message".to_string(),
-                    message: Some(msg.message_text.clone()),
-                    user_id: Some(msg.sender.id.clone()),
-                    destination: None,
-                    update_data: None,
-                    additional_streams: None,
-                };
-                debug!("Sending message to WebSocket: {:?}", websocket_message);
-                if let Err(e) = websocket_sender.send(websocket_message).await {
-                    error!("Failed to send message to WebSocket: {:?}", e);
-                } else {
-                    debug!("Successfully sent message to WebSocket");
-                }
+            match &message {
+                ServerMessage::Privmsg(msg) => {
+                    let websocket_message = WebSocketMessage {
+                        message_type: "twitch_message".to_string(),
+                        message: Some(msg.message_text.clone()),
+                        user_id: Some(msg.sender.id.clone()),
+                        destination: None,
+                        update_data: None,
+                        additional_streams: None,
+                    };
+                    if let Err(e) = websocket_sender.send(websocket_message).await {
+                        error!("Failed to send message to WebSocket: {:?}", e);
+                    }
+                },
+                ServerMessage::Reconnect(_) => {
+                    warn!("Received reconnect message for user: {}", username);
+                    monitor.lock().await.on_disconnect();
+                },
+                _ => {}
             }
 
-            if receivers_ready.load(Ordering::SeqCst) {
-                if let Err(e) = message_sender.send(message) {
-                    error!("Failed to broadcast message: {:?}", e);
-                } else {
-                    debug!("Successfully broadcasted message");
-                }
-            } else {
-                initial_messages.lock().await.push(message);
-                debug!("Message queued in initial_messages");
+            if let Err(e) = message_sender.send(message) {
+                error!("Failed to broadcast message: {:?}", e);
             }
         }
-        info!("Exiting handle_client_messages for {}", username);
-    }
-
-    pub async fn flush_initial_messages(&self) {
-        self.receivers_ready.store(true, Ordering::SeqCst);
-        let messages = std::mem::take(&mut *self.initial_messages.lock().await);
-        for message in messages {
-            if let Err(e) = self.message_sender.send(message) {
-                error!("Failed to broadcast initial message: {:?}", e);
-            } else {
-                debug!("Successfully broadcasted initial message");
-            }
-        }
-        info!("Flushed all initial messages");
+        warn!("Exiting handle_client_messages for {}", username);
+        monitor.lock().await.on_disconnect();
     }
 
     fn log_message(username: &str, message: &ServerMessage) {

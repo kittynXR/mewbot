@@ -125,8 +125,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let social_links = Arc::new(RwLock::new(config.read().await.social_links.clone()));
 
-    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), social_links.clone()));
-
     let twitch_api = if config.read().await.is_twitch_api_configured() {
         let api_client = TwitchAPIClient::new(config.clone()).await?;
         api_client.authenticate().await?;
@@ -172,16 +170,72 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         }
     };
 
+    let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
+    let user_links = Arc::new(UserLinks::new());
+
+    let discord = if config.read().await.is_discord_configured() {
+        Some(Arc::new(discord::DiscordClient::new(
+            config.clone(),
+            storage.clone(),
+            user_links.clone()
+        ).await?))
+    } else {
+        None
+    };
+
+    let role_cache = Arc::new(RwLock::new(RoleCache::new()));
+
+    let dashboard_state = Arc::new(RwLock::new(DashboardState::new(
+        bot_status.clone(),
+        config.clone(),
+        None, // We'll set this after TwitchIRCManager is created
+        vrchat_osc.clone(),
+        None,
+    )));
+
+    let obs_manager = Arc::new(OBSManager::new(dashboard_state.clone()));
+    dashboard_state.write().await.set_obs_manager(obs_manager.clone());
+
+    // Initialize OBS instances from config
+    let obs_config = config.read().await.obs_manager.clone();
+    if let Err(e) = obs_manager.add_instance("Instance1".to_string(), OBSInstance {
+        name: "Instance1".to_string(),
+        address: obs_config.instance1.ip.clone(),
+        port: obs_config.instance1.port,
+        auth_required: obs_config.instance1.auth_required,
+        password: obs_config.instance1.password.clone(),
+        use_ssl: obs_config.instance1.use_ssl,
+    }).await {
+        warn!("Failed to add OBS Instance1: {}. Continuing without this instance.", e);
+    }
+
+    if obs_config.is_dual_pc_setup {
+        if let Some(instance2) = obs_config.instance2 {
+            if let Err(e) = obs_manager.add_instance("Instance2".to_string(), OBSInstance {
+                name: "Instance2".to_string(),
+                address: instance2.ip.clone(),
+                port: instance2.port,
+                auth_required: instance2.auth_required,
+                password: instance2.password.clone(),
+                use_ssl: instance2.use_ssl,
+            }).await {
+                warn!("Failed to add OBS Instance2: {}. Continuing without this instance.", e);
+            }
+        }
+    }
+
+    // Initialize Twitch IRC Manager
+    let twitch_irc_manager = Arc::new(TwitchIRCManager::new(websocket_tx.clone(), social_links.clone()));
+    dashboard_state.write().await.set_twitch_irc_manager(Some(twitch_irc_manager.clone()));
+
     let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
         ai_client.clone(),
         vrchat_osc.clone(),
         twitch_api.clone().ok_or("Twitch API client not initialized")?,
     )));
 
-    let mut twitch_bot_client = None;
-    let mut twitch_broadcaster_client = None;
-
-    if config.read().await.is_twitch_irc_configured() {
+    // Initialize Twitch IRC clients
+    let (twitch_bot_client, twitch_broadcaster_client) = if config.read().await.is_twitch_irc_configured() {
         info!("Initializing Twitch IRC clients...");
 
         let config_read = config.read().await;
@@ -190,19 +244,22 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         let broadcaster_username = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
         let channel = broadcaster_username.clone();
 
-        twitch_bot_client = Some(Arc::new(TwitchBotClient::new(bot_username.clone(), twitch_irc_manager.clone())));
-
         twitch_irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()], true).await?;
+        let bot_client = Some(Arc::new(TwitchBotClient::new(bot_username.clone(), twitch_irc_manager.clone())));
 
-        if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
+        let broadcaster_client = if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
             twitch_irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token, vec![channel.clone()], false).await?;
-            twitch_broadcaster_client = Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, twitch_irc_manager.clone())));
-        }
+            Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, twitch_irc_manager.clone())))
+        } else {
+            None
+        };
 
         info!("Twitch IRC clients initialized successfully.");
+        (bot_client, broadcaster_client)
     } else {
         warn!("Twitch IRC is not configured. Skipping initialization.");
-    }
+        (None, None)
+    };
 
     let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
 
@@ -223,64 +280,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         return Err("Both Twitch IRC and API clients must be initialized for EventSub".into());
     };
 
-    let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
-    let user_links = Arc::new(UserLinks::new());
-
-    let discord = if config.read().await.is_discord_configured() {
-        Some(Arc::new(discord::DiscordClient::new(
-            config.clone(),
-            storage.clone(),
-            user_links.clone()
-        ).await?))
-    } else {
-        None
-    };
-
-    let role_cache = Arc::new(RwLock::new(RoleCache::new()));
-
-    let dashboard_state = Arc::new(RwLock::new(DashboardState::new(
-        bot_status.clone(),
-        config.clone(),
-        Some(twitch_irc_manager.clone()),
-        vrchat_osc.clone(),
-        None,
-    )));
-
-    let obs_manager = Arc::new(OBSManager::new(dashboard_state.clone()));
-    dashboard_state.write().await.set_obs_manager(obs_manager.clone());
-
-    warn!("adding instance1");
-    // Initialize OBS instances from config
-    let obs_config = config.read().await.obs_manager.clone();
-    if let Err(e) = obs_manager.add_instance("Instance1".to_string(), OBSInstance {
-        name: "Instance1".to_string(),
-        address: obs_config.instance1.ip.clone(),
-        port: obs_config.instance1.port,
-        auth_required: obs_config.instance1.auth_required,
-        password: obs_config.instance1.password.clone(),
-        use_ssl: obs_config.instance1.use_ssl,
-    }).await {
-        warn!("Failed to add OBS Instance1: {}. Continuing without this instance.", e);
-    }
-
-    warn!("adding instance2");
-    if obs_config.is_dual_pc_setup {
-        if let Some(instance2) = obs_config.instance2 {
-            if let Err(e) = obs_manager.add_instance("Instance2".to_string(), OBSInstance {
-                name: "Instance2".to_string(),
-                address: instance2.ip.clone(),
-                port: instance2.port,
-                auth_required: instance2.auth_required,
-                password: instance2.password.clone(),
-                use_ssl: instance2.use_ssl,
-            }).await {
-                warn!("Failed to add OBS Instance2: {}. Continuing without this instance.", e);
-            }
-        }
-    }
-
     let clients = BotClients {
-        twitch_irc_manager: twitch_irc_manager.clone(),
+        twitch_irc_manager,
         twitch_bot_client: twitch_bot_client.ok_or("Twitch bot client not initialized")?,
         twitch_broadcaster_client,
         twitch_api,
@@ -325,7 +326,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.twitch_irc_manager.clone(),
         clients.vrchat_osc.clone(),
         clients.discord.clone(),
-        clients.dashboard_state.clone(), // Pass the shared DashboardState
+        clients.dashboard_state.clone(),
     ));
 
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
@@ -376,7 +377,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             clients.websocket_tx.clone(),
             world_info.clone(),
             clients.vrchat.clone().expect("VRChatClient should be initialized"),
-            clients.ai_client.clone(),  // Add this line to pass the AI client
+            clients.ai_client.clone(),
         ));
 
         let twitch_handler = tokio::spawn({
@@ -437,7 +438,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         }
     });
 
-    // Pass dashboard_state to the VRChat handler
     if let Some(vrchat_client) = &clients.vrchat {
         let current_user_id = vrchat_client.get_current_user_id().await?;
         let auth_cookie = vrchat_client.get_auth_cookie().await;
@@ -464,7 +464,8 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.dashboard_state.write().await.update_vrchat_status(true);
     }
 
-    clients.twitch_irc_manager.flush_initial_messages().await;
+    // Remove the flush_initial_messages call
+    // clients.twitch_irc_manager.flush_initial_messages().await;
 
     info!("Bot is now running. Press Ctrl+C to exit.");
 

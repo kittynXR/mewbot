@@ -7,6 +7,7 @@ pub mod pubsub;
 pub mod redeems;
 pub mod roles;
 pub mod role_cache;
+pub mod connection_monitor;
 
 pub use api::TwitchAPIClient;
 pub use irc::client::TwitchIRCManager;

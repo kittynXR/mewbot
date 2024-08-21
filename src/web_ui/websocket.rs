@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use warp::ws::{Message, WebSocket};
 use futures::{StreamExt, SinkExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
@@ -180,6 +180,11 @@ impl DashboardState {
 
     pub fn set_obs_manager(&mut self, manager: Arc<OBSManager>) {
         self.obs_manager = Some(manager);
+    }
+
+    pub fn set_twitch_irc_manager(&mut self, manager: Option<Arc<TwitchIRCManager>>) {
+        self.twitch_irc_manager = manager.clone();
+        self.twitch_status = manager.is_some();
     }
 
     pub async fn get_twitch_channel(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -499,7 +504,7 @@ pub async fn update_dashboard_state(
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
     let mut last_update: Option<WebSocketMessage> = None;
 
-    warn!("Starting dashboard state update loop");
+    info!("Starting dashboard state update loop");
 
     loop {
         tokio::select! {
@@ -513,7 +518,7 @@ pub async fn update_dashboard_state(
                     let uptime = bot_status.uptime_string();
 
                     debug!("Current VRChat world state (update dashboard): {:?}", state.vrchat_world);
-                    warn!("Bot status: {}, Uptime: {}", status, uptime);
+                    trace!("Bot status: {}, Uptime: {}", status, uptime);
 
                     let recent_messages = match storage.read().await.get_recent_messages(10).await {
                         Ok(messages) => messages,
@@ -541,7 +546,7 @@ pub async fn update_dashboard_state(
                         enabled: None,
                     };
 
-                    warn!("Prepared update data: Discord status: {}, VRChat status: {}, OBS status: {}",
+                    trace!("Prepared update data: Discord status: {}, VRChat status: {}, OBS status: {}",
                           discord_status, state.vrchat_status, state.obs_status);
 
                     WebSocketMessage {
@@ -557,15 +562,14 @@ pub async fn update_dashboard_state(
                 if last_update.as_ref() != Some(&update_message) {
                     let state = state.read().await;
                     warn!("Full WebSocketMessage to be sent: {:?}", update_message);
-                    warn!("Attempting to broadcast new update message");
                     if let Err(e) = state.broadcast_message(update_message.clone()).await {
                         error!("Failed to broadcast update message: {:?}", e);
                     } else {
-                        warn!("Successfully broadcasted update message");
+                        trace!("Successfully broadcasted update message");
                         last_update = Some(update_message);
                     }
                 } else {
-                    warn!("No changes detected, skipping update broadcast");
+                    trace!("No changes detected, skipping update broadcast");
                 }
             }
             _ = &mut shutdown_rx => {
