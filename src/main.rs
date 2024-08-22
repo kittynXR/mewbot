@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let clients = init(Arc::clone(&config)).await?;
 
     // Initialize the RedeemManager with current status
-    clients.redeem_manager.write().await.initialize_with_current_status().await?;
+    clients.twitch_manager.redeem_manager.write().await.initialize_with_current_status().await?;
 
     run(clients, config).await?;
 

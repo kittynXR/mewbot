@@ -11,6 +11,7 @@ use crate::twitch::redeems::RedeemManager;
 use tokio::sync::RwLock;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
+use crate::twitch::TwitchManager;
 
 pub struct ShoutoutCooldown {
     global: Instant,
@@ -30,7 +31,7 @@ fn strip_at_symbol(username: &str) -> &str {
     username.strip_prefix('@').unwrap_or(username)
 }
 
-async fn is_user_moderator(api_client: &TwitchAPIClient, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+async fn is_user_moderator(api_client: Arc<TwitchAPIClient>, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     api_client.is_user_moderator(user_id).await
 }
 
@@ -38,7 +39,7 @@ pub async fn handle_shoutout(
     msg: &PrivmsgMessage,
     client: &Arc<TwitchBotClient>,
     channel: &str,
-    api_client: &Arc<TwitchAPIClient>,
+    twitch_manager: &Arc<TwitchManager>,
     cooldowns: &Arc<Mutex<ShoutoutCooldown>>,
     params: &[&str],
     redeem_manager: &Arc<RwLock<RedeemManager>>,
@@ -50,6 +51,7 @@ pub async fn handle_shoutout(
         return Ok(());
     }
 
+    let twitch_api_client = twitch_manager.get_api_client();
     let target = strip_at_symbol(params[0]);
     debug!("Shoutout target: {}", target);
 
@@ -69,23 +71,39 @@ pub async fn handle_shoutout(
     }
 
     let mut cooldowns = cooldowns.lock().await;
-    let now = Instant::now();
 
-    // Check global cooldown
-    if now.duration_since(cooldowns.global) < Duration::from_secs(120) {
+    let now = Instant::now();
+    let (global_cooldown_passed, user_cooldown_passed) = {
+        let global_passed = now.duration_since(cooldowns.global) >= Duration::from_secs(120);
+        let user_passed = cooldowns.per_user.get(target)
+            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(3600));
+
+        (global_passed, user_passed)
+    };
+
+    // Check cooldowns and send messages if necessary
+    if !global_cooldown_passed {
         let remaining = Duration::from_secs(120) - now.duration_since(cooldowns.global);
         client.send_message(channel, &format!("Shoutout is on global cooldown. Please wait {} seconds.", remaining.as_secs())).await?;
         return Ok(());
     }
 
-    // Check per-user cooldown
-    if let Some(last_use) = cooldowns.per_user.get(target) {
-        if now.duration_since(*last_use) < Duration::from_secs(3600) {
-            let remaining = Duration::from_secs(3600) - now.duration_since(*last_use);
-            client.send_message(channel, &format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target, remaining.as_secs() / 60)).await?;
-            return Ok(());
-        }
+    if !user_cooldown_passed {
+        let user_last_use = cooldowns.per_user.get(target).cloned().unwrap_or(now - Duration::from_secs(3601));
+        let remaining = Duration::from_secs(3600) - now.duration_since(user_last_use);
+        client.send_message(channel, &format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target, remaining.as_secs() / 60)).await?;
+        return Ok(());
     }
+
+    // If cooldowns have passed, update them
+    if global_cooldown_passed && user_cooldown_passed {
+        cooldowns.global = now;
+        cooldowns.per_user.insert(target.to_string(), now);
+    }
+
+    // Continue with the rest of the function...
+
+    // Continue with the rest of the function...
 
     // Check if the stream is live
     let redeem_manager_read = redeem_manager.read().await;
@@ -98,13 +116,13 @@ pub async fn handle_shoutout(
     drop(redeem_manager_read);
 
     // Perform shoutout
-    match api_client.get_user_info(target).await {
+    match twitch_api_client.get_user_info(target).await {
         Ok(user_info) => {
             let to_broadcaster_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
-            let broadcaster_id = api_client.get_broadcaster_id().await?;
+            let broadcaster_id = twitch_api_client.get_broadcaster_id().await?;
 
             // Check if the sender is a moderator
-            let is_mod = is_user_moderator(api_client, &broadcaster_id, &msg.sender.id).await?;
+            let is_mod = is_user_moderator(twitch_api_client, &broadcaster_id, &msg.sender.id).await?;
 
             let moderator_id = if is_mod {
                 msg.sender.id.clone()
@@ -112,7 +130,7 @@ pub async fn handle_shoutout(
                 broadcaster_id.clone() // Use broadcaster ID if the sender is not a mod
             };
 
-            match send_shoutout(api_client, &broadcaster_id, &moderator_id, &to_broadcaster_id).await {
+            match send_shoutout(twitch_manager, &broadcaster_id, &moderator_id, &to_broadcaster_id).await {
                 Ok(_) => {
                     let message = format!("Go check out @{}! They were last streaming something awesome. Give them a follow at https://twitch.tv/{}",
                                           target,

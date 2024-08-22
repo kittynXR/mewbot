@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::config::Config;
-use crate::twitch::TwitchAPIClient;
+use crate::twitch::{TwitchAPIClient, TwitchManager};
 use crate::ai::AIClient;
 use crate::osc::VRChatOSC;
 use futures_util::StreamExt;
@@ -42,7 +42,9 @@ pub struct TwitchEventSubClient {
     ai_client: Option<Arc<AIClient>>,
     osc_client: Option<Arc<VRChatOSC>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
+    twitch_manager: Arc<TwitchManager>,
 }
+
 
 #[derive(Debug)]
 pub struct TwitchEventSubError {
@@ -67,6 +69,7 @@ impl TwitchEventSubClient {
         ai_client: Option<Arc<AIClient>>,
         osc_client: Option<Arc<VRChatOSC>>,
         osc_configs: Arc<RwLock<OSCConfigurations>>,
+        twitch_manager: Arc<TwitchManager>,
     ) -> Self {
         Self {
             config,
@@ -80,6 +83,7 @@ impl TwitchEventSubClient {
             ai_client,
             osc_client,
             osc_configs,
+            twitch_manager,
         }
     }
 
@@ -233,7 +237,8 @@ impl TwitchEventSubClient {
             &self.irc_client,
             &self.channel,
             &self.api_client,
-            self
+            self,
+            &self.twitch_manager,
         ).await?;
 
         Ok(())

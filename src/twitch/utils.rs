@@ -1,9 +1,10 @@
+use std::sync::Arc;
 use chrono::{DateTime, Utc, Duration};
 use log::{debug, error};
 use crate::twitch::TwitchAPIClient;
 use serde_json::Value;
 
-pub async fn get_stream_uptime(channel: &str, api_client: &TwitchAPIClient) -> Result<Option<Duration>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_stream_uptime(channel: &str, api_client: Arc<TwitchAPIClient>) -> Result<Option<Duration>, Box<dyn std::error::Error + Send + Sync>> {
     debug!("Attempting to get stream uptime for channel: {}", channel);
 
     let access_token = match api_client.get_token().await {

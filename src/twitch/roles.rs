@@ -1,14 +1,8 @@
-use crate::storage::{ChatterData, StorageClient};
-use crate::twitch::api::TwitchAPIClient;
-use chrono::Utc;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
 use std::fmt;
 use std::str::FromStr;
-use crate::twitch::role_cache::RoleCache;
 use std::cmp::Ordering;
 use log::{debug, error};
+use crate::twitch::manager::TwitchManager;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserRole {
@@ -82,43 +76,32 @@ impl FromStr for UserRole {
 
 pub async fn get_user_role(
     user_id: &str,
-    channel_id: &str,
-    api_client: &Arc<TwitchAPIClient>,
-    storage: &Arc<RwLock<StorageClient>>,
-    role_cache: &Arc<RwLock<RoleCache>>,
+    twitch_manager: &TwitchManager,
 ) -> Result<UserRole, Box<dyn std::error::Error + Send + Sync>> {
     debug!("Getting user role for user_id: {}", user_id);
 
-    // Check the cache first
-    if let Some(role) = role_cache.read().await.get_role(user_id) {
-        debug!("Role found in cache: {:?}", role);
-        return Ok(role);
+    // Get user from TwitchManager
+    let user = twitch_manager.user_manager.get_user(user_id).await?;
+
+    // If the user has a role, return it
+    if user.role != UserRole::Viewer {
+        debug!("Role found for user: {:?}", user.role);
+        return Ok(user.role);
     }
 
-    debug!("Role not found in cache, checking database");
+    debug!("No specific role found, checking with Twitch API");
 
-    // If not in cache, check the database
-    let storage_read = storage.read().await;
-    if let Some(chatter_data) = storage_read.get_chatter_data(user_id)? {
-        let role = chatter_data.role;
-        debug!("Role found in database: {:?}", role);
-        drop(storage_read);
-        role_cache.write().await.set_role(user_id.to_string(), role.clone());
-        return Ok(role);
-    }
-    drop(storage_read);
+    // If the user doesn't have a specific role, check with the Twitch API
+    let channel_id = twitch_manager.api_client.get_broadcaster_id().await?;
 
-    debug!("Role not found in database, fetching from API");
-
-    // If not in database, fetch from API
     let role = if user_id == channel_id {
         UserRole::Broadcaster
     } else {
-        match api_client.check_user_mod(channel_id, user_id).await {
+        match twitch_manager.api_client.check_user_mod(&channel_id, user_id).await {
             Ok(true) => UserRole::Moderator,
-            Ok(false) => match api_client.check_user_vip(channel_id, user_id).await {
+            Ok(false) => match twitch_manager.api_client.check_user_vip(&channel_id, user_id).await {
                 Ok(true) => UserRole::VIP,
-                Ok(false) => match api_client.check_user_subscription(channel_id, user_id).await {
+                Ok(false) => match twitch_manager.api_client.check_user_subscription(&channel_id, user_id).await {
                     Ok(true) => UserRole::Subscriber,
                     Ok(false) => UserRole::Viewer,
                     Err(e) => {
@@ -140,21 +123,12 @@ pub async fn get_user_role(
 
     debug!("Role fetched from API: {:?}", role);
 
-    // Update the database and cache
-    {
-        let mut storage_write = storage.write().await;
-        let mut chatter_data = ChatterData::new(user_id.to_string(), user_id.to_string());
-        chatter_data.role = role.clone();
-        chatter_data.last_seen = Utc::now();
-        if let Err(e) = storage_write.upsert_chatter(&chatter_data) {
-            error!("Error upserting chatter data: {:?}", e);
-        } else {
-            debug!("Chatter data updated in database");
-        }
+    // Update the user's role in the TwitchManager
+    if let Err(e) = twitch_manager.user_manager.update_user_role(user_id, role.clone()).await {
+        error!("Error updating user role: {:?}", e);
+    } else {
+        debug!("User role updated in TwitchManager");
     }
-
-    role_cache.write().await.set_role(user_id.to_string(), role.clone());
-    debug!("Role updated in cache");
 
     Ok(role)
 }

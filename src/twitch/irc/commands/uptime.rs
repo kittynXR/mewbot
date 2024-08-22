@@ -7,18 +7,19 @@ use tokio::sync::RwLock;
 use twitch_irc::message::PrivmsgMessage;
 use crate::discord::UserLinks;
 use crate::storage::StorageClient;
+use crate::twitch::TwitchManager;
 
 pub async fn handle_uptime(
     msg: &PrivmsgMessage,
     client: &Arc<TwitchBotClient>,
     channel: &str,
-    api_client: &Arc<TwitchAPIClient>,
+    twitch_manager: &Arc<TwitchManager>,
     _storage: &Arc<RwLock<StorageClient>>,
     _user_links: &Arc<UserLinks>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     warn!("Starting handle_uptime for channel: {}", channel);
 
-    match get_stream_uptime(channel, api_client).await {
+    match get_stream_uptime(channel, twitch_manager.get_api_client()).await {
         Ok(uptime) => {
             let response = match uptime {
                 Some(duration) => format!(

@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use crate::twitch::api::TwitchAPIClient;
 
 pub async fn send_announcement(
-    api_client: &TwitchAPIClient,
+    api_client: Arc<TwitchAPIClient>,
     broadcaster_id: &str,
     moderator_id: &str,
     message: &str,

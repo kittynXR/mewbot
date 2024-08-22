@@ -7,12 +7,13 @@ use crate::ai::AIClient;
 use twitch_irc::message::PrivmsgMessage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::twitch::TwitchManager;
 
 pub async fn handle_discord(
     msg: &PrivmsgMessage,
     client: &Arc<TwitchBotClient>,
     channel: &str,
-    api_client: &Arc<TwitchAPIClient>,
+    twitch_manager: &Arc<TwitchManager>,
     _storage: &Arc<RwLock<StorageClient>>,
     _user_links: &Arc<UserLinks>,
     ai_client: &Option<Arc<AIClient>>,
@@ -26,6 +27,7 @@ pub async fn handle_discord(
     // Send a message in the chat
     // client.send_message(channel, &discord_message).await?;
 
+    let api_client = twitch_manager.get_api_client();
     // Send an announcement
     let broadcaster_id = api_client.get_broadcaster_id().await?;
     let bot_id = api_client.get_bot_id().await?;

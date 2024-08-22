@@ -9,6 +9,7 @@ use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
 use log::debug;
 use crate::twitch::api::TwitchAPIClient;
+use crate::twitch::manager::TwitchManager;
 
 pub async fn handle_message(
     message: &str,
@@ -16,6 +17,7 @@ pub async fn handle_message(
     channel: &str,
     api_client: &Arc<TwitchAPIClient>,
     eventsub_client: &TwitchEventSubClient,
+    twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     debug!("Received EventSub message: {}", message);
     let parsed: Value = serde_json::from_str(message)?;
@@ -27,8 +29,8 @@ pub async fn handle_message(
             "channel.raid" => channel_raid::handle(&parsed, irc_client, channel, api_client).await?,
             "channel.shoutout.create" => events::shoutout::handle_shoutout_create(&parsed, irc_client, channel).await?,
             "channel.shoutout.receive" => events::shoutout::handle_shoutout_receive(&parsed, irc_client, channel).await?,
-            "stream.online" => stream_online::handle(&parsed, irc_client, channel, &eventsub_client.redeem_manager).await?,
-            "stream.offline" => stream_offline::handle(&parsed, irc_client, channel, &eventsub_client.redeem_manager).await?,
+            "stream.online" => stream_online::handle(&parsed, irc_client, channel, twitch_manager).await?,
+            "stream.offline" => stream_offline::handle(&parsed, irc_client, channel, twitch_manager).await?,
             "channel.subscribe" => channel_subscribe::handle(&parsed, irc_client, channel).await?,
             "channel.subscription.message" => channel_subscription_message::handle(&parsed, irc_client, channel).await?,
             "channel.subscription.gift" => channel_subscription_gift::handle(&parsed, irc_client, channel).await?,
