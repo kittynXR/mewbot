@@ -18,6 +18,7 @@ pub struct VRChatClient {
     auth_cookie: Arc<RwLock<String>>,
     config: Arc<RwLock<Config>>,
     current_user_id: Arc<RwLock<Option<String>>>,
+    current_world: Arc<RwLock<Option<World>>>,
     websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
 }
 
@@ -48,14 +49,12 @@ impl VRChatClient {
             auth_cookie: Arc::new(RwLock::new(auth_cookie)),
             config,
             current_user_id: Arc::new(RwLock::new(None)),
+            current_world: Arc::new(RwLock::new(None)),
             websocket_tx,
         })
     }
 
     pub async fn is_online(&self) -> bool {
-        // Implement the logic to check if VRChat is online
-        // This could be based on the last received world update or a separate status field
-        // For now, we'll assume it's online if we have a current user ID
         self.current_user_id.read().await.is_some()
     }
 
@@ -217,55 +216,45 @@ impl VRChatClient {
 
 impl VRChatClient
 {
-    pub async fn get_current_world(&self) -> Result<World, VRChatError> {
-        // Placeholder implementation
-        Ok(World {
-            id: "wrld_12345".to_string(),
-            name: "Placeholder World".to_string(),
-            author_name: "Placeholder Author".to_string(),
-            capacity: 32,
-            description: "This is a placeholder world description.".to_string(),
-            release_status: "public".to_string(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
-    }
+    pub async fn update_current_world(&self, world: World) -> Result<(), VRChatError> {
+        // Store the new world information
+        *self.current_world.write().await = Some(world.clone());
 
-    pub async fn get_friends(&self) -> Result<Vec<Friend>, VRChatError> {
-        // Placeholder implementation
-        Ok(vec![
-            Friend {
-                id: "usr_12345".to_string(),
-                username: "PlaceholderFriend1".to_string(),
-                display_name: "Placeholder Friend 1".to_string(),
-                status: "online".to_string(),
-                location: "wrld_12345".to_string(),
-            },
-            Friend {
-                id: "usr_67890".to_string(),
-                username: "PlaceholderFriend2".to_string(),
-                display_name: "Placeholder Friend 2".to_string(),
-                status: "offline".to_string(),
-                location: "offline".to_string(),
-            },
-        ])
-    }
+        // Send the updated world information to the frontend via WebSocket
+        let message = WebSocketMessage {
+            module: "vrchat".to_string(),
+            action: "world_update".to_string(),
+            data: serde_json::to_value(world.clone()).map_err(|e| VRChatError(format!("Failed to serialize world data: {}", e)))?,
+        };
+        self.websocket_tx.send(message)
+            .map_err(|e| VRChatError(format!("Failed to send world update via WebSocket: {}", e)))?;
 
-    pub async fn join_world(&self, world_id: &str) -> Result<(), VRChatError> {
-        // Placeholder implementation
-        info!("Attempting to join world: {}", world_id);
-        // In a real implementation, you would send a request to VRChat API to join the world
-        // For now, we'll just simulate a successful join
+        info!("Current world updated and sent to frontend: {:?}", world);
         Ok(())
     }
 
+    pub async fn get_current_world(&self) -> Result<World, VRChatError> {
+        self.current_world.read().await
+            .clone()
+            .ok_or_else(|| VRChatError("No current world data available".to_string()))
+    }
+
+    pub async fn get_friends(&self) -> Result<Vec<Friend>, VRChatError> {
+        // Implement actual friend fetching logic here
+        Err(VRChatError("Friend fetching not implemented yet".to_string()))
+    }
+
+    pub async fn join_world(&self, world_id: &str) -> Result<(), VRChatError> {
+        info!("Attempting to join world: {}", world_id);
+        // Implement actual world joining logic here
+        Err(VRChatError("World joining not implemented yet".to_string()))
+    }
+
     pub async fn get_status(&self) -> Result<VRChatStatus, VRChatError> {
-        // Placeholder implementation
         Ok(VRChatStatus {
             online: self.is_online().await,
             current_world: self.get_current_world().await.ok(),
-            friend_count: 2,
+            friend_count: self.get_friends().await.map(|f| f.len()).unwrap_or(0),
         })
     }
-
 }

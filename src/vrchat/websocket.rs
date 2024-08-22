@@ -20,7 +20,6 @@ pub async fn handler(
     vrchat_manager: Arc<VRChatManager>,
     dashboard_state: Arc<RwLock<DashboardState>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // let vrchat_client = &vrchat_manager.client;
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(64);
 
@@ -34,6 +33,11 @@ pub async fn handler(
                     match message {
                         Ok(TungsteniteMessage::Text(msg)) => {
                             if let Ok(Some(new_world)) = extract_user_location_info(&msg, &current_user_id) {
+                                // Update the VRChatManager with the new world information
+                                if let Err(e) = vrchat_manager.update_current_world(new_world.clone()).await {
+                                    error!("Failed to update VRChatManager with new world: {}", e);
+                                }
+
                                 let mut dashboard = dashboard_state.write().await;
                                 dashboard.update_vrchat_world(Some(new_world.clone()));
                                 info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);

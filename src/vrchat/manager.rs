@@ -52,6 +52,11 @@ impl VRChatManager {
         }
     }
 
+    pub async fn update_current_world(&self, world: World) -> Result<(), VRChatError> {
+        self.vrchat_client.update_current_world(world).await;
+        Ok(())
+    }
+
     pub async fn disconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.vrchat_client.disconnect().await
     }

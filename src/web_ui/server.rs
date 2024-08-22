@@ -166,8 +166,6 @@ impl WebUI {
         info!("Web UI server has shut down.");
         Ok(())
     }
-
-
 }
 
 async fn handle_ws_connection(
@@ -183,6 +181,8 @@ async fn handle_ws_connection(
     while let Some(result) = ws_recv.next().await {
         match result {
             Ok(msg) => {
+                warn!("received websocket text {:?}", msg.to_str());
+
                 if let Ok(text) = msg.to_str() {
                     if let Ok(ws_msg) = serde_json::from_str::<WebSocketMessage>(text) {
                         handle_websocket(ws_msg, dashboard_state.clone(), storage.clone(), obs_manager.clone(), twitch_irc_manager.clone(), vrchat_manager.clone()).await;

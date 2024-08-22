@@ -33,7 +33,7 @@ const OBSControl = () => {
 
     useEffect(() => {
         if (isConnected) {
-            sendMessage({ type: 'get_obs_info' });
+            sendMessage({ type: 'obs' });
         }
     }, [isConnected, sendMessage]);
 

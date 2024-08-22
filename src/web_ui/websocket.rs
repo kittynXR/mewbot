@@ -3,7 +3,7 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use futures_util::{SinkExt, StreamExt};
 use warp::ws::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, to_string, Value};
 use log::{error, info, debug, warn};
 use tokio::sync::broadcast::error::SendError;
 use crate::storage::StorageClient;
@@ -139,10 +139,9 @@ pub async fn handle_websocket(
     twitch_irc_manager: Arc<TwitchIRCManager>,
     vrchat_manager: Arc<VRChatManager>,
 ) {
-    // Remove the WebSocket splitting logic
-    // let (mut ws_tx, mut ws_rx) = ws.split();
-
-    // Instead, handle the WebSocketMessage directly
+    warn!("received websocket [action] {:?}", msg.action);
+    warn!("received websocket [module] {:?}", msg.module);
+    warn!("received websocket [data] {:?}", to_string(&msg.data));
     match msg.module.as_str() {
         "obs" => {
             if let Err(e) = obs_manager.handle_message(msg).await {
