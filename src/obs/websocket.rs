@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::{mpsc, RwLock, oneshot, Mutex};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn, debug, trace};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,14 @@ use crate::obs::{OBSClientState, OBSInstanceState, OBSManager, OBSWebSocketClien
 
 pub const TIMEOUT_DURATION: Duration = Duration::from_millis(1000);
 pub const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(10);
+const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct OBSResponse {
@@ -47,145 +56,206 @@ impl OBSWebSocketClient {
             instance,
             state: Arc::new(RwLock::new(OBSClientState {
                 connection: None,
+                connection_state: ConnectionState::Disconnected,
             })),
             response_channels: Arc::new(RwLock::new(HashMap::new())),
+            connection_task: Arc::new(Mutex::new(None)),
+            should_reconnect: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    pub fn connect(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + '_>> {
-        Box::pin(async move {
-            let mut retry_delay = Duration::from_millis(100);
-            loop {
-                info!("Attempting to connect to OBS instance: {}", self.instance.address);
-                match timeout(Duration::from_secs(30), self.attempt_connect()).await {
-                    Ok(result) => {
-                        match result {
-                            Ok(_) => {
-                                info!("Successfully connected to OBS instance: {}", self.instance.address);
-                                return Ok(());
-                            }
-                            Err(e) => {
-                                error!("Failed to connect to OBS instance {}: {}. Retrying in {:?}...", self.instance.address, e, retry_delay);
-                            }
+    pub async fn connect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut connection_task = self.connection_task.lock().await;
+        if connection_task.is_some() {
+            return Ok(()); // Connection task is already running
+        }
+
+        self.should_reconnect.store(true, Ordering::SeqCst);
+        let client = self.clone();
+        *connection_task = Some(tokio::spawn(async move {
+            client.connection_manager().await;
+        }));
+
+        Ok(())
+    }
+
+    async fn connection_manager(&self) {
+        let mut retry_delay = Duration::from_millis(100);
+        let mut attempt = 0;
+
+        while self.should_reconnect.load(Ordering::SeqCst) {
+            {
+                let state = self.state.read().await;
+                if state.connection_state == ConnectionState::Connected {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            }
+
+            {
+                let mut state = self.state.write().await;
+                state.connection_state = ConnectionState::Connecting;
+            }
+
+            info!("Attempting to connect to OBS instance: {}", self.instance.address);
+            match timeout(Duration::from_secs(30), self.attempt_connect()).await {
+                Ok(result) => {
+                    match result {
+                        Ok(_) => {
+                            info!("Successfully connected to OBS instance: {}", self.instance.address);
+                            self.state.write().await.connection_state = ConnectionState::Connected;
+                            attempt = 0;
+                            retry_delay = Duration::from_millis(100);
+                        }
+                        Err(e) => {
+                            error!("Failed to connect to OBS instance {}: {}. Retrying in {:?}...", self.instance.address, e, retry_delay);
+                            self.state.write().await.connection_state = ConnectionState::Disconnected;
                         }
                     }
-                    Err(_) => {
-                        error!("Connection attempt to OBS instance {} timed out. Retrying in {:?}...", self.instance.address, retry_delay);
-                    }
                 }
+                Err(_) => {
+                    error!("Connection attempt to OBS instance {} timed out. Retrying in {:?}...", self.instance.address, retry_delay);
+                    self.state.write().await.connection_state = ConnectionState::Disconnected;
+                }
+            }
+
+            if self.state.read().await.connection_state != ConnectionState::Connected {
+                attempt += 1;
+                if attempt >= MAX_RECONNECT_ATTEMPTS {
+                    error!("Max reconnection attempts reached for OBS instance: {}", self.instance.address);
+                    break;
+                }
+
                 tokio::time::sleep(retry_delay).await;
                 retry_delay = std::cmp::min(retry_delay * 2, MAX_RECONNECT_DELAY);
             }
-        })
+        }
     }
 
-    async fn attempt_connect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Starting connection attempt to OBS instance: {}", self.instance.address);
-        let scheme = if self.instance.use_ssl { "wss" } else { "ws" };
-        let url = format!("{}://{}:{}", scheme, self.instance.address, self.instance.port);
-        let uri: Uri = url.parse()?;
-        let request = uri.into_client_request()?;
-
-        let connector = if self.instance.use_ssl {
-            Some(Connector::NativeTls(TlsConnector::builder().build()?))
-        } else {
-            None
-        };
-
-        let (ws_stream, _) = connect_async_with_config(
-            request,
-            None,
-            self.instance.use_ssl
-        ).await?;
-
-        let (write, read) = ws_stream.split();
-
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        // Spawn the write loop
-        self.spawn_write_loop(write, rx, self.instance.name.clone());
+    pub async fn disconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.should_reconnect.store(false, Ordering::SeqCst);
+        let mut connection_task = self.connection_task.lock().await;
+        if let Some(task) = connection_task.take() {
+            task.abort();
+        }
 
         let mut state = self.state.write().await;
-        state.connection = Some(tx.clone());
-        drop(state);  // Release the write lock
+        if let Some(tx) = state.connection.take() {
+            drop(tx); // This should close the channel and stop the write loop
+        }
+        state.connection_state = ConnectionState::Disconnected;
+        Ok(())
+    }
 
-        let client_clone = self.clone();
-        tokio::spawn(async move {
-            client_clone.handle_incoming_messages(read).await;
-        });
+    pub fn attempt_connect(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Starting connection attempt to OBS instance: {}", self.instance.address);
+            let scheme = if self.instance.use_ssl { "wss" } else { "ws" };
+            let url = format!("{}://{}:{}", scheme, self.instance.address, self.instance.port);
+            let uri: Uri = url.parse()?;
+            let request = uri.into_client_request()?;
 
-        info!("WebSocket connection established. Waiting for Hello message...");
-        let hello_message = match tokio::time::timeout(Duration::from_secs(10), self.wait_for_hello()).await {
-            Ok(result) => match result {
-                Ok(msg) => msg,
-                Err(e) => {
-                    error!("Error while waiting for Hello message: {:?}", e);
-                    return Err(e);
-                }
-            },
-            Err(_) => {
-                error!("Timeout while waiting for Hello message");
-                return Err("Timeout while waiting for Hello message".into());
-            }
-        };
-        info!("Received Hello message: {:?}", hello_message);
-
-        // Handle authentication if required
-        if let Some(auth_info) = hello_message.authentication {
-            if self.instance.auth_required {
-                info!("Authentication required. Attempting to authenticate...");
-                self.authenticate(&auth_info).await?;
-                info!("Authentication successful.");
+            let connector = if self.instance.use_ssl {
+                Some(Connector::NativeTls(TlsConnector::builder().build()?))
             } else {
-                warn!("Server requires authentication, but auth_required is set to false for this instance.");
-            }
-        } else if self.instance.auth_required {
-            warn!("Instance is configured to require authentication, but server does not require it.");
-        }
+                None
+            };
 
-        info!("Sending Identify message...");
-        let identify_payload = json!({
-        "op": 1,
-        "d": {
-            "rpcVersion": 1,
-            "authentication": 0,
-            "eventSubscriptions": 33
-        }
-    });
-        debug!("Identify payload: {:?}", identify_payload);
+            let (ws_stream, _) = connect_async_with_config(
+                request,
+                None,
+                self.instance.use_ssl
+            ).await?;
 
-        match self.send_message(identify_payload.clone()).await {
-            Ok(_) => info!("Identify message sent successfully."),
-            Err(e) => {
-                error!("Failed to send Identify message: {}", e);
-                return Err(e.into());
-            }
-        }
+            let (write, read) = ws_stream.split();
 
-        info!("Waiting for Identified message...");
-        let (tx, rx) = oneshot::channel();
-        self.response_channels.write().await.insert("identify".to_string(), tx);
+            let (tx, rx) = mpsc::unbounded_channel();
 
-        let timeout_duration = Duration::from_secs(5);
-        match timeout(timeout_duration, rx).await {
-            Ok(result) => {
-                match result {
-                    Ok(response) => {
-                        info!("Received Identified message: {:?}", response);
-                        info!("Connection process complete.");
-                        Ok(())
-                    },
+            // Spawn the write loop
+            self.spawn_write_loop(write, rx, self.instance.name.clone());
+
+            let mut state = self.state.write().await;
+            state.connection = Some(tx.clone());
+            drop(state);  // Release the write lock
+
+            let client_clone = self.clone();
+            tokio::spawn(async move {
+                client_clone.handle_incoming_messages(read).await;
+            });
+
+            info!("WebSocket connection established. Waiting for Hello message...");
+            let hello_message = match tokio::time::timeout(Duration::from_secs(10), self.wait_for_hello()).await {
+                Ok(result) => match result {
+                    Ok(msg) => msg,
                     Err(e) => {
-                        error!("Error receiving Identified message: {}", e);
-                        Err("Failed to receive Identified message".into())
+                        error!("Error while waiting for Hello message: {:?}", e);
+                        return Err(e);
                     }
+                },
+                Err(_) => {
+                    error!("Timeout while waiting for Hello message");
+                    return Err("Timeout while waiting for Hello message".into());
                 }
-            },
-            Err(_) => {
-                error!("Timeout waiting for Identified message");
-                Err("Timeout waiting for Identified message".into())
+            };
+            info!("Received Hello message: {:?}", hello_message);
+
+            // Handle authentication if required
+            if let Some(auth_info) = hello_message.authentication {
+                if self.instance.auth_required {
+                    info!("Authentication required. Attempting to authenticate...");
+                    self.authenticate(&auth_info).await?;
+                    info!("Authentication successful.");
+                } else {
+                    warn!("Server requires authentication, but auth_required is set to false for this instance.");
+                }
+            } else if self.instance.auth_required {
+                warn!("Instance is configured to require authentication, but server does not require it.");
             }
-        }
+
+            info!("Sending Identify message...");
+            let identify_payload = json!({
+                "op": 1,
+                "d": {
+                    "rpcVersion": 1,
+                    "authentication": 0,
+                    "eventSubscriptions": 33
+                }
+            });
+            debug!("Identify payload: {:?}", identify_payload);
+
+            match self.send_message(identify_payload.clone()).await {
+                Ok(_) => info!("Identify message sent successfully."),
+                Err(e) => {
+                    error!("Failed to send Identify message: {}", e);
+                    return Err(e.into());
+                }
+            }
+
+            info!("Waiting for Identified message...");
+            let (tx, rx) = oneshot::channel();
+            self.response_channels.write().await.insert("identify".to_string(), tx);
+
+            let timeout_duration = Duration::from_secs(5);
+            match timeout(timeout_duration, rx).await {
+                Ok(result) => {
+                    match result {
+                        Ok(response) => {
+                            info!("Received Identified message: {:?}", response);
+                            info!("Connection process complete.");
+                            Ok(())
+                        },
+                        Err(e) => {
+                            error!("Error receiving Identified message: {}", e);
+                            Err("Failed to receive Identified message".into())
+                        }
+                    }
+                },
+                Err(_) => {
+                    error!("Timeout waiting for Identified message");
+                    Err("Timeout waiting for Identified message".into())
+                }
+            }
+        })
     }
 
     async fn handle_incoming_messages(&self, mut read: impl StreamExt<Item = Result<tungstenite::Message, tokio_tungstenite::tungstenite::Error>> + Unpin + Send + 'static) {
@@ -510,6 +580,8 @@ impl Clone for OBSWebSocketClient {
             instance: self.instance.clone(),
             state: Arc::clone(&self.state),
             response_channels: Arc::clone(&self.response_channels),
+            connection_task: Arc::clone(&self.connection_task),
+            should_reconnect: Arc::clone(&self.should_reconnect),
         }
     }
 }

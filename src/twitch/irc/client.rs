@@ -8,8 +8,9 @@ use twitch_irc::ClientConfig;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::message::{ServerMessage, ClearChatAction};
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
-use crate::config::SocialLinks;
+use crate::config::{Config, SocialLinks};
 use crate::twitch::connection_monitor::ConnectionMonitor;
+use crate::twitch::TwitchManager;
 
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
@@ -24,6 +25,7 @@ pub struct TwitchIRCManager {
     websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
     social_links: Arc<RwLock<SocialLinks>>,
     dashboard_state: Arc<RwLock<DashboardState>>,
+    config: Arc<Config>,
 }
 
 impl TwitchIRCManager {
@@ -31,6 +33,7 @@ impl TwitchIRCManager {
         websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
         social_links: Arc<RwLock<SocialLinks>>,
         dashboard_state: Arc<RwLock<DashboardState>>,
+        config: Arc<Config>,
     ) -> Self {
         let (message_sender, _) = broadcast::channel(1000);
         TwitchIRCManager {
@@ -39,6 +42,7 @@ impl TwitchIRCManager {
             websocket_sender,
             social_links,
             dashboard_state,
+            config,
         }
     }
 
@@ -70,8 +74,7 @@ impl TwitchIRCManager {
         };
 
         self.clients.write().await.insert(username.clone(), irc_client);
-
-        if handle_messages {
+        if handle_messages && username == *self.config.twitch_bot_username.as_ref().unwrap() {
             let message_sender = self.message_sender.clone();
             let websocket_sender = self.websocket_sender.clone();
             let username_clone = username.clone();

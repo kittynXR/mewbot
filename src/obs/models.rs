@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tungstenite::Message;
 use async_trait::async_trait;
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 use serde_json::{json, Value};
-
+use crate::obs::websocket::ConnectionState;
 
 #[async_trait]
 pub trait OBSStateUpdate: Send + Sync {
@@ -42,11 +43,15 @@ pub struct OBSSceneItem {
 pub struct OBSWebSocketClient {
     pub instance: OBSInstance,
     pub state: Arc<RwLock<OBSClientState>>,
-    pub response_channels: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>>,
+    pub response_channels: Arc<RwLock<HashMap<String, oneshot::Sender<serde_json::Value>>>>,
+    pub(crate) connection_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    pub(crate) should_reconnect: Arc<AtomicBool>,
 }
+
 
 pub struct OBSClientState {
     pub connection: Option<mpsc::UnboundedSender<Message>>,
+    pub connection_state: ConnectionState,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -162,8 +167,21 @@ impl OBSManager {
 
     pub async fn add_instance(&self, name: String, instance: OBSInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let client = OBSWebSocketClient::new(instance);
-        client.connect().await?;
-        self.clients.write().await.insert(name, client);
+        self.clients.write().await.insert(name.clone(), client.clone());
+        if let Err(e) = client.connect().await {
+            error!("Failed to start connection manager for OBS instance {}: {}", name, e);
+            self.clients.write().await.remove(&name);
+            return Err(e);
+        }
+        self.get_info().await?;
+        Ok(())
+    }
+
+    pub async fn remove_instance(&self, name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut clients = self.clients.write().await;
+        if let Some(client) = clients.remove(name) {
+            client.disconnect().await?;
+        }
         self.get_info().await?;
         Ok(())
     }

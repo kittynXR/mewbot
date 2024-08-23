@@ -184,6 +184,7 @@ impl TwitchManager {
             websocket_tx.clone(),
             Arc::new(RwLock::new(social_links)),
             dashboard_state.clone(),
+            config.clone(),
         ));
 
         let (bot_client, broadcaster_client) = Self::initialize_irc_clients(&config, &irc_manager).await?;
