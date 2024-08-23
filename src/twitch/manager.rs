@@ -249,7 +249,7 @@ impl TwitchManager {
         irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()], true).await?;
         let bot_client = Arc::new(TwitchBotClient::new(bot_username.clone(), irc_manager.clone()));
 
-        let broadcaster_client = if let Some(broadcaster_oauth_token) = &config.twitch_access_token {
+        let broadcaster_client = if let Some(broadcaster_oauth_token) = &config.twitch_broadcaster_oauth_token {
             irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token.clone(), vec![channel.clone()], false).await?;
             Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username.clone(), irc_manager.clone())))
         } else {

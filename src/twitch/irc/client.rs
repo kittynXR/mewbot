@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 use log::{debug, error, info, warn};
 use tokio::sync::{RwLock, mpsc, broadcast, Mutex};
+use tokio::time::sleep;
 use twitch_irc::login::StaticLoginCredentials;
 use twitch_irc::TwitchIRCClient as TwitchIRC;
 use twitch_irc::ClientConfig;
@@ -14,9 +17,178 @@ use crate::twitch::TwitchManager;
 
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
 
+use twitch_irc::TwitchIRCClient;
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionState {
+    Connected,
+    Disconnected,
+    Reconnecting,
+}
+
+#[derive(Clone)]
 pub struct IRCClient {
     pub client: Arc<TwitchIRCClientType>,
     pub monitor: Arc<Mutex<ConnectionMonitor>>,
+    pub state: Arc<RwLock<ConnectionState>>,
+    reconnect_attempts: Arc<AtomicU32>,
+    channels: Arc<RwLock<Vec<String>>>,
+}
+
+impl IRCClient {
+    pub fn new(client: Arc<TwitchIRCClientType>, channels: Vec<String>) -> Self {
+        Self {
+            client,
+            monitor: Arc::new(Mutex::new(ConnectionMonitor::new())),
+            state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            reconnect_attempts: Arc::new(AtomicU32::new(0)),
+            channels: Arc::new(RwLock::new(channels)),
+        }
+    }
+
+    pub async fn connect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Attempting to connect to Twitch IRC");
+        let mut state = self.state.write().await;
+        if *state == ConnectionState::Connected {
+            debug!("Already connected to Twitch IRC");
+            return Ok(());
+        }
+
+        *state = ConnectionState::Connected;
+        drop(state);
+
+        // Perform the connection
+        for channel in self.channels.read().await.iter() {
+            match self.client.join(channel.clone()) {
+                Ok(_) => info!("Successfully joined channel: {}", channel),
+                Err(e) => {
+                    error!("Failed to join channel {}: {:?}", channel, e);
+                    return Err(Box::new(e));
+                }
+            }
+        }
+
+        self.monitor.lock().await.on_connect();
+        self.reconnect_attempts.store(0, Ordering::SeqCst);
+        info!("Successfully connected to Twitch IRC");
+        Ok(())
+    }
+
+    pub async fn disconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Disconnecting from Twitch IRC");
+        let mut state = self.state.write().await;
+        if *state == ConnectionState::Disconnected {
+            debug!("Already disconnected from Twitch IRC");
+            return Ok(());
+        }
+
+        *state = ConnectionState::Disconnected;
+        drop(state);
+
+        // Perform the disconnection
+        for channel in self.channels.read().await.iter() {
+            self.client.part(channel.clone());
+            info!("Left channel: {}", channel);
+        }
+
+        self.monitor.lock().await.on_disconnect();
+        info!("Successfully disconnected from Twitch IRC");
+        Ok(())
+    }
+
+    pub async fn reconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+        let mut attempts = 0;
+
+        while attempts < MAX_RECONNECT_ATTEMPTS {
+            attempts += 1;
+            let backoff_duration = Duration::from_secs(2u64.pow(attempts.min(6)));
+
+            warn!("Attempting to reconnect to Twitch IRC in {} seconds (attempt {}/{})",
+                  backoff_duration.as_secs(), attempts, MAX_RECONNECT_ATTEMPTS);
+            sleep(backoff_duration).await;
+
+            *self.state.write().await = ConnectionState::Reconnecting;
+
+            if let Err(e) = self.disconnect().await {
+                error!("Error during disconnect phase of reconnection: {:?}", e);
+                // Continue with reconnection attempt even if disconnect fails
+            }
+
+            match self.connect().await {
+                Ok(_) => {
+                    info!("Successfully reconnected to Twitch IRC");
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("Failed to reconnect to Twitch IRC: {:?}", e);
+                }
+            }
+        }
+
+        error!("Failed to reconnect after {} attempts", MAX_RECONNECT_ATTEMPTS);
+        *self.state.write().await = ConnectionState::Disconnected;
+        Err("Max reconnection attempts reached".into())
+    }
+
+    pub async fn add_channel(&self, channel: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Adding channel: {}", channel);
+        let mut channels = self.channels.write().await;
+        if channels.contains(&channel) {
+            debug!("Channel {} is already in the list", channel);
+            return Ok(());
+        }
+
+        match self.client.join(channel.clone()) {
+            Ok(_) => {
+                channels.push(channel.clone());
+                info!("Successfully added and joined channel: {}", channel);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to join channel {}: {:?}", channel, e);
+                Err(Box::new(e))
+            }
+        }
+    }
+
+    pub async fn remove_channel(&self, channel: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Removing channel: {}", channel);
+        let mut channels = self.channels.write().await;
+        if let Some(pos) = channels.iter().position(|x| x == channel) {
+            self.client.part(channel.to_string());
+            channels.remove(pos);
+            info!("Successfully removed and left channel: {}", channel);
+            Ok(())
+        } else {
+            debug!("Channel {} is not in the list", channel);
+            Ok(())
+        }
+    }
+
+    pub async fn send_message(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Sending message to channel {}: {}", channel, message);
+        match self.client.say(channel.to_string(), message.to_string()).await {
+            Ok(_) => {
+                debug!("Successfully sent message to channel {}", channel);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to send message to channel {}: {:?}", channel, e);
+                Err(Box::new(e))
+            }
+        }
+    }
+
+    pub async fn get_state(&self) -> ConnectionState {
+        self.state.read().await.clone()
+    }
+
+    pub async fn get_monitor_status(&self) -> (Duration, u32) {
+        let monitor = self.monitor.lock().await;
+        (monitor.total_uptime, monitor.disconnection_count)
+    }
 }
 
 pub struct TwitchIRCManager {
@@ -52,43 +224,25 @@ impl TwitchIRCManager {
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
 
         let mut client_config = ClientConfig::new_simple(
-            StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token.clone()))
-        );
-
-        let mut client_config = ClientConfig::new_simple(
             StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token))
         );
 
-        // Adjust the connect_timeout
         client_config.connect_timeout = std::time::Duration::from_secs(30);
-
-        // Adjust other available parameters
-        client_config.max_channels_per_connection = 10;  // Adjust as needed
-        client_config.max_waiting_messages_per_connection = 100;  // Adjust as needed
+        client_config.max_channels_per_connection = 10;
+        client_config.max_waiting_messages_per_connection = 100;
 
         let (incoming_messages, client) = TwitchIRC::<SecureTCPTransport, StaticLoginCredentials>::new(client_config);
         info!("Twitch IRC client created successfully for user: {}", username);
 
         let client = Arc::new(client);
-        let monitor = Arc::new(Mutex::new(ConnectionMonitor::new()));
+        let irc_client = IRCClient::new(client.clone(), channels.clone());
 
-        for channel in channels.iter() {
-            info!("Joining channel: {} for user: {}", channel, username);
-            client.join(channel.clone())?;
-            info!("Successfully joined channel: {} for user: {}", channel, username);
-        }
-
-        let irc_client = IRCClient {
-            client: client.clone(),
-            monitor: monitor.clone(),
-        };
-
-        self.clients.write().await.insert(username.clone(), irc_client);
+        self.clients.write().await.insert(username.clone(), irc_client.clone());
         if handle_messages && username == *self.config.twitch_bot_username.as_ref().unwrap() {
             let message_sender = self.message_sender.clone();
             let websocket_sender = self.websocket_sender.clone();
             let username_clone = username.clone();
-            let monitor_clone = monitor.clone();
+            let irc_client_clone = irc_client.clone();
             let dashboard_state = self.dashboard_state.clone();
             let bot_username = self.config.twitch_bot_username.as_ref().unwrap().clone();
             tokio::spawn(async move {
@@ -97,15 +251,14 @@ impl TwitchIRCManager {
                     incoming_messages,
                     message_sender,
                     websocket_sender,
-                    monitor_clone,
+                    irc_client_clone,
                     dashboard_state,
                     bot_username,
                 ).await;
             });
         }
 
-
-        monitor.lock().await.on_connect();
+        irc_client.connect().await?;
         self.dashboard_state.write().await.update_twitch_status(true);
         info!("Successfully added Twitch IRC client for user: {}", username);
         Ok(())
@@ -116,7 +269,7 @@ impl TwitchIRCManager {
         mut incoming_messages: mpsc::UnboundedReceiver<ServerMessage>,
         message_sender: broadcast::Sender<ServerMessage>,
         websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
-        monitor: Arc<Mutex<ConnectionMonitor>>,
+        irc_client: IRCClient,
         dashboard_state: Arc<RwLock<DashboardState>>,
         bot_username: String,
     ) {
@@ -170,8 +323,14 @@ impl TwitchIRCManager {
                 },
                 ServerMessage::Reconnect(_) => {
                     warn!("Received reconnect message for user: {}", username);
-                    monitor.lock().await.on_disconnect();
+                    irc_client.monitor.lock().await.on_disconnect();
                     dashboard_state.write().await.update_twitch_status(false);
+                    if let Err(e) = irc_client.reconnect().await {
+                        error!("Failed to reconnect for user {}: {:?}", username, e);
+                    } else {
+                        info!("Successfully reconnected for user: {}", username);
+                        dashboard_state.write().await.update_twitch_status(true);
+                    }
                 },
                 ServerMessage::Join(msg) => {
                     if username == bot_username {
@@ -208,12 +367,22 @@ impl TwitchIRCManager {
                 }
             }
 
-            // Update the connection monitor for all clients
-            monitor.lock().await.on_connect();
+            // Update the connection monitor for specific events
+            match &message {
+                ServerMessage::Reconnect(_) | ServerMessage::Join(_) | ServerMessage::Part(_) => {
+                    let state = irc_client.get_state().await;
+                    match state {
+                        ConnectionState::Connected => irc_client.monitor.lock().await.on_connect(),
+                        ConnectionState::Disconnected => irc_client.monitor.lock().await.on_disconnect(),
+                        ConnectionState::Reconnecting => {} // Do nothing while reconnecting
+                    }
+                }
+                _ => {}
+            }
         }
 
         warn!("Exiting handle_client_messages for {}", username);
-        monitor.lock().await.on_disconnect();
+        irc_client.monitor.lock().await.on_disconnect();
         dashboard_state.write().await.update_twitch_status(false);
     }
 
