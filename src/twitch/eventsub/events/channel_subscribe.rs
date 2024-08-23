@@ -3,11 +3,13 @@ use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
+use crate::twitch::irc::TwitchBotClient;
+use crate::twitch::TwitchManager;
 
 pub async fn handle(
     event: &Value,
-    irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
+    twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let user_name = payload["user_name"].as_str().unwrap_or("Unknown");
@@ -27,7 +29,7 @@ pub async fn handle(
             format!("Thank you {} for subscribing with a {} subscription!", user_name, tier_name)
         };
 
-        irc_client.say(channel.to_string(), message).await?;
+        twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
     }
 
     Ok(())

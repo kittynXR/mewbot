@@ -4,11 +4,11 @@ use twitch_irc::SecureTCPTransport;
 use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
 use log::{error, info};
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::manager::TwitchManager;
 
 pub async fn handle(
     event: &Value,
-    irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
     twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -17,7 +17,7 @@ pub async fn handle(
         let started_at = payload["started_at"].as_str().unwrap_or("Unknown time");
 
         let message = format!("{} has gone live! Stream started at {}. Come join the fun!", broadcaster_user_name, started_at);
-        irc_client.say(channel.to_string(), message).await?;
+        twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
 
         // Update stream status using TwitchManager
         twitch_manager.set_stream_live(true).await;

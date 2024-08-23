@@ -22,18 +22,18 @@ struct TwitchToken {
 
 #[derive(Clone)]
 pub struct TwitchAPIClient {
-    config: Arc<RwLock<Config>>,
-    token: Arc<RwLock<Option<TwitchToken>>>,
+    config: Arc<Config>,
+    token: Arc<Mutex<Option<TwitchToken>>>,
     pub(crate) client: Client,
     initialized: Arc<AtomicBool>,
 }
 
 impl TwitchAPIClient {
-    pub async fn new(config: Arc<RwLock<Config>>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new(config: Arc<Config>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let client = Client::new();
         let api_client = TwitchAPIClient {
             config: config.clone(),
-            token: Arc::new(RwLock::new(None)),
+            token: Arc::new(Mutex::new(None)),
             client,
             initialized: Arc::new(AtomicBool::new(false)),
         };
@@ -45,21 +45,18 @@ impl TwitchAPIClient {
     }
 
     pub async fn authenticate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
-        if config.twitch_access_token.is_some() && config.twitch_refresh_token.is_some() {
+        if self.config.twitch_access_token.is_some() && self.config.twitch_refresh_token.is_some() {
             println!("Existing Twitch API tokens found. Skipping authentication flow.");
             return Ok(());
         }
-        drop(config);
 
         warn!("No existing Twitch API tokens found. Starting authentication flow...");
         self.start_auth_flow().await
     }
 
     async fn initialize(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
-        if let (Some(access_token), Some(refresh_token)) = (&config.twitch_access_token, &config.twitch_refresh_token) {
-            *self.token.write().await = Some(TwitchToken {
+        if let (Some(access_token), Some(refresh_token)) = (&self.config.twitch_access_token, &self.config.twitch_refresh_token) {
+            *self.token.lock().await = Some(TwitchToken {
                 access_token: access_token.clone(),
                 refresh_token: refresh_token.clone(),
                 expires_in: 0,
@@ -67,7 +64,6 @@ impl TwitchAPIClient {
             });
             warn!("Existing Twitch API tokens found.");
         } else {
-            drop(config);
             warn!("No existing Twitch API tokens found. Starting authentication flow...");
             self.start_auth_flow().await?;
         }
@@ -116,12 +112,10 @@ impl TwitchAPIClient {
 
         let server_handle = tokio::spawn(server);
 
-        let config = self.config.read().await;
         let auth_url = format!(
             "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions channel:manage:vips moderation:read moderator:manage:announcements",
-            config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
+            self.config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
-        drop(config);
 
         println!("Please open the following URL in your browser to authorize the application:");
         println!("{}", auth_url);
@@ -155,9 +149,8 @@ impl TwitchAPIClient {
     }
 
     async fn exchange_code(&self, code: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let config_read = self.config.read().await;
-        let client_id = config_read.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?;
-        let client_secret = config_read.twitch_client_secret.as_ref().ok_or("Twitch client secret not set")?;
+        let client_id = self.config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?;
+        let client_secret = self.config.twitch_client_secret.as_ref().ok_or("Twitch client secret not set")?;
 
         info!("Sending token request...");
         let res = self.client
@@ -186,16 +179,8 @@ impl TwitchAPIClient {
         debug!("Refresh token (first 10 chars): {}...", &token.refresh_token[..10]);
         debug!("Token expires in: {} seconds", token.expires_in);
 
-        // Drop the read lock before acquiring the write lock
-        drop(config_read);
-
-        // Now, update the config with the new tokens
-        let mut config_write = self.config.write().await;
-        config_write.set_twitch_tokens(token.access_token.clone(), token.refresh_token.clone())?;
-        debug!("Tokens saved to config file");
-
         // Update the token in the TwitchAPIClient
-        *self.token.write().await = Some(token);
+        *self.token.lock().await = Some(token);
 
         debug!("Token exchange and storage completed successfully.");
 
@@ -207,7 +192,7 @@ impl TwitchAPIClient {
             self.initialize().await?;
         }
 
-        let token = self.token.read().await;
+        let token = self.token.lock().await;
         if let Some(token) = &*token {
             if token.expires_at.map_or(false, |expires_at| expires_at > Instant::now()) {
                 return Ok(token.access_token.clone());
@@ -219,16 +204,15 @@ impl TwitchAPIClient {
     }
 
     pub(crate) async fn refresh_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let token = self.token.read().await;
+        let token = self.token.lock().await;
         let refresh_token = token.as_ref().map(|t| t.refresh_token.clone()).ok_or("No refresh token available")?;
         drop(token);
 
-        let config = self.config.read().await;
         let res = self.client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&[
-                ("client_id", config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?),
-                ("client_secret", config.twitch_client_secret.as_ref().ok_or("Twitch API client secret not set")?),
+                ("client_id", self.config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?),
+                ("client_secret", self.config.twitch_client_secret.as_ref().ok_or("Twitch API client secret not set")?),
                 ("refresh_token", &refresh_token),
                 ("grant_type", &"refresh_token".to_string()),
             ])
@@ -240,15 +224,8 @@ impl TwitchAPIClient {
         let mut new_token = res;
         new_token.expires_at = Some(Instant::now() + Duration::from_secs(new_token.expires_in));
 
-        drop(config);
-
-        let mut config = self.config.write().await;
-        config.twitch_access_token = Some(new_token.access_token.clone());
-        config.twitch_refresh_token = Some(new_token.refresh_token.clone());
-        config.save()?;
-
         let access_token = new_token.access_token.clone();
-        *self.token.write().await = Some(new_token);
+        *self.token.lock().await = Some(new_token);
 
         Ok(access_token)
     }
@@ -256,8 +233,7 @@ impl TwitchAPIClient {
     // Add methods for making API calls here, e.g.:
     pub async fn get_user_info(&self, user_login: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
-        let config = self.config.read().await;
-        let client_id = config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?;
+        let client_id = self.config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?;
 
         debug!("Sending request to Twitch API for user info: {}", user_login);
 
@@ -282,8 +258,6 @@ impl TwitchAPIClient {
         Ok(json)
     }
 
-
-
     pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
         let client_id = self.get_client_id().await?;
@@ -303,19 +277,18 @@ impl TwitchAPIClient {
         Ok(body)
     }
 
-
     pub async fn is_stream_live(&self, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let stream_info = self.get_stream_info(user_id).await?;
         Ok(!stream_info["data"].as_array().unwrap_or(&vec![]).is_empty())
     }
 
     pub async fn get_client_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
+        let config = self.config.as_ref();
         config.twitch_client_id.clone().ok_or_else(|| "Twitch client ID not set".into())
     }
 
     pub async fn get_broadcaster_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
+        let config = self.config.as_ref();
         let channel_name = config.twitch_channel_to_join.clone().ok_or("Channel name not set")?;
         drop(config);
 
@@ -326,7 +299,7 @@ impl TwitchAPIClient {
     }
 
     pub async fn get_bot_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
+        let config = self.config.as_ref();
         let bot_name = config.twitch_bot_username.clone().ok_or("Bot name not set")?;
         drop(config);
         info!("bot username: {}", bot_name);
@@ -576,7 +549,7 @@ impl TwitchAPIClient {
     }
 
     async fn send_authenticated_request(&self, url: &str) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
+        let config = self.config.as_ref();
         let access_token = config.twitch_access_token.clone().ok_or("Twitch access token not set")?;
         let client_id = config.twitch_client_id.clone().ok_or("Twitch client ID not set")?;
         drop(config);

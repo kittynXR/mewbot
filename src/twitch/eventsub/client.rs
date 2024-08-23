@@ -23,26 +23,23 @@ use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
 use log::{debug, error, info, trace, warn};
+use tokio::io::AsyncReadExt;
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
+use crate::twitch::irc::TwitchBotClient;
 
 type BoxedError = Box<dyn StdError + Send + Sync>;
 type WebSocketTx = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
 type WebSocketRx = SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>;
 
 pub struct TwitchEventSubClient {
-    config: Arc<RwLock<Config>>,
-    api_client: Arc<TwitchAPIClient>,
-    irc_client: Arc<TwitchIRCClientType>,
+    twitch_manager: Arc<TwitchManager>,
     http_client: Client,
     channel: String,
-    pub(crate) redeem_manager: Arc<RwLock<RedeemManager>>,
     ws_tx: Mutex<Option<WebSocketTx>>,
     ws_rx: Mutex<Option<WebSocketRx>>,
-    ai_client: Option<Arc<AIClient>>,
-    osc_client: Option<Arc<VRChatOSC>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
-    twitch_manager: Arc<TwitchManager>,
+    config: Arc<Config>,
 }
 
 
@@ -61,29 +58,18 @@ impl Error for TwitchEventSubError {}
 
 impl TwitchEventSubClient {
     pub fn new(
-        config: Arc<RwLock<Config>>,
-        api_client: Arc<TwitchAPIClient>,
-        irc_client: Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
-        channel: String,
-        redeem_manager: Arc<RwLock<RedeemManager>>,
-        ai_client: Option<Arc<AIClient>>,
-        osc_client: Option<Arc<VRChatOSC>>,
-        osc_configs: Arc<RwLock<OSCConfigurations>>,
         twitch_manager: Arc<TwitchManager>,
+        channel: String,
+        osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
         Self {
-            config,
-            api_client,
-            irc_client,
+            twitch_manager: twitch_manager.clone(),
             http_client: Client::new(),
             channel,
-            redeem_manager,
             ws_tx: Mutex::new(None),
             ws_rx: Mutex::new(None),
-            ai_client,
-            osc_client,
             osc_configs,
-            twitch_manager,
+            config: twitch_manager.config.clone(),
         }
     }
 
@@ -173,7 +159,7 @@ impl TwitchEventSubClient {
                     return Err(Box::new(e) as Box<dyn StdError + Send + Sync>);
                 }
                 _ => {
-                    let config = self.config.clone();
+                    let config = self.twitch_manager.config.clone();
                     debug!("Received non-text message: {:?}", message);
                 }
             }
@@ -223,7 +209,7 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let config = self.config.clone();
+        let config = self.twitch_manager.config.clone();
         debug!("Received EventSub keepalive: {:?}", response);
         Ok(())
     }
@@ -234,11 +220,8 @@ impl TwitchEventSubClient {
         let message = serde_json::to_string(response)?;
         handlers::handle_message(
             &message,
-            &self.irc_client,
-            &self.channel,
-            &self.api_client,
-            self,
             &self.twitch_manager,
+            self,
         ).await?;
 
         Ok(())
@@ -252,7 +235,7 @@ impl TwitchEventSubClient {
 
 
     pub async fn refresh_token_periodically(&self) -> Result<(), BoxedError> {
-        if let Err(e) = self.api_client.refresh_token().await {
+        if let Err(e) = self.twitch_manager.api_client.refresh_token().await {
             error!("Failed to refresh token: {:?}", e);
             return Err(e.into());
         }
@@ -268,7 +251,7 @@ impl TwitchEventSubClient {
 
     pub async fn check_current_stream_status(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let channel_id = self.get_channel_id().await?;
-        let stream_info = self.api_client.get_stream_info(&channel_id).await?;
+        let stream_info = self.twitch_manager.api_client.get_stream_info(&channel_id).await?;
 
         let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
         let game_name = if is_live {
@@ -277,15 +260,15 @@ impl TwitchEventSubClient {
             "".to_string()
         };
 
-        self.redeem_manager.write().await.update_stream_status(game_name).await;
+        self.twitch_manager.redeem_manager.write().await.update_stream_status(game_name).await;
 
         Ok(())
     }
 
     async fn create_eventsub_subscription(&self, session_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let token = self.api_client.get_token().await?;
+        let token = self.twitch_manager.api_client.get_token().await?;
         let channel_id = self.get_channel_id().await?;
-        let client_id = self.config.read().await.twitch_client_id.clone().ok_or("Twitch client ID not set")?;
+        let client_id = self.config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?;
 
         let subscriptions = vec![
             ("channel.update", "2", json!({
@@ -345,7 +328,7 @@ impl TwitchEventSubClient {
 
             let response = self.http_client
                 .post("https://api.twitch.tv/helix/eventsub/subscriptions")
-                .header("Client-Id", &client_id)
+                .header("Client-Id", client_id.as_str())
                 .header("Authorization", format!("Bearer {}", token))
                 .json(&subscription)
                 .send()
@@ -363,13 +346,9 @@ impl TwitchEventSubClient {
     }
 
     async fn get_channel_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.config.read().await;
-        let channel_name = config.twitch_channel_to_join.clone().ok_or("Channel name not set")?;
-        drop(config);
-
-        let user_info = self.api_client.get_user_info(&channel_name).await?;
+        let channel_name = self.config.twitch_channel_to_join.as_ref().ok_or("Channel name not set")?;
+        let user_info = self.twitch_manager.api_client.get_user_info(channel_name).await?;
         let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
-
         Ok(channel_id)
     }
 
@@ -393,9 +372,9 @@ impl TwitchEventSubClient {
         match status {
             RedemptionStatus::Unfulfilled => {
                 trace!("Processing new redemption: {:?}", redemption);
-                let result = self.redeem_manager.read().await.handle_redemption(
+                let result = self.twitch_manager.redeem_manager.read().await.handle_redemption(
                     redemption.clone(),
-                    self.irc_client.clone(),
+                    self.twitch_manager.bot_client.clone(),
                     self.channel.clone()
                 ).await;
 
@@ -414,7 +393,7 @@ impl TwitchEventSubClient {
             },
             RedemptionStatus::Canceled => {
                 debug!("Redemption canceled: {:?}", redemption);
-                if let Err(e) = self.redeem_manager.write().await.cancel_redemption(&redemption.id).await {
+                if let Err(e) = self.twitch_manager.redeem_manager.write().await.cancel_redemption(&redemption.id).await {
                     error!("Error canceling redemption: {}", e);
                 }
             },
@@ -440,13 +419,13 @@ impl TwitchEventSubClient {
 
         trace!("Processing new redemption: {:?}", redemption);
 
-        let redeem_manager = self.redeem_manager.read().await;
+        let redeem_manager = self.twitch_manager.redeem_manager.read().await;
         let result = if redemption.reward_title == "coin game" {
-            redeem_manager.handle_coin_game(&redemption, &self.irc_client, &self.channel).await
+            redeem_manager.handle_coin_game(&redemption, &self.twitch_manager.bot_client, &self.channel).await
         } else {
             redeem_manager.handle_redemption(
                 redemption.clone(),
-                self.irc_client.clone(),
+                self.twitch_manager.bot_client.clone(),
                 self.channel.clone()
             ).await
         };
@@ -462,7 +441,7 @@ impl TwitchEventSubClient {
         if let Some(settings) = settings {
             if settings.auto_complete {
                 let status = if result.success { "FULFILLED" } else { "CANCELED" };
-                if let Err(e) = self.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
+                if let Err(e) = self.twitch_manager.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
                     error!("Failed to update redemption status: {:?}", e);
                 }
             } else {
@@ -477,14 +456,14 @@ impl TwitchEventSubClient {
 
     pub async fn handle_channel_point_redemption_update(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         trace!("Received channel point redemption update: {:?}", event);
-        self.redeem_manager.read().await.handle_redemption_update(event).await
+        self.twitch_manager.redeem_manager.read().await.handle_redemption_update(event).await
     }
 
     pub async fn handle_osc_event(&self, event_type: &str, event_data: &Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let configs = self.osc_configs.read().await;
         if let Some(osc_config) = configs.get_config(event_type) {
-            if let Some(osc_client) = &self.osc_client {
-                osc_client.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value)?;
+            if let Some(vrchat_osc) = &self.twitch_manager.vrchat_osc {
+                vrchat_osc.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value)?;
                 debug!("Sent OSC message for event: {}", event_type);
             }
         }
@@ -497,15 +476,13 @@ impl TwitchEventSubClient {
         configs.save("osc_config.json").unwrap_or_else(|e| eprintln!("Failed to save OSC configs: {}", e));
     }
 
-
-
     async fn announce_redemption(&self, redemption: &Redemption, result: &RedemptionResult) {
         let message = match &result.message {
             Some(msg) => format!("{} redeemed {}! {}", redemption.user_name, redemption.reward_title, msg),
             None => format!("{} redeemed {}!", redemption.user_name, redemption.reward_title),
         };
 
-        if let Err(e) = self.irc_client.say(self.channel.clone(), message).await {
+        if let Err(e) = self.twitch_manager.send_message_as_bot(&self.channel, message.as_str()).await {
             error!("Failed to announce redemption in chat: {}", e);
         }
     }

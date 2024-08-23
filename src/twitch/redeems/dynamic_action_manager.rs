@@ -8,12 +8,13 @@ use crate::twitch::api::TwitchAPIClient;
 use crate::ai::AIClient;
 use crate::osc::VRChatOSC;
 use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::redeems::RedeemManager;
 use crate::twitch::redeems::actions::{handle_coin_game, osc_message};
 
 #[async_trait]
 pub trait RedeemAction: Send + Sync {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult;
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult;
 }
 
 #[derive(Clone)]
@@ -47,7 +48,7 @@ impl DynamicActionManager {
         actions.insert(name.to_string(), action);
     }
 
-    pub async fn execute_action(&self, name: &str, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    pub async fn execute_action(&self, name: &str, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         let actions = self.actions.read().await;
         if let Some(action) = actions.get(name) {
             action.execute(redemption, api_client, irc_client, channel, ai_client, osc_client, redeem_manager).await
@@ -65,7 +66,7 @@ impl DynamicActionManager {
 pub struct AIResponseAction;
 #[async_trait]
 impl RedeemAction for AIResponseAction {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(ai_client) = ai_client {
             redeem_manager.handle_ai_response(redemption, ai_client).await
         } else {
@@ -82,7 +83,7 @@ pub struct OSCMessageAction;
 
 #[async_trait]
 impl RedeemAction for OSCMessageAction {
-    async fn execute(&self, redemption: &Redemption, _api_client: &TwitchAPIClient, _irc_client: &Arc<TwitchIRCClientType>, _channel: &str, _ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(osc_client) = osc_client {
             if let Some(settings) = redeem_manager.handlers_by_id.read().await.get(&redemption.reward_id) {
                 if let Some(osc_config) = &settings.osc_config {
@@ -102,7 +103,7 @@ pub struct CoinGameAction;
 
 #[async_trait]
 impl RedeemAction for CoinGameAction {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, _ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         debug!("Executing CoinGameAction");
         handle_coin_game(redemption, api_client, irc_client, channel, redeem_manager).await
     }
@@ -111,7 +112,7 @@ impl RedeemAction for CoinGameAction {
 pub struct AIResponseWithHistoryAction;
 #[async_trait]
 impl RedeemAction for AIResponseWithHistoryAction {
-    async fn execute(&self, redemption: &Redemption, _api_client: &TwitchAPIClient, _irc_client: &Arc<TwitchIRCClientType>, _channel: &str, ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, _redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(ai_client) = ai_client {
             ai_client.generate_response_with_history(&redemption.user_input.clone().unwrap_or_default()).await
                 .map_or_else(
@@ -139,7 +140,7 @@ impl RedeemAction for AIResponseWithHistoryAction {
 pub struct AIResponseWithoutHistoryAction;
 #[async_trait]
 impl RedeemAction for AIResponseWithoutHistoryAction {
-    async fn execute(&self, redemption: &Redemption, _api_client: &TwitchAPIClient, _irc_client: &Arc<TwitchIRCClientType>, _channel: &str, ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, _redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(ai_client) = ai_client {
             ai_client.generate_response_without_history(&redemption.user_input.clone().unwrap_or_default()).await
                 .map_or_else(

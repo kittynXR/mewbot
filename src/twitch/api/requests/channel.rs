@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use crate::twitch::api::TwitchAPIClient;
 use serde_json::Value;
 
-pub async fn get_channel_game(user_id: &str, api_client: &TwitchAPIClient) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_channel_game(user_id: &str, api_client: Arc<TwitchAPIClient>) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let token = api_client.get_token().await?;
     let client_id = api_client.get_client_id().await?;
 

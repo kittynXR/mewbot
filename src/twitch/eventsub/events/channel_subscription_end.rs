@@ -7,6 +7,8 @@ use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use lazy_static::lazy_static;
+use crate::twitch::irc::TwitchBotClient;
+use crate::twitch::TwitchManager;
 
 struct SubEndInfo {
     tier: String,
@@ -22,13 +24,14 @@ const BATCH_WINDOW: Duration = Duration::from_secs(5);
 
 pub async fn handle(
     event: &Value,
-    irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
     channel: &str,
+    twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let user_name = payload["user_name"].as_str().unwrap_or("Unknown").to_string();
         let tier = payload["tier"].as_str().unwrap_or("1000").to_string();
         let months = payload["months"].as_u64().unwrap_or(0);
+        let irc_client = twitch_manager.get_bot_client();
 
         let mut pending_subs = PENDING_SUB_ENDS.lock().await;
         pending_subs.insert(user_name, SubEndInfo { tier, months });
@@ -45,7 +48,7 @@ pub async fn handle(
 
 async fn send_combined_message(
     mut pending_subs: tokio::sync::MutexGuard<'_, HashMap<String, SubEndInfo>>,
-    irc_client: &Arc<ExternalTwitchIRCClient<SecureTCPTransport, StaticLoginCredentials>>,
+    irc_client: Arc<TwitchBotClient>,
     channel: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if pending_subs.is_empty() {
@@ -89,7 +92,7 @@ async fn send_combined_message(
     }
 
     for message in messages {
-        irc_client.say(channel.to_string(), message).await?;
+        irc_client.send_message(channel, message.as_str()).await?;
     }
 
     pending_subs.clear();

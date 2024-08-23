@@ -10,7 +10,7 @@ use crate::twitch::redeems::manager::RedeemManager;
 use async_trait::async_trait;
 use log::error;
 use serde::{Deserialize, Serialize};
-
+use crate::twitch::irc::TwitchBotClient;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum AIProvider {
@@ -165,7 +165,7 @@ pub struct AIResponseAction;
 
 #[async_trait]
 impl RedeemAction for AIResponseAction {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, _osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         if let Some(ai_client) = ai_client {
             let config = match redeem_manager.ai_response_manager.get_config(&redemption.reward_title) {
                 Some(config) => config,
@@ -194,7 +194,7 @@ impl RedeemAction for AIResponseAction {
 
                     // Send the AI response to chat
                     let chat_message = format!("@{}: {}", redemption.user_name, response);
-                    if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
+                    if let Err(e) = irc_client.send_message(channel, chat_message.as_str()).await {
                         error!("Failed to send message to chat: {}", e);
                     }
 

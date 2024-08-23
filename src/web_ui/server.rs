@@ -35,7 +35,7 @@ impl WebUI {
     pub fn new(
         config: Arc<RwLock<Config>>,
         storage: Arc<RwLock<StorageClient>>,
-        bot_status: Arc<RwLock<BotStatus>>,
+        _bot_status: Arc<RwLock<BotStatus>>,
         twitch_irc_manager: Arc<TwitchIRCManager>,
         vrchat_osc: Option<Arc<VRChatOSC>>,
         discord_client: Option<Arc<DiscordClient>>,

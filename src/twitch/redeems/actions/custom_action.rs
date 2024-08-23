@@ -5,13 +5,14 @@ use rand::rngs::SmallRng;
 use std::sync::Arc;
 use log::{debug, error};
 use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::redeems::RedeemManager;
 
 pub async fn handle_custom_action(
     redemption: &Redemption,
     action_name: &str,
     api_client: &TwitchAPIClient,
-    irc_client: &Arc<TwitchIRCClientType>,
+    irc_client: &Arc<TwitchBotClient>,
     channel: &str,
     redeem_manager: &RedeemManager
 ) -> RedemptionResult {
@@ -28,7 +29,7 @@ pub async fn handle_custom_action(
 pub async fn handle_coin_game(
     redemption: &Redemption,
     api_client: &TwitchAPIClient,
-    irc_client: &Arc<TwitchIRCClientType>,
+    irc_client: &Arc<TwitchBotClient>,
     channel: &str,
     redeem_manager: &RedeemManager
 ) -> RedemptionResult {
@@ -63,14 +64,14 @@ pub async fn handle_coin_game(
     if let Some(previous_redemption) = state.last_redemption.take() {
         // Refund the previous redemption
         if let Err(e) = api_client.refund_channel_points(&previous_redemption.reward_id, &previous_redemption.id).await {
-            eprintln!("Failed to refund previous coin game redemption: {}", e);
+            error!("Failed to refund previous coin game redemption: {}", e);
         } else {
             let refund_message = format!(
                 "{} is cute!",
                 previous_redemption.user_name
             );
-            if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
-                eprintln!("Failed to send refund message to chat: {}", e);
+            if let Err(e) = irc_client.send_message(channel, &refund_message).await {
+                error!("Failed to send refund message to chat: {}", e);
             }
         }
     }
@@ -90,7 +91,7 @@ pub async fn handle_coin_game(
         "{} spent {} pawmarks! The new price is {} pawmarks! Who's next?",
         redemption.user_name, current_price, new_price
     );
-    if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
+    if let Err(e) = irc_client.send_message(channel, &chat_message).await {
         error!("Failed to send message to chat: {}", e);
     }
 

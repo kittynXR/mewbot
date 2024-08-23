@@ -22,6 +22,7 @@ use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::api::requests::{channel_points, get_channel_information};
 use crate::twitch::api::models::ChannelPointReward;
 use crate::twitch::irc::client::TwitchIRCClientType;
+use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::redeems::actions::handle_custom_action;
 
 pub struct RedeemManager {
@@ -61,7 +62,7 @@ struct DefaultCustomAction;
 
 #[async_trait]
 impl RedeemAction for DefaultCustomAction {
-    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchIRCClientType>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
+    async fn execute(&self, redemption: &Redemption, api_client: &TwitchAPIClient, irc_client: &Arc<TwitchBotClient>, channel: &str, ai_client: Option<&AIClient>, osc_client: Option<&VRChatOSC>, redeem_manager: &RedeemManager) -> RedemptionResult {
         RedemptionResult {
             success: true,
             message: Some("Custom redemption executed".to_string()),
@@ -612,7 +613,13 @@ impl RedeemManager {
 }
 
 impl RedeemManager {
-    pub(crate) async fn execute_action(&self, redemption: &Redemption, config: &RedemptionActionConfig, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
+    pub(crate) async fn execute_action(
+        &self,
+        redemption: &Redemption,
+        config: &RedemptionActionConfig,
+        irc_client: &Arc<TwitchBotClient>,
+        channel: &str
+    ) -> RedemptionResult {
         match &config.action {
             RedemptionActionType::AIResponse => {
                 if let Some(ai_client) = &self.ai_client {
@@ -835,7 +842,7 @@ impl RedeemManager {
 }
 
 impl RedeemManager {
-    pub async fn handle_redemption(&self, redemption: Redemption, irc_client: Arc<TwitchIRCClientType>, channel: String) -> RedemptionResult {
+    pub async fn handle_redemption(&self, redemption: Redemption, irc_client: Arc<TwitchBotClient>, channel: String) -> RedemptionResult {
         debug!("Starting to handle redemption: {:?}", redemption);
 
         let mut processed = self.processed_redemptions.lock().await;
@@ -915,7 +922,7 @@ impl RedeemManager {
             // Send the response to chat if there's a message
             if let Some(message) = &result.message {
                 let chat_message = format!("@{}: {}", redemption.user_name, message);
-                if let Err(e) = irc_client.say(channel, chat_message).await {
+                if let Err(e) = irc_client.send_message(channel.as_str(), chat_message.as_str()).await {
                     error!("Failed to send message to chat: {}", e);
                 } else {
                     debug!("Sent message to chat");
@@ -1186,7 +1193,7 @@ impl RedeemManager {
 
 
 impl RedeemManager {
-    pub async fn handle_coin_game(&self, redemption: &Redemption, irc_client: &Arc<TwitchIRCClientType>, channel: &str) -> RedemptionResult {
+    pub async fn handle_coin_game(&self, redemption: &Redemption, irc_client: &Arc<TwitchBotClient>, channel: &str) -> RedemptionResult {
         debug!("Executing CoinGameAction for redemption: {:?}", redemption);
 
         let mut state = self.coin_game_state.write().await;
@@ -1202,7 +1209,7 @@ impl RedeemManager {
                     "{} is cute!",
                     previous_redemption.user_name
                 );
-                if let Err(e) = irc_client.say(channel.to_string(), refund_message).await {
+                if let Err(e) = irc_client.send_message(channel, refund_message.as_str()).await {
                     error!("Failed to send refund message to chat: {}", e);
                 }
             }
@@ -1260,7 +1267,7 @@ impl RedeemManager {
             "{} {}! Uploaded {} pawmarks. Cost is now {} pawmarks! Who's next?",
             redemption.user_name, ai_message, current_price, new_price
         );
-        if let Err(e) = irc_client.say(channel.to_string(), chat_message).await {
+        if let Err(e) = irc_client.send_message(channel, chat_message.as_str()).await {
             error!("Failed to send message to chat: {}", e);
         }
 

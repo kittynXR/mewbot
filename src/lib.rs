@@ -208,6 +208,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         ))
     });
 
+    let config = Arc::new(config.read().await.clone());
+
     let twitch_manager = Arc::new(TwitchManager::new(
         config.clone(),
         storage.clone(),

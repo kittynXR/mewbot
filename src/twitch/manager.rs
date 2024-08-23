@@ -153,6 +153,7 @@ impl UserManager {
 
 #[derive(Clone)]
 pub struct TwitchManager {
+    pub config: Arc<Config>,
     pub api_client: Arc<TwitchAPIClient>,
     pub irc_manager: Arc<TwitchIRCManager>,
     pub bot_client: Arc<TwitchBotClient>,
@@ -162,11 +163,12 @@ pub struct TwitchManager {
     pub user_manager: UserManager,
     pub(crate) user_links: Arc<UserLinks>,
     stream_status: Arc<RwLock<bool>>,
+    pub vrchat_osc: Option<Arc<VRChatOSC>>,
 }
 
 impl TwitchManager {
     pub async fn new(
-        config: Arc<RwLock<Config>>,
+        config: Arc<Config>,
         storage: Arc<RwLock<StorageClient>>,
         ai_client: Option<Arc<AIClient>>,
         vrchat_osc: Option<Arc<VRChatOSC>>,
@@ -177,7 +179,7 @@ impl TwitchManager {
         let api_client = Arc::new(TwitchAPIClient::new(config.clone()).await?);
         api_client.authenticate().await?;
 
-        let social_links = config.read().await.social_links.clone();
+        let social_links = config.social_links.clone();
         let irc_manager = Arc::new(TwitchIRCManager::new(
             websocket_tx.clone(),
             Arc::new(RwLock::new(social_links)),
@@ -195,20 +197,21 @@ impl TwitchManager {
         let user_manager = UserManager::new(storage.clone(), api_client.clone());
 
         let mut twitch_manager = Self {
+            config,
             api_client,
             irc_manager,
             bot_client,
             broadcaster_client,
             redeem_manager,
-            eventsub_client: Arc::new(Mutex::new(None)), // Initialize as None
+            eventsub_client: Arc::new(Mutex::new(None)),
             user_manager,
             user_links,
             stream_status: Arc::new(RwLock::new(false)),
+            vrchat_osc: vrchat_osc.clone(),
         };
 
-        // Now that we have created the TwitchManager, we can initialize the EventSub client
         let eventsub_client = Self::initialize_eventsub_client(
-            &config,
+            &twitch_manager.config,
             &twitch_manager.api_client,
             &twitch_manager.bot_client,
             &twitch_manager.redeem_manager,
@@ -217,10 +220,8 @@ impl TwitchManager {
             &Arc::new(twitch_manager.clone()),
         ).await?;
 
-        // Update the eventsub_client field
         twitch_manager.eventsub_client = Arc::new(Mutex::new(Some(eventsub_client)));
 
-        // Perform initial stream status check
         twitch_manager.check_initial_stream_status().await?;
 
         Ok(twitch_manager)
@@ -236,21 +237,20 @@ impl TwitchManager {
     }
 
     async fn initialize_irc_clients(
-        config: &Arc<RwLock<Config>>,
+        config: &Arc<Config>,
         irc_manager: &Arc<TwitchIRCManager>,
     ) -> Result<(Arc<TwitchBotClient>, Option<Arc<TwitchBroadcasterClient>>), Box<dyn std::error::Error + Send + Sync>> {
-        let config_read = config.read().await;
-        let bot_username = config_read.twitch_bot_username.clone().ok_or("Twitch IRC bot username not set")?;
-        let bot_oauth_token = config_read.twitch_bot_oauth_token.clone().ok_or("Bot OAuth token not set")?;
-        let broadcaster_username = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
+        let bot_username = config.twitch_bot_username.as_ref().ok_or("Twitch IRC bot username not set")?;
+        let bot_oauth_token = config.twitch_bot_oauth_token.as_ref().ok_or("Bot OAuth token not set")?;
+        let broadcaster_username = config.twitch_channel_to_join.as_ref().ok_or("Twitch channel to join not set")?;
         let channel = broadcaster_username.clone();
 
         irc_manager.add_client(bot_username.clone(), bot_oauth_token.clone(), vec![channel.clone()], true).await?;
         let bot_client = Arc::new(TwitchBotClient::new(bot_username.clone(), irc_manager.clone()));
 
-        let broadcaster_client = if let Some(broadcaster_oauth_token) = config_read.twitch_access_token.clone() {
-            irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token, vec![channel.clone()], false).await?;
-            Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username, irc_manager.clone())))
+        let broadcaster_client = if let Some(broadcaster_oauth_token) = &config.twitch_access_token {
+            irc_manager.add_client(broadcaster_username.clone(), broadcaster_oauth_token.clone(), vec![channel.clone()], false).await?;
+            Some(Arc::new(TwitchBroadcasterClient::new(broadcaster_username.clone(), irc_manager.clone())))
         } else {
             None
         };
@@ -259,7 +259,7 @@ impl TwitchManager {
     }
 
     async fn initialize_eventsub_client(
-        config: &Arc<RwLock<Config>>,
+        config: &Arc<Config>,
         api_client: &Arc<TwitchAPIClient>,
         bot_client: &Arc<TwitchBotClient>,
         redeem_manager: &Arc<RwLock<RedeemManager>>,
@@ -267,23 +267,11 @@ impl TwitchManager {
         vrchat_osc: Option<Arc<VRChatOSC>>,
         twitch_manager: &Arc<TwitchManager>,
     ) -> Result<TwitchEventSubClient, Box<dyn std::error::Error + Send + Sync>> {
-        let config_read = config.read().await;
-        let channel = config_read.twitch_channel_to_join.clone().ok_or("Twitch channel to join not set")?;
-        let bot_irc_client = bot_client.get_client().await.ok_or("Failed to get IRC client")?;
+        let channel = config.twitch_channel_to_join.as_ref().ok_or("Twitch channel to join not set")?;
 
         let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
 
-        Ok(TwitchEventSubClient::new(
-            config.clone(),
-            api_client.clone(),
-            bot_irc_client,
-            channel,
-            redeem_manager.clone(),
-            ai_client,
-            vrchat_osc,
-            osc_configs,
-            twitch_manager.clone(),
-        ))
+        Ok(TwitchEventSubClient::new(twitch_manager.clone(), channel.clone(), osc_configs))
     }
 
     pub async fn start_message_handler(&self, message_handler: Arc<MessageHandler>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
