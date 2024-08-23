@@ -46,17 +46,13 @@ impl MessageHandler {
     }
 
     pub async fn handle_messages(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut receiver = self.twitch_manager.irc_manager.subscribe();
+        // let mut receiver = self.twitch_manager.irc_manager.subscribe();
 
-        while let Ok(message) = receiver.recv().await {
-            if let Err(e) = self.handle_message(message).await {
-                error!("Error handling message: {:?}", e);
-                // Optionally, you might want to break the loop or handle the error differently
-            }
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
 
-        // If we've exited the loop, it means the channel was closed
-        Err("Twitch IRC message channel closed unexpectedly".into())
+        // Err("Twitch IRC message channel closed unexpectedly".into())
     }
 
     pub async fn handle_message(&self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

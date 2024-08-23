@@ -51,11 +51,21 @@ impl TwitchIRCManager {
 
         let cleaned_oauth_token = oauth_token.trim_start_matches("oauth:").to_string();
 
-        let client_config = ClientConfig::new_simple(
+        let mut client_config = ClientConfig::new_simple(
+            StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token.clone()))
+        );
+
+        let mut client_config = ClientConfig::new_simple(
             StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token))
         );
 
-        info!("Attempting to create Twitch IRC client for user: {}", username);
+        // Adjust the connect_timeout
+        client_config.connect_timeout = std::time::Duration::from_secs(30);
+
+        // Adjust other available parameters
+        client_config.max_channels_per_connection = 10;  // Adjust as needed
+        client_config.max_waiting_messages_per_connection = 100;  // Adjust as needed
+
         let (incoming_messages, client) = TwitchIRC::<SecureTCPTransport, StaticLoginCredentials>::new(client_config);
         info!("Twitch IRC client created successfully for user: {}", username);
 
@@ -80,6 +90,7 @@ impl TwitchIRCManager {
             let username_clone = username.clone();
             let monitor_clone = monitor.clone();
             let dashboard_state = self.dashboard_state.clone();
+            let bot_username = self.config.twitch_bot_username.as_ref().unwrap().clone();
             tokio::spawn(async move {
                 Self::handle_client_messages(
                     username_clone,
@@ -88,9 +99,11 @@ impl TwitchIRCManager {
                     websocket_sender,
                     monitor_clone,
                     dashboard_state,
+                    bot_username,
                 ).await;
             });
         }
+
 
         monitor.lock().await.on_connect();
         self.dashboard_state.write().await.update_twitch_status(true);
@@ -105,6 +118,7 @@ impl TwitchIRCManager {
         websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,
         monitor: Arc<Mutex<ConnectionMonitor>>,
         dashboard_state: Arc<RwLock<DashboardState>>,
+        bot_username: String,
     ) {
         while let Some(message) = incoming_messages.recv().await {
             debug!("Received message in handle_client_messages for user {}: {:?}", username, message);
@@ -112,18 +126,46 @@ impl TwitchIRCManager {
 
             match &message {
                 ServerMessage::Privmsg(msg) => {
-                    let websocket_message = WebSocketMessage {
-                        module: "twitch".to_string(),
-                        action: "new_message".to_string(),
-                        data: serde_json::json!({
+                    if username == bot_username {
+                        let websocket_message = WebSocketMessage {
+                            module: "twitch".to_string(),
+                            action: "new_message".to_string(),
+                            data: serde_json::json!({
                             "message": msg.message_text,
                             "user_id": msg.sender.id,
                             "user_name": msg.sender.name,
                             "channel": msg.channel_login,
                         }),
-                    };
-                    if let Err(e) = websocket_sender.send(websocket_message) {
-                        error!("Failed to send message to WebSocket: {:?}", e);
+                        };
+                        if let Err(e) = websocket_sender.send(websocket_message) {
+                            error!("Failed to send message to WebSocket: {:?}", e);
+                        }
+
+                        // Broadcast the message only for the bot client
+                        if let Err(e) = message_sender.send(message.clone()) {
+                            error!("Failed to broadcast message: {:?}", e);
+                        }
+                    }
+                },
+                ServerMessage::Whisper(msg) => {
+                    if username == bot_username {
+                        let websocket_message = WebSocketMessage {
+                            module: "twitch".to_string(),
+                            action: "new_whisper".to_string(),
+                            data: serde_json::json!({
+                            "message": msg.message_text,
+                            "user_id": msg.sender.id,
+                            "user_name": msg.sender.name,
+                        }),
+                        };
+                        if let Err(e) = websocket_sender.send(websocket_message) {
+                            error!("Failed to send whisper to WebSocket: {:?}", e);
+                        }
+
+                        // Broadcast the whisper only for the bot client
+                        if let Err(e) = message_sender.send(message.clone()) {
+                            error!("Failed to broadcast whisper: {:?}", e);
+                        }
                     }
                 },
                 ServerMessage::Reconnect(_) => {
@@ -131,13 +173,45 @@ impl TwitchIRCManager {
                     monitor.lock().await.on_disconnect();
                     dashboard_state.write().await.update_twitch_status(false);
                 },
-                _ => {}
+                ServerMessage::Join(msg) => {
+                    if username == bot_username {
+                        let websocket_message = WebSocketMessage {
+                            module: "twitch".to_string(),
+                            action: "user_joined".to_string(),
+                            data: serde_json::json!({
+                            "user_name": msg.user_login,
+                            "channel": msg.channel_login,
+                        }),
+                        };
+                        if let Err(e) = websocket_sender.send(websocket_message) {
+                            error!("Failed to send join message to WebSocket: {:?}", e);
+                        }
+                    }
+                },
+                ServerMessage::Part(msg) => {
+                    if username == bot_username {
+                        let websocket_message = WebSocketMessage {
+                            module: "twitch".to_string(),
+                            action: "user_left".to_string(),
+                            data: serde_json::json!({
+                            "user_name": msg.user_login,
+                            "channel": msg.channel_login,
+                        }),
+                        };
+                        if let Err(e) = websocket_sender.send(websocket_message) {
+                            error!("Failed to send part message to WebSocket: {:?}", e);
+                        }
+                    }
+                },
+                _ => {
+                    // Handle other message types if needed
+                }
             }
 
-            if let Err(e) = message_sender.send(message) {
-                error!("Failed to broadcast message: {:?}", e);
-            }
+            // Update the connection monitor for all clients
+            monitor.lock().await.on_connect();
         }
+
         warn!("Exiting handle_client_messages for {}", username);
         monitor.lock().await.on_disconnect();
         dashboard_state.write().await.update_twitch_status(false);
