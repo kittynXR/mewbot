@@ -134,6 +134,22 @@ pub const COMMANDS: &[Command] = &[
         },
         description: "Provides a link to join our VRChat community and sends an announcement",
     },
+    Command {
+        name: "!followers",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, _params, _config, _vrchat_client, _ai_client, _is_stream_online| {
+            Box::pin(commands::followers::handle_followers(msg, client, channel, twitch_manager, storage, user_links))
+        },
+        description: "Shows the current number of followers for the channel",
+    },
+    Command {
+        name: "!followage",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, params, _config, _vrchat_client, _ai_client, _is_stream_online| {
+            Box::pin(commands::followers::handle_followage(msg, client, channel, twitch_manager, storage, user_links, params))
+        },
+        description: "Shows how long a user has been following the channel",
+    },
 ];
 
 pub async fn execute_command(

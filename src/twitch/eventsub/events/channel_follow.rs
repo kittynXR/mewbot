@@ -25,11 +25,10 @@ pub async fn handle(
             match api_client.get_follower_count(&broadcaster_id).await {
                 Ok(follower_count) => {
                     let response = format!(
-                        "Thank you for following, {}! Welcome to the community! soul#{} mao mao",
+                        "Thank you for following, {}! Welcome to the community! human-like-cat-entity#{} mao mao",
                         user_name,
                         follower_count
                     );
-
                     twitch_manager.send_message_as_bot(channel, response.as_str()).await?;
                 },
                 Err(e) => {
