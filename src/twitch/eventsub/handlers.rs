@@ -1,7 +1,7 @@
 use serde_json::Value;
 use super::client::TwitchEventSubClient;
 use super::events;
-use super::events::{channel_follow, channel_raid, channel_update, stream_online, stream_offline, channel_subscribe, channel_subscription_message};
+use super::events::{channel_follow, channel_raid, channel_update, stream_online, stream_offline, channel_subscribe, channel_subscription_message, channel_point_redemption};
 use super::events::{channel_subscription_gift, channel_subscription_end};
 use std::sync::Arc;
 use log::{debug, error};
@@ -35,11 +35,11 @@ pub async fn handle_message(
             "channel.subscription.end" => channel_subscription_end::handle(&parsed, channel, twitch_manager).await?,
             "channel.channel_points_custom_reward_redemption.add" => {
                 debug!("Received new channel point redemption: {:?}", parsed["payload"]["event"]);
-                eventsub_client.handle_new_channel_point_redemption(&parsed["payload"]["event"]).await?;
+                channel_point_redemption::handle_new_redemption(&parsed["payload"]["event"], twitch_manager, channel).await?;
             },
             "channel.channel_points_custom_reward_redemption.update" => {
                 debug!("Received channel point redemption update: {:?}", parsed["payload"]["event"]);
-                eventsub_client.handle_channel_point_redemption_update(&parsed["payload"]["event"]).await?;
+                channel_point_redemption::handle_redemption_update(&parsed["payload"]["event"], twitch_manager).await?;
             },
             _ => error!("Unhandled event type: {}", event_type),
         }

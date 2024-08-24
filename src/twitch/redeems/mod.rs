@@ -1,9 +1,7 @@
-pub(crate) mod models;
-pub(crate) mod manager;
-mod defaults;
-pub mod actions;
-mod dynamic_action_manager;
+mod manager;
+mod models;
+mod actions;
 
-pub use models::{Redemption, RedemptionResult, RedemptionStatus, RedemptionSettings, RedemptionActionConfig, RedemptionActionType};
 pub use manager::RedeemManager;
-pub use dynamic_action_manager::RedeemAction;
+pub use models::{Redemption, RedemptionResult, RedemptionStatus, RedeemHandler};
+pub use actions::{CoinGameAction, AskAIAction, TossPillowAction};

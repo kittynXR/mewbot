@@ -106,14 +106,14 @@ pub async fn handle_shoutout(
     // Continue with the rest of the function...
 
     // Check if the stream is live
-    let redeem_manager_read = redeem_manager.read().await;
-    let stream_status = redeem_manager_read.stream_status.read().await;
-    if !stream_status.is_live {
-        client.send_message(channel, &format!("Sorry, @{}, shoutouts can only be given when the stream is live.", msg.sender.name)).await?;
-        return Ok(());
-    }
-    drop(stream_status);
-    drop(redeem_manager_read);
+    // let redeem_manager_read = redeem_manager.read().await;
+    // let stream_status = redeem_manager_read.stream_status.read().await;
+    // if !stream_status.is_live {
+    //     client.send_message(channel, &format!("Sorry, @{}, shoutouts can only be given when the stream is live.", msg.sender.name)).await?;
+    //     return Ok(());
+    // }
+    // drop(stream_status);
+    // drop(redeem_manager_read);
 
     // Perform shoutout
     match twitch_api_client.get_user_info(target).await {

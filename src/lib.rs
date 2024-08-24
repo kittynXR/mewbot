@@ -234,7 +234,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         websocket_rx: Some(websocket_rx),
     };
 
-    clients.twitch_manager.redeem_manager.write().await.reset_coin_game().await?;
+    // clients.twitch_manager.redeem_manager.write().await.reset_coin_game().await?;
     let eventsub_client_clone = clients.twitch_manager.eventsub_client.clone();
     tokio::spawn(async move {
         let client = eventsub_client_clone.lock().await;
@@ -288,13 +288,13 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     let channel = config.read().await.twitch_channel_to_join.clone()
         .ok_or("Twitch channel to join not set")?;
 
-    if let Some(irc_client) = clients.twitch_manager.bot_client.get_client().await {
-        if let Err(e) = clients.twitch_manager.redeem_manager.read().await.announce_redeems(&irc_client, &channel).await {
-            error!("Failed to announce redeems: {}", e);
-        }
-    } else {
-        error!("Failed to get IRC client for announcing redeems");
-    }
+    // if let Some(irc_client) = clients.twitch_manager.bot_client.get_client().await {
+    //     if let Err(e) = clients.twitch_manager.redeem_manager.read().await.announce_redeems(&irc_client, &channel).await {
+    //         error!("Failed to announce redeems: {}", e);
+    //     }
+    // } else {
+    //     error!("Failed to get IRC client for announcing redeems");
+    // }
 
     let world_info = Arc::new(Mutex::new(None::<World>));
     let message_handler = Arc::new(MessageHandler::new(

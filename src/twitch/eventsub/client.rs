@@ -260,7 +260,7 @@ impl TwitchEventSubClient {
             "".to_string()
         };
 
-        self.twitch_manager.redeem_manager.write().await.update_stream_status(game_name).await;
+        // self.twitch_manager.redeem_manager.write().await.update_stream_status(game_name).await;
 
         Ok(())
     }
@@ -352,113 +352,6 @@ impl TwitchEventSubClient {
         Ok(channel_id)
     }
 
-    pub async fn handle_channel_point_redemption(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let redemption = Redemption {
-            id: event["id"].as_str().unwrap_or("").to_string(),
-            broadcaster_id: event["broadcaster_user_id"].as_str().unwrap_or("").to_string(),
-            user_id: event["user_id"].as_str().unwrap_or("").to_string(),
-            user_name: event["user_login"].as_str().unwrap_or("").to_string(),
-            reward_id: event["reward"]["id"].as_str().unwrap_or("").to_string(),
-            reward_title: event["reward"]["title"].as_str().unwrap_or("").to_string(),
-            user_input: event["user_input"].as_str().map(|s| s.to_string()),
-            status: event["status"].as_str().unwrap_or("").into(),
-            queued: false,
-            queue_number: None,
-            announce_in_chat: false,
-        };
-
-        let status: RedemptionStatus = redemption.status.clone();
-
-        match status {
-            RedemptionStatus::Unfulfilled => {
-                trace!("Processing new redemption: {:?}", redemption);
-                let result = self.twitch_manager.redeem_manager.read().await.handle_redemption(
-                    redemption.clone(),
-                    self.twitch_manager.bot_client.clone(),
-                    self.channel.clone()
-                ).await;
-
-                if result.success {
-                    debug!("Redemption handled successfully: {:?}", result);
-                } else {
-                    error!("Failed to handle redemption: {:?}", result);
-                }
-
-                if redemption.announce_in_chat {
-                    self.announce_redemption(&redemption, &result).await;
-                }
-            },
-            RedemptionStatus::Fulfilled => {
-                debug!("Redemption already fulfilled: {:?}", redemption);
-            },
-            RedemptionStatus::Canceled => {
-                debug!("Redemption canceled: {:?}", redemption);
-                if let Err(e) = self.twitch_manager.redeem_manager.write().await.cancel_redemption(&redemption.id).await {
-                    error!("Error canceling redemption: {}", e);
-                }
-            },
-        }
-
-        Ok(())
-    }
-
-    pub async fn handle_new_channel_point_redemption(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let redemption = Redemption {
-            id: event["id"].as_str().unwrap_or("").to_string(),
-            broadcaster_id: event["broadcaster_user_id"].as_str().unwrap_or("").to_string(),
-            user_id: event["user_id"].as_str().unwrap_or("").to_string(),
-            user_name: event["user_login"].as_str().unwrap_or("").to_string(),
-            reward_id: event["reward"]["id"].as_str().unwrap_or("").to_string(),
-            reward_title: event["reward"]["title"].as_str().unwrap_or("").to_string(),
-            user_input: event["user_input"].as_str().map(|s| s.to_string()),
-            status: event["status"].as_str().unwrap_or("").into(),
-            queued: false,
-            queue_number: None,
-            announce_in_chat: false,
-        };
-
-        trace!("Processing new redemption: {:?}", redemption);
-
-        let redeem_manager = self.twitch_manager.redeem_manager.read().await;
-        let result = if redemption.reward_title == "coin game" {
-            redeem_manager.handle_coin_game(&redemption, &self.twitch_manager.bot_client, &self.channel).await
-        } else {
-            redeem_manager.handle_redemption(
-                redemption.clone(),
-                self.twitch_manager.bot_client.clone(),
-                self.channel.clone()
-            ).await
-        };
-
-        if result.success {
-            debug!("Redemption handled successfully: {:?}", result);
-        } else {
-            error!("Failed to handle redemption: {:?}", result);
-        }
-
-        // Check if the redemption should be auto-completed
-        let settings = redeem_manager.get_redemption_settings(&redemption.reward_id).await;
-        if let Some(settings) = settings {
-            if settings.auto_complete {
-                let status = if result.success { "FULFILLED" } else { "CANCELED" };
-                if let Err(e) = self.twitch_manager.api_client.update_redemption_status(&redemption.reward_id, &redemption.id, status).await {
-                    error!("Failed to update redemption status: {:?}", e);
-                }
-            } else {
-                info!("Redemption is not set to auto-complete. Leaving status as UNFULFILLED.");
-            }
-        } else {
-            error!("Failed to get redemption settings for reward ID: {}", redemption.reward_id);
-        }
-
-        Ok(())
-    }
-
-    pub async fn handle_channel_point_redemption_update(&self, event: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        trace!("Received channel point redemption update: {:?}", event);
-        self.twitch_manager.redeem_manager.read().await.handle_redemption_update(event).await
-    }
-
     pub async fn handle_osc_event(&self, event_type: &str, event_data: &Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let configs = self.osc_configs.read().await;
         if let Some(osc_config) = configs.get_config(event_type) {
@@ -474,16 +367,5 @@ impl TwitchEventSubClient {
         let mut configs = self.osc_configs.write().await;
         configs.add_config(event_type, config);
         configs.save("osc_config.json").unwrap_or_else(|e| eprintln!("Failed to save OSC configs: {}", e));
-    }
-
-    async fn announce_redemption(&self, redemption: &Redemption, result: &RedemptionResult) {
-        let message = match &result.message {
-            Some(msg) => format!("{} redeemed {}! {}", redemption.user_name, redemption.reward_title, msg),
-            None => format!("{} redeemed {}!", redemption.user_name, redemption.reward_title),
-        };
-
-        if let Err(e) = self.twitch_manager.send_message_as_bot(&self.channel, message.as_str()).await {
-            error!("Failed to announce redemption in chat: {}", e);
-        }
     }
 }
