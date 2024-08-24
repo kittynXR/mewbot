@@ -32,7 +32,7 @@ impl RedeemManager {
 
         let mut handlers = HashMap::new();
         handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone())) as Box<dyn RedeemHandler>);
-        handlers.insert("Ask AI".to_string(), Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("mao mao".to_string(), Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("Toss Pillow".to_string(), Box::new(TossPillowAction::new(vrchat_osc.clone(), osc_configs.clone())) as Box<dyn RedeemHandler>);
 
         Self {

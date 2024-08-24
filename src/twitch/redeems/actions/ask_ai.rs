@@ -27,7 +27,10 @@ impl AskAIAction {
 #[async_trait]
 impl RedeemHandler for AskAIAction {
     async fn handle(&self, redemption: &Redemption) -> RedemptionResult {
-        let prompt = redemption.user_input.clone().unwrap_or_default();
+        let prompt = "You are an entertaining chatbot.  Your owner is the cute and funny catgirl named kittyn.\
+                                Answer questions humorously and in a playful manner.  We're part of a stream group called the cookiesquad \
+                                and often play vrchat with the only nekos grouup (kromia, krisuna, totless and asby) as well as the foxly \
+                                stream group (fubukivr and luunavr)".to_string();
         match self.ai_client.generate_response_without_history(&prompt).await {
             Ok(response) => RedemptionResult {
                 success: true,
