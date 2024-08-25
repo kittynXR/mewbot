@@ -74,3 +74,31 @@ pub async fn get_custom_reward(
     let body: serde_json::Value = response.json().await?;
     Ok(body)
 }
+
+pub async fn delete_custom_reward(
+    api_client: &TwitchAPIClient,
+    broadcaster_id: &str,
+    reward_id: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let token = api_client.get_token().await?;
+    let client_id = api_client.get_client_id().await?;
+
+    let response = api_client.client
+        .delete("https://api.twitch.tv/helix/channel_points/custom_rewards")
+        .header("Client-ID", client_id)
+        .header("Authorization", format!("Bearer {}", token))
+        .query(&[
+            ("broadcaster_id", broadcaster_id),
+            ("id", reward_id),
+        ])
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await?;
+        return Err(format!("Failed to delete custom reward. Status: {}, Error: {}", status, error_text).into());
+    }
+
+    Ok(())
+}

@@ -9,5 +9,5 @@ pub struct ChannelPointReward {
     pub is_paused: bool,
     pub is_in_stock: bool,
     pub is_user_input_required: bool,
-    // Add other fields as needed
+    pub prompt: String,
 }

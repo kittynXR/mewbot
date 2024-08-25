@@ -64,15 +64,20 @@ impl CoinGameState {
     }
 }
 
-// Add this new struct to represent the redeem settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct RedeemSettings {
-    pub reward_id: String,
-    pub title: String,
+    pub reward_name: String,  // Our internal identifier
+    pub title: String,        // The title shown on Twitch
+    pub twitch_reward_id: Option<String>,  // The Twitch-assigned UUID
     pub cost: u32,
     pub prompt: String,
     pub cooldown: u32,
     pub is_global_cooldown: bool,
     pub use_osc: bool,
     pub osc_config: Option<OSCConfig>,
+    pub enabled_games: Vec<String>,
+    pub disabled_games: Vec<String>,
+    pub enabled_offline: bool,
+    pub user_input_required: bool,
+    pub is_active: bool,
 }

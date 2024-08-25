@@ -22,12 +22,7 @@ pub async fn handle(
 
             twitch_manager.send_message_as_bot(channel, response.as_str()).await?;
 
-            // let redeem_manager = twitch_manager.get_redeem_manager();
-            // Update stream status with the new game
-            // let mut manager = redeem_manager.write().await;
-            // if let Err(e) = manager.update_stream_status(category_name.to_string()).await {
-            //     error!("Failed to update stream status: {}", e);
-            // }
+            twitch_manager.get_redeem_manager().write().await.handle_stream_update(category_name.to_string()).await?;
         }
     }
 

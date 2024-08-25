@@ -221,7 +221,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     ).await?);
 
     let clients = BotClients {
-        twitch_manager,
+        twitch_manager: twitch_manager.clone(),
         vrchat: vrchat_manager,
         obs: Some(obs_manager),
         discord,
@@ -233,6 +233,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         websocket_tx,
         websocket_rx: Some(websocket_rx),
     };
+
+    twitch_manager.redeem_manager.read().await.initialize_redeems().await?;
 
     // clients.twitch_manager.redeem_manager.write().await.reset_coin_game().await?;
     let eventsub_client_clone = clients.twitch_manager.eventsub_client.clone();
