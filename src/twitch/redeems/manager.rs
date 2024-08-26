@@ -137,7 +137,7 @@ impl RedeemManager {
                 reward_name: "Toss Pillow".to_string(),
                 title: "Toss Pillow".to_string(),
                 twitch_reward_id: None,
-                cost: 50,
+                cost: 48,
                 prompt: "Toss a virtual pillow!".to_string(),
                 cooldown: 0,
                 is_global_cooldown: false,

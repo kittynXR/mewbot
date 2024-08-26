@@ -64,7 +64,7 @@ impl MessageHandler {
 
             let cleaned_message = msg.message_text
                 .chars()
-                .filter(|&c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+                .filter(|&c| !c.is_control() && !c.is_whitespace() || c.is_ascii_whitespace())
                 .collect::<String>()
                 .trim()
                 .to_string();

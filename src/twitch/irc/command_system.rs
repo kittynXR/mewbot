@@ -39,6 +39,14 @@ pub struct Command {
 
 pub const COMMANDS: &[Command] = &[
     Command {
+        name: "!calc",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, _twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, params, _config, _vrchat_client, _ai_client, _is_stream_online| {
+            Box::pin(commands::calc::handle_calc(msg, client, channel, storage, user_links, params))
+        },
+        description: "Calculates a mathematical expression",
+    },
+    Command {
         name: "!world",
         required_role: UserRole::Subscriber,
         handler: |msg, client, channel, twitch_manager, world_info, _cooldowns, _redeem_manager, storage, user_links, _params, _config, vrchat_client, _ai_client, is_stream_online|

@@ -8,6 +8,7 @@ pub(crate) mod verify;
 pub(crate) mod discord;
 pub(crate) mod vrc;
 pub(crate) mod followers;
+pub(crate) mod calc;
 
 pub use verify::*;
 
