@@ -349,6 +349,20 @@ impl TwitchAPIClient {
         ).await
     }
 
+    pub async fn complete_channel_points(
+        &self,
+        broadcaster_id: &str,
+        reward_id: &str,
+        redemption_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        crate::twitch::api::requests::channel_points::complete_channel_points(
+            self,
+            broadcaster_id,
+            reward_id,
+            redemption_id,
+        ).await
+    }
+
     pub async fn get_custom_reward(&self, reward_id: &str) -> Result<ChannelPointReward, Box<dyn std::error::Error + Send + Sync>> {
         let broadcaster_id = self.get_broadcaster_id().await?;
         let response = self.client

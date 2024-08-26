@@ -80,4 +80,5 @@ pub struct RedeemSettings {
     pub enabled_offline: bool,
     pub user_input_required: bool,
     pub is_active: bool,
+    pub auto_complete: bool,
 }

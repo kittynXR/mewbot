@@ -55,14 +55,33 @@ impl RedeemManager {
     }
 
     pub async fn handle_redemption(&self, redemption: &Redemption) -> RedemptionResult {
-        if let Some(handler) = self.handlers.get(&redemption.reward_title) {
+        let settings = self.redeem_settings.read().await;
+        let result = if let Some(handler) = self.handlers.get(&redemption.reward_title) {
             handler.handle(redemption).await
         } else {
             RedemptionResult {
                 success: false,
                 message: Some(format!("No handler found for redemption: {}", redemption.reward_title)),
             }
+        };
+
+        if result.success {
+            if let Some(redeem_setting) = settings.get(&redemption.reward_title) {
+                if redeem_setting.auto_complete {
+                    if let Err(e) = self.api_client.complete_channel_points(
+                        &redemption.broadcaster_id,
+                        &redemption.reward_id,
+                        &redemption.id
+                    ).await {
+                        error!("Failed to auto-complete redemption: {:?}", e);
+                    } else {
+                        debug!("Auto-completed redemption: {}", redemption.reward_title);
+                    }
+                }
+            }
         }
+
+        result
     }
 
     // You might want to add this method if you need cancellation handling
@@ -96,6 +115,7 @@ impl RedeemManager {
                 enabled_offline: false,
                 user_input_required: false,
                 is_active: true,
+                auto_complete: false,
             },
             RedeemSettings {
                 reward_name: "mao_mao".to_string(),
@@ -112,6 +132,7 @@ impl RedeemManager {
                 enabled_offline: true,
                 user_input_required: true,
                 is_active: true,
+                auto_complete: true,
             },
             RedeemSettings {
                 reward_name: "toss_pillow".to_string(),
@@ -136,6 +157,7 @@ impl RedeemManager {
                 enabled_offline: true,
                 user_input_required: false,
                 is_active: true,
+                auto_complete: true,
             },
         ];
 
@@ -155,6 +177,7 @@ impl RedeemManager {
             enabled_offline: false,
             user_input_required: false,
             is_active: false,
+            auto_complete: true,
         });
 
         info!("Prepared {} redeems for initialization", redeems.len());

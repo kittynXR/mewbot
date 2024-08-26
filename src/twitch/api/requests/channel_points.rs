@@ -46,6 +46,15 @@ pub async fn refund_channel_points(
     update_redemption_status(api_client, broadcaster_id, reward_id, redemption_id, "CANCELED").await
 }
 
+pub async fn complete_channel_points(
+    api_client: &TwitchAPIClient,
+    broadcaster_id: &str,
+    reward_id: &str,
+    redemption_id: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    update_redemption_status(api_client, broadcaster_id, reward_id, redemption_id, "FULFILLED").await
+}
+
 pub async fn get_custom_reward(
     api_client: &TwitchAPIClient,
     broadcaster_id: &str,
