@@ -158,6 +158,22 @@ pub const COMMANDS: &[Command] = &[
         },
         description: "Shows how long a user has been following the channel",
     },
+    Command {
+        name: "!isitfriday",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, _params, _config, _vrchat_client, ai_client, _is_stream_online| {
+            Box::pin(commands::fun_commands::handle_isitfriday(msg, client, channel, twitch_manager, storage, user_links, ai_client))
+        },
+        description: "Check if it's Friday and get a fun message",
+    },
+    Command {
+        name: "!xmas",
+        required_role: UserRole::Viewer,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, _params, _config, _vrchat_client, ai_client, _is_stream_online| {
+            Box::pin(commands::fun_commands::handle_xmas(msg, client, channel, twitch_manager, storage, user_links, ai_client))
+        },
+        description: "Find out how many days until Christmas",
+    },
 ];
 
 pub async fn execute_command(
