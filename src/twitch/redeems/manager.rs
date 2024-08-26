@@ -38,7 +38,7 @@ impl RedeemManager {
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
 
         let mut handlers = HashMap::new();
-        handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone(), ai_client.clone(), api_client.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("mao mao".to_string(), Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("Toss Pillow".to_string(), Box::new(TossPillowAction::new(vrchat_osc.clone(), osc_configs.clone())) as Box<dyn RedeemHandler>);
 
@@ -189,6 +189,8 @@ impl RedeemManager {
         }
         drop(settings);
 
+        self.check_and_reset_coin_game().await?;
+
         self.sync_configured_rewards().await?;
 
         info!("Redeem initialization complete");
@@ -208,6 +210,42 @@ impl RedeemManager {
         drop(status);
 
         self.update_redeem_availabilities().await
+    }
+
+    async fn check_and_reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.coin_game_state.write().await;
+        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        let is_live = self.api_client.is_stream_live(&broadcaster_id).await?;
+
+        if state.is_active && is_live {
+            // Reset price to default and refund any pending redeems
+            state.current_price = state.default_price;
+            if let Some((redemption, _)) = &state.current_redeemer {
+                self.api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
+            }
+            state.current_redeemer = None;
+            state.previous_redeemer = None;
+
+            // Update the reward on Twitch
+            let reward_id = self.get_coin_game_reward_id().await?;
+            let initial_message = "The Coin Game has been reset! Who will be the first to join?";
+            self.api_client.update_custom_reward(
+                &reward_id,
+                "Coin Game",
+                state.default_price,
+                true,
+                0,
+                initial_message,
+                false,
+            ).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn get_coin_game_reward_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        // For now, just return the title of the reward
+        Ok("Coin Game".to_string())
     }
 
     async fn sync_configured_rewards(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -369,6 +407,24 @@ impl RedeemManager {
     }
 
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.coin_game_state.write().await;
+        state.is_active = true;
+        state.current_price = state.default_price;
+        state.current_redeemer = None;
+        state.previous_redeemer = None;
+
+        let reward_id = self.get_coin_game_reward_id().await?;
+        let initial_message = "The stream is live! The Coin Game has begun!";
+        self.api_client.update_custom_reward(
+            &reward_id,
+            "Coin Game",
+            state.default_price,
+            true,
+            0,
+            initial_message,
+            false,
+        ).await?;
+
         let mut status = self.stream_status.write().await;
         status.is_live = true;
         status.current_game = game_name;
@@ -378,6 +434,28 @@ impl RedeemManager {
     }
 
     pub async fn handle_stream_offline(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.coin_game_state.write().await;
+
+        // Refund the final redeemer if exists
+        if let Some((redemption, _)) = &state.current_redeemer {
+            self.api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
+        }
+
+        state.is_active = false;
+        state.current_redeemer = None;
+        state.previous_redeemer = None;
+
+        let reward_id = self.get_coin_game_reward_id().await?;
+        self.api_client.update_custom_reward(
+            &reward_id,
+            "Coin Game",
+            state.default_price,
+            false,  // Disable the reward
+            0,
+            "The Coin Game is currently inactive.",
+            false,
+        ).await?;
+
         let mut status = self.stream_status.write().await;
         status.is_live = false;
         status.current_game = String::new();

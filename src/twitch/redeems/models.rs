@@ -49,20 +49,28 @@ pub struct StreamStatus {
     pub current_game: String,
 }
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinGameState {
+    pub default_price: u32,
     pub current_price: u32,
-    pub last_redemption: Option<Redemption>,
+    pub current_redeemer: Option<(Redemption, u32)>, // (Redemption, cost)
+    pub previous_redeemer: Option<(Redemption, u32)>, // (Redemption, cost)
+    pub is_active: bool,
 }
 
 impl CoinGameState {
-    pub fn new(initial_price: u32) -> Self {
+    pub fn new(default_price: u32) -> Self {
         Self {
-            current_price: initial_price,
-            last_redemption: None,
+            default_price,
+            current_price: default_price,
+            current_redeemer: None,
+            previous_redeemer: None,
+            is_active: false,
         }
     }
 }
+
 
 #[derive(Clone, Debug)]
 pub struct RedeemSettings {
