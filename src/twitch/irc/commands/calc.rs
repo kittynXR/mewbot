@@ -70,7 +70,6 @@ fn tokenize(input: &str, constants: &HashMap<String, f64>) -> Result<Vec<Token>,
             _ => return Err(format!("Invalid character: {}", ch)),
         }
     }
-    println!("Tokens: {:?}", tokens);  // Debug print
     Ok(tokens)
 }
 
@@ -79,7 +78,6 @@ fn evaluate(tokens: &[Token], constants: &HashMap<String, f64>) -> Result<f64, S
     let mut operators = Vec::new();
 
     for token in tokens.iter() {
-        println!("Processing token: {:?}", token);  // Debug print
         match token {
             Token::Number(n) => output.push(*n),
             Token::Constant(name) => {
@@ -120,19 +118,16 @@ fn evaluate(tokens: &[Token], constants: &HashMap<String, f64>) -> Result<f64, S
                 }
             },
         }
-        println!("After processing: output = {:?}, operators = {:?}", output, operators);  // Debug print
     }
 
     while let Some(op) = operators.pop() {
         apply_operator(&mut output, op)?;
     }
 
-    println!("Final output: {:?}", output);  // Debug print
     output.pop().ok_or_else(|| "Invalid expression".to_string())
 }
 
 fn apply_operator(output: &mut Vec<f64>, op: Token) -> Result<(), String> {
-    println!("Applying operator: {:?}", op);  // Debug print
     let b = output.pop().ok_or("Invalid expression: not enough operands")?;
     let a = output.pop().ok_or("Invalid expression: not enough operands")?;
     let result = match op {
@@ -149,7 +144,6 @@ fn apply_operator(output: &mut Vec<f64>, op: Token) -> Result<(), String> {
         _ => return Err("Invalid operator".to_string()),
     };
     output.push(result);
-    println!("After applying operator: {:?}", output);  // Debug print
     Ok(())
 }
 
@@ -173,23 +167,14 @@ pub async fn handle_calc(
     constants.insert("tau".to_string(), std::f64::consts::TAU);
 
     let expression = params.join(" ");
-    println!("Expression: {}", expression);  // Debug print
 
-    let tokens = match tokenize(&expression, &constants) {
-        Ok(t) => t,
-        Err(e) => {
-            client.send_message(channel, &format!("Error parsing expression: {}", e)).await?;
-            return Ok(());
-        }
-    };
-
-    match evaluate(&tokens, &constants) {
+    match tokenize(&expression, &constants).and_then(|tokens| evaluate(&tokens, &constants)) {
         Ok(result) => {
             let response = format!("Result: {}", result);
             client.send_message(channel, &response).await?;
         },
         Err(e) => {
-            let error_message = format!("Error evaluating expression: {}", e);
+            let error_message = format!("Error: {}", e);
             client.send_message(channel, &error_message).await?;
         }
     }
