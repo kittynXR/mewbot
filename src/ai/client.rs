@@ -47,7 +47,14 @@ impl AIClient {
     }
 
     pub async fn generate_response_without_history(&self, prompt: &str) -> Result<String, AIError> {
-        self.generate_response(prompt).await
+        if let Some(provider) = &self.openai_provider {
+            provider.generate_response_without_history(prompt).await
+        } else if let Some(provider) = &self.anthropic_provider {
+            // Assuming Anthropic provider also implements generate_response_without_history
+            provider.generate_response_without_history(prompt).await
+        } else {
+            Err(AIError::APIError("No AI provider available".to_string()))
+        }
     }
 
     async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {

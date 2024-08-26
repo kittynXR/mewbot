@@ -1,3 +1,4 @@
+// openai.rs
 use async_trait::async_trait;
 use super::models::{AIProvider, AIError};
 use reqwest::Client;
@@ -15,15 +16,12 @@ impl OpenAIProvider {
             client: Client::new(),
         }
     }
-}
 
-#[async_trait]
-impl AIProvider for OpenAIProvider {
-    async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {
+    async fn generate_response_with_model(&self, prompt: &str, model: &str) -> Result<String, AIError> {
         let response = self.client.post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&json!({
-                "model": "gpt-4o-mini",
+                "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 100
             }))
@@ -39,5 +37,16 @@ impl AIProvider for OpenAIProvider {
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| AIError::InvalidResponse("No content in response".to_string()))
+    }
+}
+
+#[async_trait]
+impl AIProvider for OpenAIProvider {
+    async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {
+        self.generate_response_with_model(prompt, "gpt-4o-mini").await
+    }
+
+    async fn generate_response_without_history(&self, prompt: &str) -> Result<String, AIError> {
+        self.generate_response_with_model(prompt, "gpt-4o").await
     }
 }

@@ -15,17 +15,16 @@ impl AnthropicProvider {
             client: Client::new(),
         }
     }
-}
 
-#[async_trait]
-impl AIProvider for AnthropicProvider {
-    async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {
-        let response = self.client.post("https://api.anthropic.com/v1/completions")
+    async fn generate_response_with_model(&self, prompt: &str, model: &str) -> Result<String, AIError> {
+        let response = self.client.post("https://api.anthropic.com/v1/messages")
             .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .header("anthropic-version", "2023-06-01")
             .json(&json!({
-                "model": "claude-2",
-                "prompt": format!("Human: {}\n\nAssistant:", prompt),
-                "max_tokens_to_sample": 100
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1000
             }))
             .send()
             .await
@@ -35,9 +34,22 @@ impl AIProvider for AnthropicProvider {
             .await
             .map_err(|e| AIError::InvalidResponse(e.to_string()))?;
 
-        response_json["completion"]
+        response_json["content"][0]["text"]
             .as_str()
             .map(|s| s.trim().to_string())
             .ok_or_else(|| AIError::InvalidResponse("No content in response".to_string()))
+    }
+}
+
+#[async_trait]
+impl AIProvider for AnthropicProvider {
+    async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {
+        // Use Claude 3.0 for responses with history
+        self.generate_response_with_model(prompt, "claude-3-opus-20240229").await
+    }
+
+    async fn generate_response_without_history(&self, prompt: &str) -> Result<String, AIError> {
+        // Use Claude 3.5 for responses without history
+        self.generate_response_with_model(prompt, "claude-3-sonnet-20240229").await
     }
 }

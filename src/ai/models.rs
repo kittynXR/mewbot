@@ -20,9 +20,11 @@ impl std::fmt::Display for AIError {
     }
 }
 
+
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     async fn generate_response(&self, prompt: &str) -> Result<String, AIError>;
+    async fn generate_response_without_history(&self, prompt: &str) -> Result<String, AIError>;
 }
 
 
