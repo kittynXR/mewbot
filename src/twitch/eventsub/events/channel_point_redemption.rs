@@ -2,7 +2,7 @@ use crate::twitch::manager::TwitchManager;
 use crate::twitch::redeems::{Redemption, RedemptionStatus};
 use serde_json::Value;
 use std::sync::Arc;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 
 pub async fn handle_new_redemption(
     event: &Value,
@@ -11,7 +11,7 @@ pub async fn handle_new_redemption(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redemption = parse_redemption(event);
 
-    trace!("Processing new redemption: {:?}", redemption);
+    info!("Processing new redemption: {:?}", redemption);
 
     let redeem_manager = twitch_manager.redeem_manager.read().await;
     let result = redeem_manager.handle_redemption(&redemption).await;

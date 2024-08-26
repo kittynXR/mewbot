@@ -30,12 +30,12 @@ impl OSCConfigurations {
         Ok(())
     }
 
-    pub fn get_config(&self, event_type: &str) -> Option<&OSCConfig> {
-        self.configs.get(event_type)
+    pub fn get_config(&self, key: &str) -> Option<&OSCConfig> {
+        self.configs.get(key)
     }
 
-    pub fn add_config(&mut self, event_type: String, config: OSCConfig) {
-        self.configs.insert(event_type, config);
+    pub fn add_config(&mut self, key: &str, config: OSCConfig) {
+        self.configs.insert(key.to_string(), config);
     }
 }
 

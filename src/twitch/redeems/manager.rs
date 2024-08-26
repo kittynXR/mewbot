@@ -55,6 +55,7 @@ impl RedeemManager {
     }
 
     pub async fn handle_redemption(&self, redemption: &Redemption) -> RedemptionResult {
+        debug!("Handling redemption for: {}", redemption.reward_title);
         let settings = self.redeem_settings.read().await;
         let result = if let Some(handler) = self.handlers.get(&redemption.reward_title) {
             handler.handle(redemption).await
@@ -65,17 +66,21 @@ impl RedeemManager {
             }
         };
 
-        if result.success {
-            if let Some(redeem_setting) = settings.get(&redemption.reward_title) {
-                if redeem_setting.auto_complete {
-                    if let Err(e) = self.api_client.complete_channel_points(
-                        &redemption.broadcaster_id,
-                        &redemption.reward_id,
-                        &redemption.id
-                    ).await {
-                        error!("Failed to auto-complete redemption: {:?}", e);
-                    } else {
+        if let Some(redeem_setting) = settings.get(&redemption.reward_title) {
+            if redeem_setting.auto_complete {
+                match self.api_client.complete_channel_points(
+                    &redemption.broadcaster_id,
+                    &redemption.reward_id,
+                    &redemption.id
+                ).await {
+                    Ok(_) => {
                         debug!("Auto-completed redemption: {}", redemption.reward_title);
+                        if !result.success {
+                            warn!("Redemption was auto-completed despite handler failure: {}", redemption.reward_title);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to auto-complete redemption {}: {:?}", redemption.reward_title, e);
                     }
                 }
             }
@@ -90,16 +95,10 @@ impl RedeemManager {
         Ok(())
     }
 
-    // pub async fn update_stream_status(&self, is_live: bool, current_game: String) {
-    //     let mut status = self.stream_status.write().await;
-    //     status.is_live = is_live;
-    //     status.current_game = current_game;
-    // }
-
     pub async fn initialize_redeems(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Starting to initialize redeems");
 
-        let mut redeems = vec![
+        let redeems = vec![
             RedeemSettings {
                 reward_name: "coin_game".to_string(),
                 title: "Coin Game".to_string(),
@@ -135,7 +134,7 @@ impl RedeemManager {
                 auto_complete: true,
             },
             RedeemSettings {
-                reward_name: "toss_pillow".to_string(),
+                reward_name: "Toss Pillow".to_string(),
                 title: "Toss Pillow".to_string(),
                 twitch_reward_id: None,
                 cost: 50,
@@ -159,39 +158,56 @@ impl RedeemManager {
                 is_active: true,
                 auto_complete: true,
             },
+            RedeemSettings {
+                reward_name: "custom_redeem".to_string(),
+                title: "Custom Redeem".to_string(),
+                twitch_reward_id: None,
+                cost: 75,
+                prompt: "This is a custom redeem".to_string(),
+                cooldown: 0,
+                is_global_cooldown: false,
+                use_osc: false,
+                osc_config: None,
+                enabled_games: vec![],
+                disabled_games: vec![],
+                enabled_offline: false,
+                user_input_required: false,
+                is_active: false,
+                auto_complete: true,
+            },
         ];
-
-        // Add any additional redeems that are not handled by default handlers
-        redeems.push(RedeemSettings {
-            reward_name: "custom_redeem".to_string(),
-            title: "Custom Redeem".to_string(),
-            twitch_reward_id: None,
-            cost: 75,
-            prompt: "This is a custom redeem".to_string(),
-            cooldown: 0,
-            is_global_cooldown: false,
-            use_osc: false,
-            osc_config: None,
-            enabled_games: vec![],
-            disabled_games: vec![],
-            enabled_offline: false,
-            user_input_required: false,
-            is_active: false,
-            auto_complete: true,
-        });
 
         info!("Prepared {} redeems for initialization", redeems.len());
 
         let mut settings = self.redeem_settings.write().await;
+        let mut osc_configs = self.osc_configs.write().await;
+
         for redeem in redeems {
-            info!("Adding redeem to settings: {}", redeem.title);
-            settings.insert(redeem.reward_name.clone(), redeem);
+            info!("Processing redeem: {}", redeem.title);
+            settings.insert(redeem.reward_name.clone(), redeem.clone());
+
+            if redeem.use_osc {
+                if let Some(osc_config) = redeem.osc_config.clone() {
+                    osc_configs.add_config(&redeem.title, osc_config);
+                    info!("Added OSC config for {} with key {}", redeem.title, redeem.title);
+                } else {
+                    warn!("OSC is enabled for {} but no OSC config was provided", redeem.title);
+                }
+            }
         }
+
+        info!("OSC configs after initialization: {:?}", osc_configs.configs.keys().collect::<Vec<_>>());
+
         drop(settings);
+        drop(osc_configs);
+
 
         self.check_and_reset_coin_game().await?;
 
-        self.sync_configured_rewards().await?;
+        match self.sync_configured_rewards().await {
+            Ok(_) => info!("Successfully synced configured rewards"),
+            Err(e) => error!("Failed to sync configured rewards: {:?}", e),
+        }
 
         info!("Redeem initialization complete");
         Ok(())

@@ -365,7 +365,7 @@ impl TwitchEventSubClient {
 
     pub async fn add_osc_config(&self, event_type: String, config: OSCConfig) {
         let mut configs = self.osc_configs.write().await;
-        configs.add_config(event_type, config);
+        configs.add_config(&event_type, config);
         configs.save("osc_config.json").unwrap_or_else(|e| eprintln!("Failed to save OSC configs: {}", e));
     }
 }
