@@ -25,7 +25,7 @@ pub async fn handle(
             match api_client.get_follower_count(&broadcaster_id).await {
                 Ok(follower_count) => {
                     let response = format!(
-                        "Thank you for following, {}! Welcome to the community! human-like-cat-entity#{} mao mao",
+                        "Thank you for following, {}! Welcome to the community! cat-like-entity#{} mao mao",
                         user_name,
                         follower_count
                     );
