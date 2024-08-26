@@ -9,3 +9,4 @@ pub mod channel_subscription_message;
 pub mod channel_subscription_gift;
 pub mod channel_subscription_end;
 pub mod channel_point_redemption;
+pub(crate) mod ads;

@@ -3,6 +3,7 @@ use super::client::TwitchEventSubClient;
 use super::events;
 use super::events::{channel_follow, channel_raid, channel_update, stream_online, stream_offline, channel_subscribe, channel_subscription_message, channel_point_redemption};
 use super::events::{channel_subscription_gift, channel_subscription_end};
+use super::events::ads; // New import
 use std::sync::Arc;
 use log::{debug, error};
 use crate::twitch::api::TwitchAPIClient;
@@ -41,6 +42,7 @@ pub async fn handle_message(
                 debug!("Received channel point redemption update: {:?}", parsed["payload"]["event"]);
                 channel_point_redemption::handle_redemption_update(&parsed["payload"]["event"], twitch_manager).await?;
             },
+            "channel.ad_break.begin" => ads::handle_ad_break_begin(&parsed, channel, twitch_manager).await?, // New handler
             _ => error!("Unhandled event type: {}", event_type),
         }
     }

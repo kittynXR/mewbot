@@ -311,8 +311,11 @@ impl TwitchEventSubClient {
             "broadcaster_user_id": channel_id
         })),
             ("channel.channel_points_custom_reward_redemption.update", "1", json!({
-    "broadcaster_user_id": channel_id
-})),
+            "broadcaster_user_id": channel_id
+        })),
+            ("channel.ad_break.begin", "1", json!({ // New subscription
+            "broadcaster_user_id": channel_id
+        })),
         ];
 
         for (subscription_type, version, condition) in subscriptions {
