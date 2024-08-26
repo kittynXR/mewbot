@@ -22,7 +22,7 @@ pub async fn handle(
         info!("Raid received from: {} with {} viewers", from_broadcaster_user_name, viewers);
 
         // Get the game they were playing
-        let game = get_channel_game(from_broadcaster_user_id, api_client).await?;
+        let game = get_channel_game(from_broadcaster_user_id, &api_client).await?;
 
         let response = format!(
             "Welcome raiders! Thank you {} for the raid with {} {}! They were just playing {}. Hope you all had fun and enjoy your stay!",

@@ -62,8 +62,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "!so",
         required_role: UserRole::Subscriber,
-        handler: |msg, client, channel, twitch_manager, _world_info, cooldowns, redeem_manager, storage, user_links, params, _config, _vrchat_client, _ai_client, _is_stream_online|
-            Box::pin(commands::handle_shoutout(msg, client, channel, twitch_manager, cooldowns, params, redeem_manager, storage, user_links)),
+        handler: |msg, client, channel, twitch_manager, _world_info, cooldowns, redeem_manager, storage, user_links, params, _config, _vrchat_client, ai_client, _is_stream_online|
+            Box::pin(commands::handle_shoutout(msg, client, channel, twitch_manager, cooldowns, params, redeem_manager, storage, user_links, ai_client)),
         description: "Gives a shoutout to another streamer",
     },
     // Command {

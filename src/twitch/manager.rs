@@ -20,21 +20,21 @@ use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 #[derive(Clone)]
 pub struct TwitchUser {
     user_id: String,
-    username: String,
-    display_name: String,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
     pub(crate) role: UserRole,
     last_seen: DateTime<Utc>,
     messages: VecDeque<(DateTime<Utc>, String)>,
-    streamer_data: Option<StreamerData>,
+    pub(crate) streamer_data: Option<StreamerData>,
 }
 
 #[derive(Clone)]
 pub struct StreamerData {
-    recent_games: Vec<String>,
-    current_tags: Vec<String>,
-    current_title: String,
+    pub(crate) recent_games: Vec<String>,
+    pub(crate) current_tags: Vec<String>,
+    pub(crate) current_title: String,
     recent_titles: VecDeque<String>,
-    top_clips: Vec<(String, String)>, // (clip_title, clip_url)
+    pub(crate) top_clips: Vec<(String, String)>, // (clip_title, clip_url)
 }
 
 #[derive(Clone)]
@@ -347,29 +347,66 @@ impl TwitchManager {
     }
 
     pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut user = self.user_manager.get_user(user_id).await?;
+        let api_client = self.get_api_client();
 
-        // Fetch streamer data from Twitch API
-        let channel_info = crate::twitch::api::requests::get_channel_information(&self.api_client, user_id).await?;
-        let stream_info = self.api_client.get_stream_info(user_id).await?;
-        let top_clips = crate::twitch::api::requests::get_top_clips(&self.api_client, user_id, 10).await?;
+        // Fetch user info
+        let user_info = api_client.get_user_info_by_id(user_id).await?;
+        let user_data = user_info["data"].as_array()
+            .and_then(|arr| arr.first())
+            .ok_or("User data not found")?;
 
-        user.streamer_data = Some(StreamerData {
-            recent_games: vec![channel_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()],
-            current_tags: channel_info["data"][0]["tags"].as_array()
-                .map(|tags| tags.iter().filter_map(|tag| tag.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default(),
-            current_title: channel_info["data"][0]["title"].as_str().unwrap_or("").to_string(),
-            recent_titles: {
-                let mut titles = VecDeque::new();
-                titles.push_back(channel_info["data"][0]["title"].as_str().unwrap_or("").to_string());
-                titles
-            },
+        let username = user_data["login"].as_str().ok_or("Failed to get username")?.to_string();
+        let display_name = user_data["display_name"].as_str().unwrap_or(&username).to_string();
+
+        info!("User info - Username: {}, Display Name: {}", username, display_name);
+
+        // Fetch channel and stream info
+        let channel_info = api_client.get_channel_information(user_id).await?;
+        let stream_info = api_client.get_stream_info(user_id).await?;
+        let top_clips = api_client.get_top_clips(user_id, 10).await?;
+
+        let game_name = channel_info["data"][0]["game_name"].as_str().unwrap_or("").to_string();
+        info!("Recent game: {}", game_name);
+
+        let tags = channel_info["data"][0]["tags"].as_array()
+            .map(|tags| tags.iter().filter_map(|tag| tag.as_str().map(|s| s.to_string())).collect::<Vec<String>>())
+            .unwrap_or_default();
+        info!("Current tags: {:?}", tags);
+
+        let current_title = channel_info["data"][0]["title"].as_str().unwrap_or("").to_string();
+        info!("Current title: {}", current_title);
+
+        let mut recent_titles = VecDeque::new();
+        recent_titles.push_back(current_title.clone());
+        info!("Recent titles: {:?}", recent_titles);
+
+        info!("Top clips:");
+        for clip in &top_clips {
+            info!("  Title: {}, URL: {}", clip.title, clip.url);
+        }
+
+        let streamer_data = StreamerData {
+            recent_games: vec![game_name],
+            current_tags: tags,
+            current_title,
+            recent_titles,
             top_clips: top_clips.into_iter().map(|clip| (clip.title, clip.url)).collect(),
-        });
+        };
 
         // Update user in the user manager
+        let user = TwitchUser {
+            user_id: user_id.to_string(),
+            username,
+            display_name,
+            role: UserRole::Viewer, // You might want to fetch the actual role if available
+            last_seen: chrono::Utc::now(),
+            messages: VecDeque::new(),
+            streamer_data: Some(streamer_data),
+        };
+
         self.user_manager.update_user(user_id.to_string(), user).await?;
+
+        info!("Streamer data updated successfully for user_id: {}", user_id);
 
         Ok(())
     }

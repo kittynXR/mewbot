@@ -10,6 +10,7 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use log::{debug, error, info, warn};
 use crate::twitch::api::models::ChannelPointReward;
+use crate::twitch::api::requests::channel::Clip;
 use crate::twitch::api::requests::followers;
 use crate::twitch::api::requests::followers::FollowerInfo;
 
@@ -44,6 +45,120 @@ impl TwitchAPIClient {
         api_client.initialize().await?;
 
         Ok(api_client)
+    }
+
+    async fn authenticated_request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+        query: Option<&[(&str, &str)]>,
+        body: Option<serde_json::Value>,
+    ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+        let token = self.get_token().await?;
+        let client_id = self.get_client_id().await?;
+        let url = format!("https://api.twitch.tv/helix/{}", endpoint);
+
+        let mut request = self.client.request(method, &url)
+            .header("Client-ID", client_id)
+            .header("Authorization", format!("Bearer {}", token));
+
+        if let Some(q) = query {
+            request = request.query(q);
+        }
+
+        if let Some(b) = body {
+            request = request.json(&b);
+        }
+
+        let response = request.send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(format!("API request failed. Status: {}, Error: {}", status, error_text).into());
+        }
+
+        let result: T = response.json().await?;
+        Ok(result)
+    }
+
+    pub async fn get_user_info(&self, user_login: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        self.authenticated_request(
+            reqwest::Method::GET,
+            "users",
+            Some(&[("login", user_login)]),
+            None,
+        ).await
+    }
+
+    pub async fn get_user_info_by_id(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        self.authenticated_request(
+            reqwest::Method::GET,
+            "users",
+            Some(&[("id", user_id)]),
+            None,
+        ).await
+    }
+
+    pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        self.authenticated_request(
+            reqwest::Method::GET,
+            "streams",
+            Some(&[("user_id", user_id)]),
+            None,
+        ).await
+    }
+
+    pub async fn get_channel_information(&self, broadcaster_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        self.authenticated_request(
+            reqwest::Method::GET,
+            "channels",
+            Some(&[("broadcaster_id", broadcaster_id)]),
+            None,
+        ).await
+    }
+
+    pub async fn get_top_clips(&self, broadcaster_id: &str, limit: u32) -> Result<Vec<Clip>, Box<dyn std::error::Error + Send + Sync>> {
+        let clips: serde_json::Value = self.authenticated_request(
+            reqwest::Method::GET,
+            "clips",
+            Some(&[
+                ("broadcaster_id", broadcaster_id),
+                ("first", &limit.to_string()),
+            ]),
+            None,
+        ).await?;
+
+        let clips = clips["data"].as_array()
+            .ok_or("No clips data found")?
+            .iter()
+            .map(|clip| Clip {
+                title: clip["title"].as_str().unwrap_or("").to_string(),
+                url: clip["url"].as_str().unwrap_or("").to_string(),
+            })
+            .collect();
+
+        Ok(clips)
+    }
+
+    pub async fn send_shoutout(
+        &self,
+        from_broadcaster_id: &str,
+        to_broadcaster_id: &str,
+        moderator_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.authenticated_request::<serde_json::Value>(
+            reqwest::Method::POST,
+            "chat/shoutouts",
+            None,
+            Some(serde_json::json!({
+                "from_broadcaster_id": from_broadcaster_id,
+                "to_broadcaster_id": to_broadcaster_id,
+                "moderator_id": moderator_id,
+            })),
+        ).await?;
+
+        Ok(())
     }
 
     pub async fn authenticate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -230,53 +345,6 @@ impl TwitchAPIClient {
         *self.token.lock().await = Some(new_token);
 
         Ok(access_token)
-    }
-
-    // Add methods for making API calls here, e.g.:
-    pub async fn get_user_info(&self, user_login: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-        let token = self.get_token().await?;
-        let client_id = self.config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?;
-
-        debug!("Sending request to Twitch API for user info: {}", user_login);
-
-        let response = self.client
-            .get(&format!("https://api.twitch.tv/helix/users?login={}", user_login))
-            .header("Client-ID", client_id)
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
-            .await?;
-
-        debug!("Received response from Twitch API. Status: {}", response.status());
-
-        let body = response.text().await?;
-        debug!("Response body: {}", body);
-
-        let json: serde_json::Value = serde_json::from_str(&body)?;
-
-        if json["data"].as_array().map_or(true, |arr| arr.is_empty()) {
-            return Err(format!("User not found: {}", user_login).into());
-        }
-
-        Ok(json)
-    }
-
-    pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
-        let token = self.get_token().await?;
-        let client_id = self.get_client_id().await?;
-
-        let response = self.client
-            .get(&format!("https://api.twitch.tv/helix/streams?user_id={}", user_id))
-            .header("Client-ID", client_id)
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(format!("Failed to get stream info. Status: {}", response.status()).into());
-        }
-
-        let body: serde_json::Value = response.json().await?;
-        Ok(body)
     }
 
     pub async fn is_stream_live(&self, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
