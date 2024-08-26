@@ -98,18 +98,18 @@ impl RedeemManager {
                 is_active: true,
             },
             RedeemSettings {
-                reward_name: "ask_ai".to_string(),
-                title: "Ask the AI".to_string(),
+                reward_name: "mao_mao".to_string(),
+                title: "mao mao".to_string(),
                 twitch_reward_id: None,
-                cost: 100,
-                prompt: "Ask the AI a question!".to_string(),
-                cooldown: 0,
+                cost: 555,
+                prompt: "mao?".to_string(),
+                cooldown: 60,
                 is_global_cooldown: false,
                 use_osc: false,
                 osc_config: None,
                 enabled_games: vec![],
                 disabled_games: vec![],
-                enabled_offline: false,
+                enabled_offline: true,
                 user_input_required: true,
                 is_active: true,
             },
@@ -197,7 +197,7 @@ impl RedeemManager {
             info!("Processing redeem: {}", redeem_setting.title);
             let should_be_active = self.should_redeem_be_active(redeem_setting).await;
 
-            if should_be_active {
+            if should_be_active && redeem_setting.is_active {
                 match existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
                     Some(existing_reward) => {
                         // Update existing reward if needed
@@ -240,10 +240,10 @@ impl RedeemManager {
                     }
                 }
             } else {
-                // Delete the reward if it exists
-                if let Some(twitch_reward_id) = &redeem_setting.twitch_reward_id {
+                // Delete the reward if it exists (either it shouldn't be active or is_active is false)
+                if let Some(existing_reward) = existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
                     info!("Deleting inactive reward: {}", redeem_setting.title);
-                    match self.api_client.delete_custom_reward(&broadcaster_id, twitch_reward_id).await {
+                    match self.api_client.delete_custom_reward(&broadcaster_id, &existing_reward.id).await {
                         Ok(_) => {
                             info!("Successfully deleted reward: {}", redeem_setting.title);
                             redeem_setting.twitch_reward_id = None;
