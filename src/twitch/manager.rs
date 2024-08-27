@@ -164,6 +164,7 @@ pub struct TwitchManager {
     pub(crate) user_links: Arc<UserLinks>,
     stream_status: Arc<RwLock<bool>>,
     pub vrchat_osc: Option<Arc<VRChatOSC>>,
+    pub ai_client: Option<Arc<AIClient>>, // Add this line
 }
 
 impl TwitchManager {
@@ -212,6 +213,7 @@ impl TwitchManager {
             user_links,
             stream_status: Arc::new(RwLock::new(false)),
             vrchat_osc: vrchat_osc.clone(),
+            ai_client: ai_client.clone(),
         };
 
         let eventsub_client = Self::initialize_eventsub_client(
@@ -328,6 +330,10 @@ impl TwitchManager {
 
     pub fn get_redeem_manager(&self) -> Arc<RwLock<RedeemManager>> {
         self.redeem_manager.clone()
+    }
+
+    pub fn get_ai_client(&self) -> Option<Arc<AIClient>> {
+        self.ai_client.clone()
     }
 
     pub fn get_api_client(&self) -> Arc<TwitchAPIClient> {
