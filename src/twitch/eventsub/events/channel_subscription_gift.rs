@@ -1,10 +1,8 @@
 use serde_json::Value;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use crate::twitch::irc::TwitchBotClient;
+use log::{error, info};
 use crate::twitch::TwitchManager;
+use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
 pub async fn handle(
     event: &Value,
@@ -24,12 +22,37 @@ pub async fn handle(
             _ => "Unknown Tier",
         };
 
+        // Create OSC config for gift subs (same as resubs)
+        let osc_config = OSCConfig {
+            uses_osc: true,
+            osc_endpoint: "/avatar/parameters/twitch".to_string(),
+            osc_type: OSCMessageType::Integer,
+            osc_value: OSCValue::Integer(20),
+            default_value: OSCValue::Integer(0),
+            execution_duration: Some(std::time::Duration::from_secs(1)),
+            send_chat_message: false,
+        };
+
+        // Send OSC message
+        match twitch_manager.get_vrchat_osc() {
+            Some(vrchat_osc) => {
+                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
+                    error!("Failed to send OSC message for gift sub: {}", e);
+                }
+            },
+            None => {
+                error!("VRChatOSC instance not available for gift sub event");
+            }
+        }
+
         let message = format!(
             "WOW! {} just gifted {} {} subscriptions! They've gifted a total of {} subs in the channel!",
             user_name, total, tier_name, cumulative_total
         );
 
-        twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
+        twitch_manager.send_message_as_bot(channel, &message).await?;
+
+        info!("Processed gift sub event: {} gifted {} {} subs", user_name, total, tier_name);
     }
 
     Ok(())

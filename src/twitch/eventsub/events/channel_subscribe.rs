@@ -1,10 +1,9 @@
 use serde_json::Value;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use crate::twitch::irc::TwitchBotClient;
+use log::error;
 use crate::twitch::TwitchManager;
+use crate::osc::models::OSCConfig;
+use crate::osc::models::{OSCMessageType, OSCValue};
 
 pub async fn handle(
     event: &Value,
@@ -23,13 +22,36 @@ pub async fn handle(
             _ => "Unknown Tier",
         };
 
+        // Create OSC config for new subscribers
+        let osc_config = OSCConfig {
+            uses_osc: true,
+            osc_endpoint: "/avatar/parameters/twitch".to_string(),
+            osc_type: OSCMessageType::Integer,
+            osc_value: OSCValue::Integer(13),
+            default_value: OSCValue::Integer(0),
+            execution_duration: Some(std::time::Duration::from_secs(1)),
+            send_chat_message: false,
+        };
+
+        // Send OSC message using VRChatOSC through the get_vrchat_osc method
+        match twitch_manager.get_vrchat_osc() {
+            Some(vrchat_osc) => {
+                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
+                    error!("Failed to send OSC message for new subscriber: {}", e);
+                }
+            },
+            None => {
+                error!("VRChatOSC instance not available");
+            }
+        }
+
         let message = if is_gift {
             format!("{} received a gifted {} subscription! Thank you to the generous gifter!", user_name, tier_name)
         } else {
             format!("Thank you {} for subscribing with a {} subscription!", user_name, tier_name)
         };
 
-        twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
+        twitch_manager.send_message_as_bot(channel, &message).await?;
     }
 
     Ok(())

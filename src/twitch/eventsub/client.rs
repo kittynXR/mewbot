@@ -290,23 +290,26 @@ impl TwitchEventSubClient {
             "moderator_user_id": channel_id
         })),
             ("stream.online", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
-            ("stream.offline", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
-            ("channel.subscribe", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
-            ("channel.subscription.message", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
-            ("channel.subscription.gift", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
-            ("channel.subscription.end", "1", json!({
-        "broadcaster_user_id": channel_id
-    })),
+            "broadcaster_user_id": channel_id
+        })),
+                ("stream.offline", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
+                ("channel.subscribe", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
+                ("channel.subscription.message", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
+                ("channel.subscription.gift", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
+                ("channel.subscription.end", "1", json!({
+            "broadcaster_user_id": channel_id
+        })),
+            ("channel.cheer", "1", json!({
+                "broadcaster_user_id": channel_id
+        })),
             ("channel.channel_points_custom_reward_redemption.add", "1", json!({
             "broadcaster_user_id": channel_id
         })),

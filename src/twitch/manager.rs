@@ -314,6 +314,10 @@ impl TwitchManager {
         self.user_manager.get_user(user_id).await
     }
 
+    pub fn get_vrchat_osc(&self) -> Option<Arc<VRChatOSC>> {
+        self.vrchat_osc.clone()
+    }
+
     pub fn get_bot_client(&self) -> Arc<TwitchBotClient> {
         self.bot_client.clone()
     }

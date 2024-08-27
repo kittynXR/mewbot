@@ -2,10 +2,11 @@ use serde_json::Value;
 use super::client::TwitchEventSubClient;
 use super::events;
 use super::events::{channel_follow, channel_raid, channel_update, stream_online, stream_offline, channel_subscribe, channel_subscription_message, channel_point_redemption};
-use super::events::{channel_subscription_gift, channel_subscription_end};
+use super::events::{channel_bits, channel_subscription_gift, channel_subscription_end};
 use super::events::ads; // New import
 use std::sync::Arc;
 use log::{debug, error};
+use twitch_api::helix::bits;
 use crate::twitch::api::TwitchAPIClient;
 use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::manager::TwitchManager;
@@ -34,6 +35,7 @@ pub async fn handle_message(
             "channel.subscription.message" => channel_subscription_message::handle(&parsed, channel, twitch_manager).await?,
             "channel.subscription.gift" => channel_subscription_gift::handle(&parsed, channel, twitch_manager).await?,
             "channel.subscription.end" => channel_subscription_end::handle(&parsed, channel, twitch_manager).await?,
+            "channel.cheer" => channel_bits::handle(&parsed, channel, twitch_manager).await?,
             "channel.channel_points_custom_reward_redemption.add" => {
                 debug!("Received new channel point redemption: {:?}", parsed["payload"]["event"]);
                 channel_point_redemption::handle_new_redemption(&parsed["payload"]["event"], twitch_manager, channel).await?;

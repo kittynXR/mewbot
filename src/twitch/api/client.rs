@@ -230,7 +230,7 @@ impl TwitchAPIClient {
         let server_handle = tokio::spawn(server);
 
         let auth_url = format!(
-            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions channel:manage:ads channel:read:ads channel:manage:vips moderation:read moderator:manage:announcements",
+            "https://id.twitch.tv/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&scope=chat:read chat:edit channel:read:subscriptions moderator:read:followers moderator:manage:shoutouts channel:read:subscriptions channel:manage:redemptions channel:manage:ads channel:read:ads channel:manage:vips moderation:read moderator:manage:announcements bits:read",
             self.config.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?
         );
 

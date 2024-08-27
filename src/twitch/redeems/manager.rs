@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use futures_util::future::join_all;
 use log::{debug, error, info, warn};
 use tokio::sync::RwLock;
@@ -13,7 +14,7 @@ use crate::osc::osc_config::OSCConfigurations;
 use crate::twitch::api::models::ChannelPointReward;
 use crate::twitch::api::requests::channel_points;
 use super::models::{Redemption, RedemptionResult, RedemptionStatus, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings};
-use super::actions::{CoinGameAction, AskAIAction, TossPillowAction};
+use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
 
 pub struct RedeemManager {
     api_client: Arc<TwitchAPIClient>,
@@ -24,6 +25,16 @@ pub struct RedeemManager {
     stream_status: Arc<RwLock<StreamStatus>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
+    vrc_osc_redeems: Arc<VRCOscRedeems>,
+}
+
+struct VRCOscRedeemWrapper(Arc<VRCOscRedeems>);
+
+#[async_trait]
+impl RedeemHandler for VRCOscRedeemWrapper {
+    async fn handle(&self, redemption: &Redemption) -> RedemptionResult {
+        self.0.handle(redemption).await
+    }
 }
 
 impl RedeemManager {
@@ -37,10 +48,16 @@ impl RedeemManager {
         let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
 
+        let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(vrchat_osc.clone(), osc_configs.clone()));
+
         let mut handlers = HashMap::new();
         handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone(), ai_client.clone(), api_client.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("mao mao".to_string(), Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler>);
-        handlers.insert("Toss Pillow".to_string(), Box::new(TossPillowAction::new(vrchat_osc.clone(), osc_configs.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("toss pillo".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("cream pie".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("water balloon".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("cat trap".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("snowball".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
 
         Self {
             api_client,
@@ -51,6 +68,7 @@ impl RedeemManager {
             stream_status,
             osc_configs,
             redeem_settings,
+            vrc_osc_redeems,
         }
     }
 
@@ -134,8 +152,8 @@ impl RedeemManager {
                 auto_complete: true,
             },
             RedeemSettings {
-                reward_name: "Toss Pillow".to_string(),
-                title: "Toss Pillow".to_string(),
+                reward_name: "toss pillo".to_string(),
+                title: "toss pillo".to_string(),
                 twitch_reward_id: None,
                 cost: 48,
                 prompt: "Toss a virtual pillow!".to_string(),
@@ -144,10 +162,10 @@ impl RedeemManager {
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
-                    osc_endpoint: "/avatar/parameters/TossPillow".to_string(),
-                    osc_type: OSCMessageType::Boolean,
-                    osc_value: OSCValue::Boolean(true),
-                    default_value: OSCValue::Boolean(false),
+                    osc_endpoint: "/avatar/parameters/twitch".to_string(),
+                    osc_type: OSCMessageType::Integer,
+                    osc_value: OSCValue::Integer(3),
+                    default_value: OSCValue::Integer(0),
                     execution_duration: Some(Duration::from_secs(5)),
                     send_chat_message: false,
                 }),
@@ -159,18 +177,101 @@ impl RedeemManager {
                 auto_complete: true,
             },
             RedeemSettings {
-                reward_name: "custom_redeem".to_string(),
-                title: "Custom Redeem".to_string(),
+                reward_name: "cream_pie".to_string(),
+                title: "cream pie".to_string(),
                 twitch_reward_id: None,
-                cost: 75,
-                prompt: "This is a custom redeem".to_string(),
+                cost: 50,
+                prompt: "Throw a virtual cream pie!".to_string(),
                 cooldown: 0,
                 is_global_cooldown: false,
-                use_osc: false,
-                osc_config: None,
-                enabled_games: vec![],
+                use_osc: true,
+                osc_config: Some(OSCConfig {
+                    uses_osc: true,
+                    osc_endpoint: "/avatar/parameters/twitch".to_string(),
+                    osc_type: OSCMessageType::Integer,
+                    osc_value: OSCValue::Integer(4),
+                    default_value: OSCValue::Integer(0),
+                    execution_duration: Some(Duration::from_secs(5)),
+                    send_chat_message: false,
+                }),
+                enabled_games: vec!["VRChat".to_string()],
                 disabled_games: vec![],
-                enabled_offline: false,
+                enabled_offline: true,
+                user_input_required: false,
+                is_active: false,
+                auto_complete: true,
+            },
+            RedeemSettings {
+                reward_name: "water_balloon".to_string(),
+                title: "water balloon".to_string(),
+                twitch_reward_id: None,
+                cost: 40,
+                prompt: "Splash with a virtual water balloon!".to_string(),
+                cooldown: 0,
+                is_global_cooldown: false,
+                use_osc: true,
+                osc_config: Some(OSCConfig {
+                    uses_osc: true,
+                    osc_endpoint: "/avatar/parameters/twitch".to_string(),
+                    osc_type: OSCMessageType::Integer,
+                    osc_value: OSCValue::Integer(5),
+                    default_value: OSCValue::Integer(0),
+                    execution_duration: Some(Duration::from_secs(5)),
+                    send_chat_message: false,
+                }),
+                enabled_games: vec!["VRChat".to_string()],
+                disabled_games: vec![],
+                enabled_offline: true,
+                user_input_required: false,
+                is_active: false,
+                auto_complete: true,
+            },
+            RedeemSettings {
+                reward_name: "cat_trap".to_string(),
+                title: "cat trap".to_string(),
+                twitch_reward_id: None,
+                cost: 60,
+                prompt: "Deploy a virtual cat trap!".to_string(),
+                cooldown: 0,
+                is_global_cooldown: false,
+                use_osc: true,
+                osc_config: Some(OSCConfig {
+                    uses_osc: true,
+                    osc_endpoint: "/avatar/parameters/twitch".to_string(),
+                    osc_type: OSCMessageType::Integer,
+                    osc_value: OSCValue::Integer(6),
+                    default_value: OSCValue::Integer(0),
+                    execution_duration: Some(Duration::from_secs(5)),
+                    send_chat_message: false,
+                }),
+                enabled_games: vec!["VRChat".to_string()],
+                disabled_games: vec![],
+                enabled_offline: true,
+                user_input_required: false,
+                is_active: true,
+                auto_complete: true,
+            },
+            RedeemSettings {
+                reward_name: "snowball".to_string(),
+                title: "snowball".to_string(),
+                twitch_reward_id: None,
+                cost: 45,
+                prompt: "Throw a virtual snowball!".to_string(),
+                cooldown: 0,
+                is_global_cooldown: false,
+                use_osc: true,
+                osc_config: Some(OSCConfig {
+                    uses_osc: true,
+                    osc_endpoint: "/avatar/parameters/twitch".to_string(),
+                    osc_type: OSCMessageType::Integer,
+                    osc_value: OSCValue::Integer(7),
+                    default_value: OSCValue::Integer(0),
+                    execution_duration: Some(Duration::from_secs(5)),
+                    send_chat_message: false,
+                }),
+                enabled_games: vec!["VRChat".to_string()],
+                disabled_games: vec![],
+                enabled_offline: true,
                 user_input_required: false,
                 is_active: false,
                 auto_complete: true,
