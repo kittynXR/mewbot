@@ -230,9 +230,9 @@ impl RedeemManager {
                 reward_name: "cat_trap".to_string(),
                 title: "cat trap".to_string(),
                 twitch_reward_id: None,
-                cost: 60,
+                cost: 840,
                 prompt: "Deploy a virtual cat trap!".to_string(),
-                cooldown: 0,
+                cooldown: 60,
                 is_global_cooldown: false,
                 use_osc: true,
                 osc_config: Some(OSCConfig {
