@@ -14,7 +14,7 @@ use crate::twitch::api::requests::channel::Clip;
 use crate::twitch::api::requests::followers;
 use crate::twitch::api::requests::followers::FollowerInfo;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct TwitchToken {
     access_token: String,
     refresh_token: String,
@@ -297,7 +297,10 @@ impl TwitchAPIClient {
         debug!("Token expires in: {} seconds", token.expires_in);
 
         // Update the token in the TwitchAPIClient
-        *self.token.lock().await = Some(token);
+        *self.token.lock().await = Some(token.clone());
+
+        // Update the config with new tokens
+        self.update_config_tokens(token.access_token, token.refresh_token).await?;
 
         debug!("Token exchange and storage completed successfully.");
 
@@ -342,9 +345,20 @@ impl TwitchAPIClient {
         new_token.expires_at = Some(Instant::now() + Duration::from_secs(new_token.expires_in));
 
         let access_token = new_token.access_token.clone();
-        *self.token.lock().await = Some(new_token);
+        *self.token.lock().await = Some(new_token.clone());
+
+        // Update the config with new tokens
+        self.update_config_tokens(new_token.access_token, new_token.refresh_token).await?;
 
         Ok(access_token)
+    }
+
+    async fn update_config_tokens(&self, access_token: String, refresh_token: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut config = self.config.as_ref().clone();
+        config.twitch_access_token = Some(access_token);
+        config.twitch_refresh_token = Some(refresh_token);
+        config.save()?;
+        Ok(())
     }
 
     pub async fn is_stream_live(&self, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {

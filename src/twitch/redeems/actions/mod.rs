@@ -1,6 +1,5 @@
 mod coin_game;
 mod ask_ai;
-mod toss_pillo;
 mod vrc_osc;
 
 pub use coin_game::CoinGameAction;
