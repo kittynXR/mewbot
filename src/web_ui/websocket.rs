@@ -4,7 +4,7 @@ use futures_util::{SinkExt, StreamExt};
 use warp::ws::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
-use log::{error, info, debug, warn};
+use log::{error, info, debug, warn, trace};
 use tokio::sync::broadcast::error::SendError;
 use crate::storage::StorageClient;
 use crate::obs::OBSManager;
@@ -139,27 +139,27 @@ pub async fn handle_websocket(
     twitch_irc_manager: Arc<TwitchIRCManager>,
     vrchat_manager: Arc<VRChatManager>,
 ) {
-    warn!("received websocket [action] {:?}", msg.action);
-    warn!("received websocket [module] {:?}", msg.module);
-    warn!("received websocket [data] {:?}", to_string(&msg.data));
+    trace!("received websocket [action] {:?}", msg.action);
+    trace!("received websocket [module] {:?}", msg.module);
+    trace!("received websocket [data] {:?}", to_string(&msg.data));
     match msg.module.as_str() {
         "obs" => {
             if let Err(e) = obs_manager.handle_message(msg).await {
-                error!("Error handling OBS message: {:?}", e);
+                debug!("Error handling OBS message: {:?}", e);
             }
         },
         "twitch" => {
             if let Err(e) = twitch_irc_manager.handle_message(msg).await {
-                error!("Error handling Twitch message: {:?}", e);
+                debug!("Error handling Twitch message: {:?}", e);
             }
         },
         "vrchat" => {
             if let Err(e) = vrchat_manager.handle_message(msg).await {
-                error!("Error handling VRChat message: {:?}", e);
+                debug!("Error handling VRChat message: {:?}", e);
             }
         },
         _ => {
-            error!("Unknown module: {}", msg.module);
+            debug!("Unknown module: {}", msg.module);
         }
     }
 

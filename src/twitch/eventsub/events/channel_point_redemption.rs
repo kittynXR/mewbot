@@ -11,7 +11,7 @@ pub async fn handle_new_redemption(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redemption = parse_redemption(event);
 
-    info!("Processing new redemption: {:?}", redemption);
+    debug!("Processing new redemption: {:?}", redemption);
 
     let redeem_manager = twitch_manager.redeem_manager.read().await;
     let result = redeem_manager.handle_redemption(&redemption).await;
@@ -32,7 +32,7 @@ pub async fn handle_redemption_update(
     event: &Value,
     twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    trace!("Received channel point redemption update: {:?}", event);
+    debug!("Received channel point redemption update: {:?}", event);
 
     let redemption = parse_redemption(event);
     let status: RedemptionStatus = redemption.status.clone();
