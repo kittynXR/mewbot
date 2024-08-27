@@ -1,3 +1,4 @@
+use tokio::time::{sleep, Instant};
 use crate::vrchat::models::{Friend, VRChatError, VRChatStatus};
 use crate::config::Config;
 use reqwest::Client;
@@ -7,7 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::Mutex;
 use std::io::{self, Write};
-use log::{info, warn};
+use std::time::Duration;
+use log::{debug, error, info, warn};
 use rpassword::read_password;
 use tokio::sync::mpsc;
 use crate::vrchat::World;
@@ -18,7 +20,8 @@ pub struct VRChatClient {
     auth_cookie: Arc<RwLock<String>>,
     config: Arc<RwLock<Config>>,
     current_user_id: Arc<RwLock<Option<String>>>,
-    current_world: Arc<RwLock<Option<World>>>,
+    current_world: Arc<RwLock<Option<(World, Instant)>>>,
+    world_cache_duration: Duration,
     websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
 }
 
@@ -50,6 +53,7 @@ impl VRChatClient {
             config,
             current_user_id: Arc::new(RwLock::new(None)),
             current_world: Arc::new(RwLock::new(None)),
+            world_cache_duration: Duration::from_secs(300),
             websocket_tx,
         })
     }
@@ -216,9 +220,140 @@ impl VRChatClient {
 
 impl VRChatClient
 {
+    pub async fn get_current_world(&self) -> Result<World, VRChatError> {
+        info!("Entering get_current_world method");
+
+        let world_data = self.current_world.read().await;
+        if let Some((world, last_updated)) = &*world_data {
+            if last_updated.elapsed() < self.world_cache_duration {
+                info!("Returning cached world data. Last updated: {:?} ago", last_updated.elapsed());
+                return Ok(world.clone());
+            }
+        }
+        drop(world_data); // Release the read lock
+
+        info!("Cache miss or expired, fetching new world data");
+        match self.fetch_current_world_api().await {
+            Ok(Some(world)) => {
+                info!("Successfully fetched new world data: {}", world.name);
+                let mut world_data = self.current_world.write().await;
+                *world_data = Some((world.clone(), Instant::now()));
+                Ok(world)
+            }
+            Ok(None) => {
+                info!("User is not in a world (possibly in home, menu, or offline)");
+                Err(VRChatError("User is not currently in a world or online".to_string()))
+            }
+            Err(e) => {
+                error!("Error fetching world data: {:?}", e);
+                Err(e)
+            }
+        }
+    }
+
+    async fn fetch_current_world_api(&self) -> Result<Option<World>, VRChatError> {
+        for attempt in 1..=3 {  // Try up to 3 times
+            info!("Attempt {} to fetch current world", attempt);
+
+            let auth_cookie = self.get_auth_cookie().await;
+            let user_id = self.get_current_user_id().await?;
+
+            info!("Sending request to VRChat API:");
+            info!("URL: https://vrchat.com/api/1/users/{}", user_id);
+            info!("Method: GET");
+            info!("Headers:");
+            info!("  User-Agent: kittynvrc/twitchbot");
+            info!("  Cookie: auth=<redacted> (length: {})", auth_cookie.len());
+
+            let response = self.client
+                .get(&format!("https://vrchat.com/api/1/users/{}", user_id))
+                .header(COOKIE, &auth_cookie)
+                .header(USER_AGENT, "kittynvrc/twitchbot")
+                .send()
+                .await
+                .map_err(|e| VRChatError(format!("Failed to send request: {}", e)))?;
+
+            info!("Received response with status: {}", response.status());
+
+            if !response.status().is_success() {
+                error!("API request failed with status: {}", response.status());
+                return Err(VRChatError(format!("API request failed with status: {}", response.status())));
+            }
+
+            let body: Value = response.json()
+                .await
+                .map_err(|e| VRChatError(format!("Failed to parse JSON: {}", e)))?;
+
+            info!("Parsed JSON response:");
+            info!("  displayName: {:?}", body.get("displayName"));
+            info!("  state: {:?}", body.get("state"));
+            info!("  worldId: {:?}", body.get("worldId"));
+            info!("  instanceId: {:?}", body.get("instanceId"));
+            info!("  location: {:?}", body.get("location"));
+            info!("  status: {:?}", body.get("status"));
+
+            let state = body["state"].as_str().unwrap_or("unknown");
+            let status = body["status"].as_str().unwrap_or("unknown");
+            let world_id = body["worldId"].as_str();
+            let location = body["location"].as_str();
+
+            if state == "online" || status == "active" || world_id.is_some() || (location.is_some() && location.unwrap() != "offline") {
+                if let Some(world_id) = world_id {
+                    info!("Fetching world details for world_id: {}", world_id);
+                    info!("Sending request to VRChat API:");
+                    info!("URL: https://vrchat.com/api/1/worlds/{}", world_id);
+                    info!("Method: GET");
+                    info!("Headers:");
+                    info!("  User-Agent: kittynvrc/twitchbot");
+                    info!("  Cookie: auth=<redacted> (length: {})", auth_cookie.len());
+
+                    let world_response = self.client
+                        .get(&format!("https://vrchat.com/api/1/worlds/{}", world_id))
+                        .header(COOKIE, &auth_cookie)
+                        .header(USER_AGENT, "kittynvrc/twitchbot")
+                        .send()
+                        .await
+                        .map_err(|e| VRChatError(format!("Failed to fetch world details: {}", e)))?;
+
+                    info!("Received world response with status: {}", world_response.status());
+
+                    if !world_response.status().is_success() {
+                        error!("World API request failed with status: {}", world_response.status());
+                        return Err(VRChatError(format!("World API request failed with status: {}", world_response.status())));
+                    }
+
+                    let world_body: World = world_response.json()
+                        .await
+                        .map_err(|e| VRChatError(format!("Failed to parse world JSON: {}", e)))?;
+
+                    info!("Successfully fetched and parsed world data:");
+                    info!("  World Name: {}", world_body.name);
+                    info!("  Author: {}", world_body.author_name);
+                    info!("  Capacity: {}", world_body.capacity);
+
+                    return Ok(Some(world_body));
+                } else {
+                    warn!("User seems to be online but no world_id found");
+                    return Ok(None);
+                }
+            } else {
+                info!("User is not online or not in a world. State: {}, Status: {}, Location: {:?}", state, status, location);
+                if attempt < 3 {
+                    info!("Waiting 5 seconds before retrying...");
+                    sleep(Duration::from_secs(5)).await;
+                } else {
+                    return Ok(None);
+                }
+            }
+        }
+
+        warn!("Failed to get user's world after 3 attempts");
+        Ok(None)
+    }
+
     pub async fn update_current_world(&self, world: World) -> Result<(), VRChatError> {
-        // Store the new world information
-        *self.current_world.write().await = Some(world.clone());
+        let mut world_data = self.current_world.write().await;
+        *world_data = Some((world.clone(), Instant::now()));
 
         // Send the updated world information to the frontend via WebSocket
         let message = WebSocketMessage {
@@ -229,14 +364,7 @@ impl VRChatClient
         self.websocket_tx.send(message)
             .map_err(|e| VRChatError(format!("Failed to send world update via WebSocket: {}", e)))?;
 
-        info!("Current world updated and sent to frontend: {:?}", world);
         Ok(())
-    }
-
-    pub async fn get_current_world(&self) -> Result<World, VRChatError> {
-        self.current_world.read().await
-            .clone()
-            .ok_or_else(|| VRChatError("No current world data available".to_string()))
     }
 
     pub async fn get_friends(&self) -> Result<Vec<Friend>, VRChatError> {

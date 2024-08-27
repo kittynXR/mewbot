@@ -291,12 +291,12 @@ impl TwitchIRCManager {
                         }),
                         };
                         if let Err(e) = websocket_sender.send(websocket_message) {
-                            error!("Failed to send message to WebSocket: {:?}", e);
+                            debug!("Failed to send message to WebSocket: {:?}", e);
                         }
 
                         // Broadcast the message only for the bot client
                         if let Err(e) = message_sender.send(message.clone()) {
-                            error!("Failed to broadcast message: {:?}", e);
+                            debug!("Failed to broadcast message: {:?}", e);
                         }
                     }
                 },
