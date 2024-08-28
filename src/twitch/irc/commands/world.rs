@@ -18,10 +18,10 @@ pub async fn handle_world(
     vrchat_manager: &Arc<VRChatManager>,
     is_stream_online: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if !is_stream_online {
-        client.send_message(channel, "The world status is not available while the stream is offline.").await?;
-        return Ok(());
-    }
+    // if !is_stream_online {
+    //     client.send_message(channel, "The world status is not available while the stream is offline.").await?;
+    //     return Ok(());
+    // }
 
     if !vrchat_manager.is_online().await {
         info!("VRChat status is offline");

@@ -72,7 +72,7 @@ impl UserManager {
         }
     }
 
-    pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn Error + Send + Sync>> {
+    pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn std::error::Error + Send + Sync>> {
         // Check cache
         if let Some(user) = self.user_cache.read().await.get(user_id) {
             return Ok(user.clone());
@@ -81,10 +81,11 @@ impl UserManager {
         // Check storage
         let storage_read = self.storage.read().await;
         if let Some(chatter_data) = storage_read.get_chatter_data(user_id)? {
+            let username = chatter_data.username.clone(); // Clone here
             let user = TwitchUser {
                 user_id: chatter_data.user_id,
-                username: chatter_data.username,
-                display_name: "displayname".to_string(),
+                username: username.clone(), // Use the cloned value
+                display_name: username, // Use the cloned value as display_name
                 role: chatter_data.role,
                 last_seen: chatter_data.last_seen,
                 messages: VecDeque::new(),
@@ -98,10 +99,19 @@ impl UserManager {
 
         // Fetch from API
         let user_info = self.api_client.get_user_info(user_id).await?;
+        let user_data = user_info["data"].as_array()
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "User data not found")))?;
+
+        let username = user_data["login"].as_str()
+            .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Username not found")))?
+            .to_string();
+        let display_name = user_data["display_name"].as_str().unwrap_or(&username).to_string();
+
         let user = TwitchUser {
             user_id: user_id.to_string(),
-            username: user_info["data"][0]["login"].as_str().unwrap().to_string(),
-            display_name: user_info["data"][0]["display_name"].as_str().unwrap().to_string(),
+            username,
+            display_name,
             role: UserRole::Viewer,
             last_seen: Utc::now(),
             messages: VecDeque::new(),
