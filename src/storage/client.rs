@@ -5,6 +5,7 @@ use std::path::Path;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use std::sync::{Arc, Mutex};
+use log::info;
 use parking_lot::RwLock;
 use lru_cache::LruCache;
 use crate::twitch::roles::UserRole;
@@ -78,7 +79,11 @@ impl StorageClient {
         })
     }
 
-    // Add these new methods
+    pub async fn close(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Closing StorageClient...");
+        // Implement logic to close database connections
+        Ok(())
+    }
 
     pub async fn store_verification_code(&self, user_id: &str, code: u32) -> Result<(), rusqlite::Error> {
         let query = "INSERT OR REPLACE INTO verification_codes (user_id, code, created_at) VALUES (?1, ?2, ?3)";

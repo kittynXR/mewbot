@@ -5,6 +5,8 @@ use crate::config::Config;
 use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
+use std::time::Duration;
+use log::{info, warn};
 use tokio::sync::{RwLock, Mutex};
 
 use super::events::EventHandler;
@@ -44,6 +46,20 @@ impl DiscordClient {
             user_links,
             config
         })
+    }
+
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down DiscordClient...");
+        let mut client_guard = self.client.lock().await;
+        if let Some(client) = client_guard.take() {
+            let shard_manager = client.shard_manager.clone();
+            match tokio::time::timeout(Duration::from_secs(10), shard_manager.shutdown_all()).await {
+                Ok(_) => info!("Discord shards shut down successfully"),
+                Err(_) => warn!("Timed out while shutting down Discord shards"),
+            }
+        }
+        info!("DiscordClient shutdown complete.");
+        Ok(())
     }
 
     pub async fn start(&self) -> Result<(), serenity::Error> {

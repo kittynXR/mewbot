@@ -218,6 +218,21 @@ impl TwitchIRCManager {
         }
     }
 
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down TwitchIRCManager...");
+        let clients = self.clients.read().await;
+        for (username, client) in clients.iter() {
+            info!("Disconnecting client for user: {}", username);
+            match tokio::time::timeout(Duration::from_secs(5), client.disconnect()).await {
+                Ok(Ok(_)) => info!("Successfully disconnected client for user: {}", username),
+                Ok(Err(e)) => warn!("Error disconnecting client for user {}: {:?}", username, e),
+                Err(_) => warn!("Timed out while disconnecting client for user: {}", username),
+            }
+        }
+        info!("TwitchIRCManager shutdown complete.");
+        Ok(())
+    }
+
     pub async fn add_client(&self, username: String, oauth_token: String, channels: Vec<String>, handle_messages: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Adding Twitch IRC client for user: {}", username);
 

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use log::info;
 use tokio::sync::RwLock;
 use crate::vrchat::{VRChatClient, VRChatError, World};
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
@@ -14,6 +15,16 @@ impl VRChatManager {
             vrchat_client,
             dashboard_state,
         }
+    }
+
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down VRChatManager...");
+        // Disconnect from VRChat
+        self.vrchat_client.disconnect().await?;
+        // Update dashboard state
+        self.dashboard_state.write().await.update_vrchat_status(false);
+        info!("VRChatManager shutdown complete.");
+        Ok(())
     }
 
     pub async fn handle_message(&self, message: WebSocketMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use log::{error, warn, info, debug, trace, LevelFilter};
 use fern::colors::{Color, ColoredLevelConfig};
 use chrono::Local;
-use std::fs;
+use std::{fs, panic};
 use std::path::Path;
 
 /// MewBot - A Twitch and VRChat bot
@@ -122,6 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize the RedeemManager with current status
     // clients.twitch_manager.redeem_manager.write().await.initialize_with_current_status().await?;
+
+    panic::set_hook(Box::new(|panic_info| {
+        error!("A panic occurred: {:?}", panic_info);
+    }));
 
     run(clients, config).await?;
 

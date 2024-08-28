@@ -73,6 +73,26 @@ impl TwitchEventSubClient {
         }
     }
 
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down TwitchEventSubClient...");
+
+        // Close the WebSocket transmitter
+        if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
+            if let Err(e) = ws_tx.close().await {
+                warn!("Error closing WebSocket transmitter: {:?}", e);
+            }
+        }
+
+        // Remove the WebSocket receiver to stop any ongoing message processing
+        let _ = self.ws_rx.lock().await.take();
+
+        // Cancel any ongoing tasks or listeners
+        // (You might need to add a cancellation token or flag to your message handling loop)
+
+        info!("TwitchEventSubClient shutdown complete.");
+        Ok(())
+    }
+
     pub async fn connect_and_listen(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let url = "wss://eventsub.wss.twitch.tv/ws".to_string();
         let mut reconnect_attempt = 0;

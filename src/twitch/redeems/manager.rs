@@ -72,6 +72,24 @@ impl RedeemManager {
         }
     }
 
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down RedeemManager...");
+
+        info!("Saving RedeemManager settings...");
+        if let Err(e) = self.save_settings().await {
+            warn!("Error saving RedeemManager settings: {:?}", e);
+        }
+
+
+        info!("RedeemManager shutdown complete.");
+        Ok(())
+    }
+
+    async fn save_settings(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Implement logic to save redeem settings
+        Ok(())
+    }
+
     pub async fn handle_redemption(&self, redemption: &Redemption) -> RedemptionResult {
         debug!("Handling redemption for: {}", redemption.reward_title);
         let settings = self.redeem_settings.read().await;

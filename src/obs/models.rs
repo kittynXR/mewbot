@@ -75,6 +75,21 @@ impl OBSManager {
         }
     }
 
+    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Shutting down OBSManager...");
+        let mut clients = self.clients.write().await;
+        for (name, client) in clients.iter_mut() {
+            if let Err(e) = client.disconnect().await {
+                error!("Error disconnecting OBS client {}: {:?}", name, e);
+            }
+        }
+        clients.clear();
+        // Send final update to dashboard
+        self.send_update(json!({"instances": [], "status": false})).await?;
+        info!("OBSManager shutdown complete.");
+        Ok(())
+    }
+
     pub async fn handle_message(&self, message: WebSocketMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         match message.action.as_str() {
             "get_info" => self.get_info().await,

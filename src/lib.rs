@@ -31,6 +31,7 @@ use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
 use crate::web_ui::websocket::{DashboardState};
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 use crate::obs::{OBSInstance, OBSManager, OBSStateUpdate};
 use crate::twitch::TwitchManager;
 use crate::web_ui::websocket::WebSocketMessage;
@@ -53,48 +54,43 @@ impl BotClients {
     async fn shutdown(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         warn!("Initiating graceful shutdown...");
 
-        // Notify users about shutdown
-        self.notify_shutdown().await?;
+        let shutdown_timeout = Duration::from_secs(15);
 
-        // Gracefully stop Twitch IRC clients
-        warn!("Stopping Twitch IRC clients...");
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let (twitch_result, vrchat_result, obs_result, discord_result) = tokio::join!(
+        tokio::time::timeout(shutdown_timeout, self.twitch_manager.shutdown()),
+        tokio::time::timeout(shutdown_timeout, async {
+            if let Some(vrchat) = &self.vrchat {
+                vrchat.shutdown().await
+            } else {
+                Ok(())
+            }
+        }),
+        tokio::time::timeout(shutdown_timeout, async {
+            if let Some(obs) = &self.obs {
+                obs.shutdown().await
+            } else {
+                Ok(())
+            }
+        }),
+        tokio::time::timeout(shutdown_timeout, async {
+            if let Some(discord) = &self.discord {
+                discord.shutdown().await
+            } else {
+                Ok(())
+            }
+        })
+    );
 
-        // Disconnect from VRChat
-        if let Some(vrchat_client) = &self.vrchat {
-            warn!("Disconnecting from VRChat...");
-            vrchat_client.disconnect().await?;
+        // Handle results and log any errors
+
+        info!("Closing storage connections...");
+        match tokio::time::timeout(shutdown_timeout, self.storage.write().await.close()).await {
+            Ok(Ok(_)) => info!("Storage connections closed successfully"),
+            Ok(Err(e)) => error!("Error closing storage connections: {:?}", e),
+            Err(_) => error!("Timed out while closing storage connections"),
         }
 
-        // Stop the EventSub client
-        warn!("Stopping EventSub client...");
-        // self.eventsub_client.lock().await.disconnect().await?;
-
-        // Disconnect Discord client
-        // if let Some(discord_client) = &self.discord {
-        //     warn!("Disconnecting Discord client...");
-        //     discord_client.disconnect().await?;
-        // }
-
-        // Stop the WebSocket server
-        warn!("Stopping WebSocket server...");
-        // You'll need to implement a method to stop the WebSocket server
-        // This might involve closing all active connections and stopping the server
-
-        // Stop the web UI server
-        warn!("Stopping web UI server...");
-        // You'll need to implement a method to stop the web UI server
-        // This might involve shutting down the Warp server
-
-        // Save final state
-        warn!("Saving final redemption settings...");
-        // self.redeem_manager.read().await.save_settings().await?;
-
-        // Close storage connections
-        warn!("Closing storage connections...");
-        // self.storage.write().await.close().await?;
-
-        info!("Shutdown complete.");
+        info!("All modules shut down.");
         self.bot_status.write().await.set_online(false);
         Ok(())
     }
@@ -435,28 +431,54 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     let ctrl_c_signal = shutdown_signal.clone();
 
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+    let shutdown_signal_clone = shutdown_signal.clone();
+
+    let (web_ui_shutdown_tx, web_ui_shutdown_rx) = tokio::sync::oneshot::channel();
+
+    let web_ui_handle = tokio::spawn({
+        let web_ui = web_ui.clone();
+        async move {
+            web_ui.run(async move {
+                web_ui_shutdown_rx.await.ok();
+            }).await
+        }
+    });
+
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
         warn!("Received Ctrl+C, initiating shutdown.");
-        ctrl_c_signal.notify_waiters();
+        shutdown_signal_clone.notify_waiters();
     });
 
     let run_result = tokio::select! {
-        _ = futures::future::join_all(handles) => {
+        results = futures::future::join_all(handles) => {
             info!("All handlers have completed.");
+            for (index, result) in results.into_iter().enumerate() {
+                match result {
+                    Ok(Ok(())) => info!("Task {} completed successfully.", index),
+                    Ok(Err(e)) => warn!("Task {} ended with error: {:?}", index, e),
+                    Err(e) => warn!("Task {} was cancelled or panicked: {:?}", index, e),
+                }
+            }
             Ok(())
         }
         _ = shutdown_signal.notified() => {
             warn!("Shutdown signal received, stopping all tasks.");
-            clients.twitch_manager.shutdown().await
+
+            // Signal the Web UI to shut down
+            let _ = web_ui_shutdown_tx.send(());
+
+            // Wait for the Web UI to shut down (with a timeout)
+            match tokio::time::timeout(std::time::Duration::from_secs(10), web_ui_handle).await {
+                Ok(Ok(_)) => info!("Web UI shut down successfully."),
+                Ok(Err(e)) => warn!("Web UI shut down with error: {:?}", e),
+                Err(_) => warn!("Timed out waiting for Web UI to shut down."),
+            }
+
+            clients.shutdown().await
         }
     };
-
-    shutdown_signal.notify_waiters();
-
-    if let Err(e) = web_ui_handle.await? {
-        error!("Web UI error during shutdown: {:?}", e);
-    }
 
     info!("Bot has shut down.");
     run_result
