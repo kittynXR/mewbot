@@ -33,6 +33,7 @@ async fn get_follower_stream_info(api_client: &TwitchAPIClient, user_id: &str) -
 }
 
 
+
 pub async fn handle(
     event: &Value,
     channel: &str,
@@ -46,12 +47,18 @@ pub async fn handle(
                 let api_client = twitch_manager.get_api_client();
                 let follower_info = get_follower_stream_info(&api_client, user_id).await?;
 
+                // Get the broadcaster ID
+                let broadcaster_id = api_client.get_broadcaster_id().await?;
+
+                // Get the current follower count
+                let follower_count = api_client.get_follower_count(&broadcaster_id).await?;
+
                 let prompt = format!(
                     "Generate a short, friendly welcome message (1-2 sentences) for a new Twitch follower named {}. Make it warm and inviting, welcoming them to the community. Additional info: {}",
                     user_name, follower_info
                 );
 
-                let welcome_message = if let Some(ai_client) = twitch_manager.get_ai_client() {
+                let mut welcome_message = if let Some(ai_client) = twitch_manager.get_ai_client() {
                     match ai_client.generate_response_without_history(&prompt).await {
                         Ok(ai_response) => ai_response,
                         Err(e) => {
@@ -63,6 +70,9 @@ pub async fn handle(
                     warn!("AI client not available. Using default welcome message.");
                     format!("Welcome to the community, {}! Thanks for following!", user_name)
                 };
+
+                // Append the follower count tag
+                welcome_message.push_str(&format!(" cat-like-entity#{}", follower_count));
 
                 twitch_manager.send_message_as_bot(channel, &welcome_message).await?;
             }
