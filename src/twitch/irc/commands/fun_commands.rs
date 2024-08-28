@@ -6,7 +6,7 @@ use twitch_irc::message::PrivmsgMessage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::twitch::TwitchManager;
-use chrono::{Utc, Datelike, NaiveDate};
+use chrono::{Utc, Datelike, NaiveDate, Weekday};
 
 pub async fn handle_isitfriday(
     msg: &PrivmsgMessage,
@@ -43,30 +43,35 @@ pub async fn handle_xmas(
 }
 
 async fn generate_friday_message(ai_client: &Option<Arc<AIClient>>, is_friday: bool) -> String {
+    let current_day = Utc::now().weekday();
+
     if let Some(ai) = ai_client {
         let prompt = if is_friday {
-            "Generate a joyful, exuberant celebratory message about it being Friday. Keep it short and fun!"
+            "Generate a joyful, exuberant celebratory message about it being Friday today. Keep it short and fun!"
         } else {
-            "Generate a meek, slightly disappointed message about it not being Friday yet. Keep it short and a bit humorous!"
+            &*format!(
+                "Generate a meek, slightly disappointed message about it being {} and not Friday yet. Keep it short and a bit humorous!",
+                current_day
+            )
         };
 
-        match ai.generate_response_without_history(prompt).await {
+        match ai.generate_response_without_history(&prompt).await {
             Ok(response) => response.trim().to_string(),
             Err(e) => {
                 eprintln!("Error generating AI response: {:?}", e);
-                default_friday_message(is_friday)
+                default_friday_message(is_friday, current_day)
             }
         }
     } else {
-        default_friday_message(is_friday)
+        default_friday_message(is_friday, current_day)
     }
 }
 
-fn default_friday_message(is_friday: bool) -> String {
+fn default_friday_message(is_friday: bool, current_day: Weekday) -> String {
     if is_friday {
         "It's Friday! Time to celebrate! 🎉".to_string()
     } else {
-        "Not Friday yet... 😔 But we're getting there!".to_string()
+        format!("It's {}... Not Friday yet... 😔 But we're getting there!", current_day)
     }
 }
 
