@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::error::Error as StdError;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use futures_util::TryFutureExt;
 use log::{error, info, warn};
@@ -179,7 +179,9 @@ pub struct TwitchManager {
     pub(crate) user_links: Arc<UserLinks>,
     stream_status: Arc<RwLock<bool>>,
     pub vrchat_osc: Option<Arc<VRChatOSC>>,
-    pub ai_client: Option<Arc<AIClient>>, // Add this line
+    pub ai_client: Option<Arc<AIClient>>,
+    shoutout_queue: Arc<Mutex<VecDeque<(String, String)>>>, // (user_id, username)
+    shoutout_last_processed: Arc<Mutex<Instant>>,
 }
 
 impl TwitchManager {
@@ -216,6 +218,9 @@ impl TwitchManager {
 
         let user_manager = UserManager::new(storage.clone(), api_client.clone());
 
+        let shoutout_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let shoutout_last_processed = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(120)));
+
         let mut twitch_manager = Self {
             config,
             api_client,
@@ -229,6 +234,8 @@ impl TwitchManager {
             stream_status: Arc::new(RwLock::new(false)),
             vrchat_osc: vrchat_osc.clone(),
             ai_client: ai_client.clone(),
+            shoutout_queue: shoutout_queue.clone(),
+            shoutout_last_processed: shoutout_last_processed.clone(),
         };
 
         let eventsub_client = Self::initialize_eventsub_client(
@@ -244,6 +251,12 @@ impl TwitchManager {
         twitch_manager.eventsub_client = Arc::new(Mutex::new(Some(eventsub_client)));
 
         twitch_manager.check_initial_stream_status().await?;
+
+        // Start the shoutout queue processor
+        let tm_clone = twitch_manager.clone();
+        tokio::spawn(async move {
+            tm_clone.process_shoutout_queue().await;
+        });
 
         Ok(twitch_manager)
     }
@@ -388,6 +401,44 @@ impl TwitchManager {
         } else {
             Err("Broadcaster client not initialized".into())
         }
+    }
+
+    async fn process_shoutout_queue(&self) {
+        let cooldown_duration = Duration::from_secs(120); // 2 minutes
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await; // Check queue every 5 seconds
+
+            let mut last_processed = self.shoutout_last_processed.lock().await;
+            if last_processed.elapsed() < cooldown_duration {
+                continue;
+            }
+
+            let mut queue = self.shoutout_queue.lock().await;
+            if let Some((user_id, username)) = queue.pop_front() {
+                // Process the shoutout
+                if let Err(e) = self.execute_shoutout(&user_id, &username).await {
+                    error!("Failed to execute shoutout for {}: {:?}", username, e);
+                    // Optionally, we could push the failed shoutout back to the queue
+                }
+                *last_processed = Instant::now();
+            }
+        }
+    }
+
+    async fn execute_shoutout(&self, user_id: &str, username: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let channel = self.config.twitch_channel_to_join.as_ref().ok_or("Twitch channel not set")?;
+        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        let moderator_id = self.api_client.get_bot_id().await?;
+
+        // Send the API shoutout
+        self.api_client.send_shoutout(&broadcaster_id, user_id, &moderator_id).await?;
+
+        // Send a chat message
+        let message = format!("Shoutout to @{}! Go check out their channel!", username);
+        self.send_message_as_bot(channel, &message).await?;
+
+        Ok(())
     }
 
     pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
