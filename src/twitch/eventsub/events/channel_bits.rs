@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::{error, info};
+use log::{error, info, debug};
 use crate::twitch::TwitchManager;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
@@ -11,7 +11,9 @@ pub async fn handle(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let user_name = payload["user_name"].as_str().unwrap_or("Anonymous");
-        let bits_used = payload["bits_used"].as_u64().unwrap_or(0);
+        let bits_used = payload["bits_used"].as_i64().unwrap_or(0) as i32;
+
+        debug!("Received bits event: {} bits from {}", bits_used, user_name);
 
         // Determine which OSC action to use based on the number of bits
         let osc_value = match bits_used {
@@ -22,6 +24,8 @@ pub async fn handle(
             10000..=14999 => 18,
             _ => 19,
         };
+
+        debug!("Determined OSC value: {}", osc_value);
 
         // Create OSC config
         let osc_config = OSCConfig {
@@ -37,8 +41,9 @@ pub async fn handle(
         // Send OSC message
         match twitch_manager.get_vrchat_osc() {
             Some(vrchat_osc) => {
-                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
-                    error!("Failed to send OSC message for bits event: {}", e);
+                match vrchat_osc.send_osc_message_with_reset(&osc_config).await {
+                    Ok(_) => debug!("Successfully sent OSC message for bits event"),
+                    Err(e) => error!("Failed to send OSC message for bits event: {}", e),
                 }
             },
             None => {
@@ -48,9 +53,14 @@ pub async fn handle(
 
         // Send chat message
         let message = format!("Thank you {} for the {} bits!", user_name, bits_used);
-        twitch_manager.send_message_as_bot(channel, &message).await?;
+        match twitch_manager.send_message_as_bot(channel, &message).await {
+            Ok(_) => debug!("Successfully sent thank you message to chat"),
+            Err(e) => error!("Failed to send thank you message to chat: {}", e),
+        }
 
         info!("Processed bit cheer event for {} bits from {}", bits_used, user_name);
+    } else {
+        error!("Invalid event payload structure");
     }
 
     Ok(())

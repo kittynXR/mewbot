@@ -22,6 +22,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use log::{debug, error, info, trace, warn};
 use tokio::io::AsyncReadExt;
 use crate::osc::models::OSCConfig;
@@ -73,21 +74,30 @@ impl TwitchEventSubClient {
         }
     }
 
-    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn shutdown(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         info!("Shutting down TwitchEventSubClient...");
 
-        // Close the WebSocket transmitter
-        if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
-            if let Err(e) = ws_tx.close().await {
-                warn!("Error closing WebSocket transmitter: {:?}", e);
+        let shutdown_timeout = Duration::from_secs(10);
+
+        let close_websocket = async {
+            if let Some(mut ws_tx) = self.ws_tx.lock().await.take() {
+                // Send close frame to the server
+                if let Err(e) = ws_tx.close().await {
+                    warn!("Error sending close frame: {:?}", e);
+                }
             }
+
+            // Remove the WebSocket receiver to stop any ongoing message processing
+            self.ws_rx.lock().await.take();
+
+            Ok::<(), Box<dyn StdError + Send + Sync>>(())
+        };
+
+        match timeout(shutdown_timeout, close_websocket).await {
+            Ok(Ok(_)) => info!("WebSocket connection closed successfully"),
+            Ok(Err(e)) => warn!("Error closing WebSocket connection: {:?}", e),
+            Err(_) => warn!("Timeout while closing WebSocket connection"),
         }
-
-        // Remove the WebSocket receiver to stop any ongoing message processing
-        let _ = self.ws_rx.lock().await.take();
-
-        // Cancel any ongoing tasks or listeners
-        // (You might need to add a cancellation token or flag to your message handling loop)
 
         info!("TwitchEventSubClient shutdown complete.");
         Ok(())

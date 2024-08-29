@@ -1,11 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
+use futures_util::TryFutureExt;
 use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::time::timeout;
 use crate::ai::AIClient;
 use crate::config::Config;
 use crate::discord::UserLinks;
@@ -245,70 +248,29 @@ impl TwitchManager {
         Ok(twitch_manager)
     }
 
-    pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn shutdown(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         info!("Shutting down TwitchManager...");
 
         let shutdown_timeout = Duration::from_secs(15);
 
-        let irc_shutdown = async {
-            if let Err(e) = self.irc_manager.shutdown().await {
-                error!("Error shutting down IRC manager: {:?}", e);
-                Err(e)
-            } else {
-                Ok(())
-            }
-        };
-
-        let eventsub_shutdown = async {
-            if let Some(eventsub_client) = self.eventsub_client.lock().await.as_mut() {
-                if let Err(e) = eventsub_client.shutdown().await {
-                    error!("Error shutting down EventSub client: {:?}", e);
-                    Err(e)
-                } else {
-                    Ok(())
-                }
-            } else {
-                Ok(())
-            }
-        };
-
-        let redeem_shutdown = async {
-            if let Err(e) = self.redeem_manager.write().await.shutdown().await {
-                error!("Error shutting down RedeemManager: {:?}", e);
-                Err(e)
-            } else {
-                Ok(())
-            }
-        };
-
-        let (irc_result, eventsub_result, redeem_result) = tokio::join!(
-            tokio::time::timeout(shutdown_timeout, irc_shutdown),
-            tokio::time::timeout(shutdown_timeout, eventsub_shutdown),
-            tokio::time::timeout(shutdown_timeout, redeem_shutdown)
-        );
-
-        match irc_result {
-            Ok(Ok(_)) => info!("IRC manager shutdown completed successfully"),
-            Ok(Err(e)) => warn!("IRC manager shutdown error: {:?}", e),
-            Err(_) => warn!("IRC manager shutdown timed out"),
+        // Shutdown IRC manager
+        if let Err(e) = timeout(shutdown_timeout, self.irc_manager.shutdown()).await {
+            error!("IRC manager shutdown timed out: {:?}", e);
         }
 
-        match eventsub_result {
-            Ok(Ok(_)) => info!("EventSub client shutdown completed successfully"),
-            Ok(Err(e)) => warn!("EventSub client shutdown error: {:?}", e),
-            Err(_) => warn!("EventSub client shutdown timed out"),
+        // Shutdown EventSub client
+        if let Some(eventsub_client) = self.eventsub_client.lock().await.as_ref() {
+            match timeout(shutdown_timeout, eventsub_client.shutdown()).await {
+                Ok(Ok(_)) => info!("EventSub client shut down successfully"),
+                Ok(Err(e)) => error!("Error shutting down EventSub client: {:?}", e),
+                Err(_) => error!("EventSub client shutdown timed out"),
+            }
         }
 
-        match redeem_result {
-            Ok(Ok(_)) => info!("RedeemManager shutdown completed successfully"),
-            Ok(Err(e)) => warn!("RedeemManager shutdown error: {:?}", e),
-            Err(_) => warn!("RedeemManager shutdown timed out"),
+        // Shutdown RedeemManager
+        if let Err(e) = timeout(shutdown_timeout, self.redeem_manager.write().await.shutdown()).await {
+            error!("RedeemManager shutdown timed out: {:?}", e);
         }
-
-        // Note: We've removed the API client shutdown attempt since it doesn't have a shutdown method
-
-        // Clean up any other resources or state
-        // For example, you might want to save some state to disk
 
         info!("TwitchManager shutdown complete.");
         Ok(())
