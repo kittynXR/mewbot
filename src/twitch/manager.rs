@@ -234,8 +234,8 @@ impl TwitchManager {
             stream_status: Arc::new(RwLock::new(false)),
             vrchat_osc: vrchat_osc.clone(),
             ai_client: ai_client.clone(),
-            shoutout_queue: shoutout_queue.clone(),
-            shoutout_last_processed: shoutout_last_processed.clone(),
+            shoutout_queue,
+            shoutout_last_processed,
         };
 
         let eventsub_client = Self::initialize_eventsub_client(
@@ -253,7 +253,7 @@ impl TwitchManager {
         twitch_manager.check_initial_stream_status().await?;
 
         // Start the shoutout queue processor
-        let tm_clone = twitch_manager.clone();
+        let tm_clone = Arc::new(twitch_manager.clone());
         tokio::spawn(async move {
             tm_clone.process_shoutout_queue().await;
         });
@@ -416,9 +416,9 @@ impl TwitchManager {
 
             let mut queue = self.shoutout_queue.lock().await;
             if let Some((user_id, username)) = queue.pop_front() {
-                // Process the shoutout
-                if let Err(e) = self.execute_shoutout(&user_id, &username).await {
-                    error!("Failed to execute shoutout for {}: {:?}", username, e);
+                // Process the API shoutout
+                if let Err(e) = self.execute_api_shoutout(&user_id).await {
+                    error!("Failed to execute API shoutout for {}: {:?}", username, e);
                     // Optionally, we could push the failed shoutout back to the queue
                 }
                 *last_processed = Instant::now();
@@ -426,19 +426,19 @@ impl TwitchManager {
         }
     }
 
-    async fn execute_shoutout(&self, user_id: &str, username: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let channel = self.config.twitch_channel_to_join.as_ref().ok_or("Twitch channel not set")?;
+    async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
         let moderator_id = self.api_client.get_bot_id().await?;
 
         // Send the API shoutout
         self.api_client.send_shoutout(&broadcaster_id, user_id, &moderator_id).await?;
 
-        // Send a chat message
-        let message = format!("Shoutout to @{}! Go check out their channel!", username);
-        self.send_message_as_bot(channel, &message).await?;
-
         Ok(())
+    }
+
+    pub async fn queue_shoutout(&self, user_id: String, username: String) {
+        let mut queue = self.shoutout_queue.lock().await;
+        queue.push_back((user_id, username));
     }
 
     pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

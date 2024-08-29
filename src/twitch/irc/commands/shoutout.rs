@@ -18,8 +18,9 @@ const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
 const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
 
 struct ShoutoutQueueItem {
-    target: String,
-    requester: String,
+    broadcaster_id: String,
+    moderator_id: String,
+    target_id: String,
     enqueue_time: Instant,
 }
 
@@ -34,20 +35,17 @@ impl ShoutoutQueue {
         }
     }
 
-    fn enqueue(&mut self, target: String, requester: String) {
+    fn enqueue(&mut self, broadcaster_id: String, moderator_id: String, target_id: String) {
         self.queue.push_back(ShoutoutQueueItem {
-            target,
-            requester,
+            broadcaster_id,
+            moderator_id,
+            target_id,
             enqueue_time: Instant::now(),
         });
     }
 
     fn dequeue(&mut self) -> Option<ShoutoutQueueItem> {
         self.queue.pop_front()
-    }
-
-    fn position(&self, target: &str) -> Option<usize> {
-        self.queue.iter().position(|item| item.target == target)
     }
 }
 
@@ -70,7 +68,8 @@ impl ShoutoutCooldown {
         let now = Instant::now();
         let global_passed = now.duration_since(self.global) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS);
         let user_passed = self.per_user.get(target)
-            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS));
+            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS))
+            ;
 
         (global_passed, user_passed)
     }
@@ -100,16 +99,12 @@ impl ShoutoutCooldown {
         (global_remaining, user_remaining)
     }
 
-    pub fn enqueue_shoutout(&mut self, target: String, requester: String) {
-        self.queue.enqueue(target, requester);
+    pub fn enqueue_api_shoutout(&mut self, broadcaster_id: String, moderator_id: String, target_id: String) {
+        self.queue.enqueue(broadcaster_id, moderator_id, target_id);
     }
 
-    pub fn dequeue_shoutout(&mut self) -> Option<ShoutoutQueueItem> {
+    pub fn dequeue_api_shoutout(&mut self) -> Option<ShoutoutQueueItem> {
         self.queue.dequeue()
-    }
-
-    pub fn get_queue_position(&self, target: &str) -> Option<usize> {
-        self.queue.position(target)
     }
 }
 
@@ -144,7 +139,7 @@ pub async fn handle_shoutout(
         return Ok(());
     }
 
-    // Check cooldowns and handle queue
+    // Check cooldowns
     let mut cooldowns = cooldowns.lock().await;
     let (global_cooldown_passed, user_cooldown_passed) = cooldowns.check_cooldowns(target_username);
 
@@ -155,21 +150,67 @@ pub async fn handle_shoutout(
         }
     }
 
-    if !global_cooldown_passed {
-        cooldowns.enqueue_shoutout(target_username.to_string(), msg.sender.name.clone());
-        let position = cooldowns.get_queue_position(target_username).unwrap_or(0) + 1;
-        client.send_message(channel, &format!("Shoutout for {} has been added to the queue. Current position: {}", target_username, position)).await?;
-        return Ok(());
+    // Update cooldowns and generate shoutout message
+    cooldowns.update_cooldowns(target_username);
+    let shoutout_message = generate_shoutout_message(twitch_manager, ai_client, target_username).await?;
+
+    // Send the shoutout message immediately
+    client.send_message(channel, &shoutout_message).await?;
+
+    // Queue the API shoutout if the stream is live
+    if twitch_manager.is_stream_live().await {
+        let broadcaster_id = twitch_manager.get_api_client().get_broadcaster_id().await?;
+        let moderator_id = msg.sender.id.clone();
+        let target_id = twitch_manager.get_api_client().get_user_info(target_username).await?["data"][0]["id"].as_str().unwrap_or("").to_string();
+
+        cooldowns.enqueue_api_shoutout(broadcaster_id, moderator_id, target_id);
     }
 
-    // Process the shoutout
-    cooldowns.update_cooldowns(target_username);
     drop(cooldowns);
-
-    process_shoutout(client, channel, twitch_manager, target_username, ai_client).await?;
 
     Ok(())
 }
+
+async fn generate_shoutout_message(
+    twitch_manager: &Arc<TwitchManager>,
+    ai_client: &Option<Arc<AIClient>>,
+    target_username: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let api_client = twitch_manager.get_api_client();
+    let user_info = api_client.get_user_info(target_username).await?;
+    let user_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
+
+    if let Err(e) = twitch_manager.update_streamer_data(&user_id).await {
+        error!("Failed to update streamer data: {}", e);
+    }
+
+    match ai_client {
+        Some(ai) => generate_ai_shoutout_message(twitch_manager, ai, &user_id).await,
+        None => generate_simple_shoutout_message(twitch_manager, &user_id).await,
+    }
+}
+
+pub async fn start_api_shoutout_processor(
+    twitch_manager: Arc<TwitchManager>,
+    cooldowns: Arc<Mutex<ShoutoutCooldown>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
+
+            let mut cooldowns = cooldowns.lock().await;
+            if let Some(item) = cooldowns.dequeue_api_shoutout() {
+                drop(cooldowns);
+                if let Err(e) = send_shoutout(&twitch_manager, &item.broadcaster_id, &item.moderator_id, &item.target_id).await {
+                    error!("Error sending API shoutout: {}", e);
+                }
+            } else {
+                drop(cooldowns);
+            }
+        }
+    });
+}
+
 
 async fn process_shoutout(
     client: &Arc<TwitchBotClient>,
@@ -215,29 +256,7 @@ async fn process_shoutout(
     Ok(())
 }
 
-pub async fn start_shoutout_queue_processor(
-    client: Arc<TwitchBotClient>,
-    channel: String,
-    twitch_manager: Arc<TwitchManager>,
-    cooldowns: Arc<Mutex<ShoutoutCooldown>>,
-    ai_client: Option<Arc<AIClient>>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
 
-            let mut cooldowns = cooldowns.lock().await;
-            if let Some(item) = cooldowns.dequeue_shoutout() {
-                drop(cooldowns);
-                if let Err(e) = process_shoutout(&client, &channel, &twitch_manager, &item.target, &ai_client).await {
-                    error!("Error processing queued shoutout: {}", e);
-                }
-            } else {
-                drop(cooldowns);
-            }
-        }
-    });
-}
 
 fn strip_at_symbol(username: &str) -> &str {
     username.strip_prefix('@').unwrap_or(username)
