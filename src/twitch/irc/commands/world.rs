@@ -32,14 +32,13 @@ pub async fn handle_world(
     match vrchat_manager.get_current_world().await {
         Ok(world) => {
             info!("Successfully fetched current world data");
-            // First message with original information
+
+            // Prepare both messages
             let first_message = format!(
                 "Current World: {} | Author: {} | Capacity: {} | Description: {} | Status: {}",
                 world.name, world.author_name, world.capacity, world.description, world.release_status
             );
-            client.send_message(channel, &first_message).await?;
 
-            // Second message with dates and world link
             let world_link = format!("https://vrchat.com/home/world/{}", world.id);
             let second_message = format!(
                 "Published: {} | Last Updated: {} | World Link: {}",
@@ -47,6 +46,10 @@ pub async fn handle_world(
                 world.updated_at.format("%Y-%m-%d"),
                 world_link
             );
+
+            // Send both messages in quick succession
+            client.send_message(channel, &first_message).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await; // Small delay to ensure order
             client.send_message(channel, &second_message).await?;
         },
         Err(e) => {
