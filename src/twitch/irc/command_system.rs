@@ -14,6 +14,7 @@ use crate::twitch::irc::TwitchBotClient;
 use crate::vrchat::VRChatManager;
 use crate::twitch::manager::TwitchManager;
 use super::commands;
+use crate::twitch::irc::commands::{ad_commands, gizmogo};
 
 pub struct Command {
     pub name: &'static str,
@@ -73,6 +74,22 @@ pub const COMMANDS: &[Command] = &[
         handler: |msg, client, channel, twitch_manager, _world_info, cooldowns, redeem_manager, storage, user_links, params, _config, _vrchat_client, ai_client, _is_stream_online|
             Box::pin(commands::handle_shoutout(msg, client, channel, twitch_manager, cooldowns, params, redeem_manager, storage, user_links, ai_client)),
         description: "Gives a shoutout to another streamer",
+    },
+    Command {
+        name: "!startad",
+        required_role: UserRole::Moderator,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, params, _config, _vrchat_client, _ai_client, _is_stream_online| {
+            Box::pin(ad_commands::handle_startad(msg, client, channel, twitch_manager, storage, user_links, params))
+        },
+        description: "Starts a scheduled ad. Usage: !startad <interval_minutes> <duration_minutes> <ad_text>",
+    },
+    Command {
+        name: "!stopads",
+        required_role: UserRole::Moderator,
+        handler: |msg, client, channel, twitch_manager, _world_info, _cooldowns, _redeem_manager, storage, user_links, params, _config, _vrchat_client, _ai_client, _is_stream_online| {
+            Box::pin(ad_commands::handle_stopads(msg, client, channel, twitch_manager, storage, user_links, params))
+        },
+        description: "Stops all running ads",
     },
     // Command {
     //     name: "!clearcache",

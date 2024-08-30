@@ -42,7 +42,7 @@ impl EventHandler {
                 },
             }
         } else {
-            Ok(()) // Do nothing for unconfigured events
+            Ok(())
         }
     }
 }

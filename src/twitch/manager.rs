@@ -21,6 +21,7 @@ use crate::twitch::irc::{MessageHandler, TwitchBotClient, TwitchBroadcasterClien
 use crate::twitch::redeems::RedeemManager;
 use crate::twitch::roles::UserRole;
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
+use crate::twitch::irc::commands::ad_commands::AdManager;
 
 #[derive(Clone)]
 pub struct TwitchUser {
@@ -182,6 +183,7 @@ pub struct TwitchManager {
     pub ai_client: Option<Arc<AIClient>>,
     shoutout_queue: Arc<Mutex<VecDeque<(String, String)>>>, // (user_id, username)
     shoutout_last_processed: Arc<Mutex<Instant>>,
+    pub ad_manager: Arc<RwLock<AdManager>>,
 }
 
 impl TwitchManager {
@@ -221,6 +223,8 @@ impl TwitchManager {
         let shoutout_queue = Arc::new(Mutex::new(VecDeque::new()));
         let shoutout_last_processed = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(120)));
 
+        let ad_manager = Arc::new(RwLock::new(AdManager::new()));
+
         let mut twitch_manager = Self {
             config,
             api_client,
@@ -236,6 +240,7 @@ impl TwitchManager {
             ai_client: ai_client.clone(),
             shoutout_queue,
             shoutout_last_processed,
+            ad_manager,
         };
 
         let eventsub_client = Self::initialize_eventsub_client(
@@ -385,6 +390,10 @@ impl TwitchManager {
 
     pub fn get_api_client(&self) -> Arc<TwitchAPIClient> {
         self.api_client.clone()
+    }
+
+    pub fn get_ad_manager(&self) -> Arc<RwLock<AdManager>> {
+        self.ad_manager.clone()
     }
 
     pub fn get_user_links(&self) -> Arc<UserLinks> {

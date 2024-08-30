@@ -10,6 +10,7 @@ pub(crate) mod vrc;
 pub(crate) mod followers;
 pub(crate) mod calc;
 pub(crate) mod fun_commands;
+pub(crate) mod ad_commands;
 
 pub use verify::*;
 
