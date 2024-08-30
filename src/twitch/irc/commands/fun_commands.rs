@@ -1,45 +1,58 @@
-use crate::twitch::irc::TwitchBotClient;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 use crate::ai::AIClient;
-use twitch_irc::message::PrivmsgMessage;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::twitch::TwitchManager;
 use chrono::{Utc, Datelike, NaiveDate, Weekday};
 
-pub async fn handle_isitfriday(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let is_friday = Utc::now().weekday().num_days_from_monday() == 4;
-    let friday_message = generate_friday_message(ai_client, is_friday).await;
+pub struct IsItFridayCommand;
+pub struct XmasCommand;
 
-    twitch_manager.send_message_as_bot(channel, &friday_message).await?;
+#[async_trait::async_trait]
+impl Command for IsItFridayCommand {
+    fn name(&self) -> &'static str {
+        "!isitfriday"
+    }
 
-    Ok(())
+    fn description(&self) -> &'static str {
+        "Check if it's Friday and get a fun message"
+    }
+
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let is_friday = Utc::now().weekday().num_days_from_monday() == 4;
+        let friday_message = generate_friday_message(&ctx.ai_client, is_friday).await;
+
+        ctx.twitch_manager.send_message_as_bot(&ctx.channel, &friday_message).await?;
+
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }
 
-pub async fn handle_xmas(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let days_until_christmas = calculate_days_until_christmas();
-    let xmas_message = generate_xmas_message(ai_client, days_until_christmas).await;
+#[async_trait::async_trait]
+impl Command for XmasCommand {
+    fn name(&self) -> &'static str {
+        "!xmas"
+    }
 
-    twitch_manager.send_message_as_bot(channel, &xmas_message).await?;
+    fn description(&self) -> &'static str {
+        "Find out how many days until Christmas"
+    }
 
-    Ok(())
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let days_until_christmas = calculate_days_until_christmas();
+        let xmas_message = generate_xmas_message(&ctx.ai_client, days_until_christmas).await;
+
+        ctx.twitch_manager.send_message_as_bot(&ctx.channel, &xmas_message).await?;
+
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }
 
 async fn generate_friday_message(ai_client: &Option<Arc<AIClient>>, is_friday: bool) -> String {

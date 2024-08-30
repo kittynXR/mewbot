@@ -1,10 +1,52 @@
-use crate::twitch::irc::TwitchBotClient;
-use std::sync::Arc;
-use twitch_irc::message::PrivmsgMessage;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
-use tokio::sync::RwLock;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+pub struct CalcCommand;
+
+#[async_trait::async_trait]
+impl Command for CalcCommand {
+    fn name(&self) -> &'static str {
+        "!calc"
+    }
+
+    fn description(&self) -> &'static str {
+        "Calculates a mathematical expression"
+    }
+
+    async fn execute(&self, ctx: &CommandContext, args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if args.is_empty() {
+            ctx.bot_client.send_message(&ctx.channel, "Usage: !calc <expression>").await?;
+            return Ok(());
+        }
+
+        let mut constants = HashMap::new();
+        constants.insert("pi".to_string(), std::f64::consts::PI);
+        constants.insert("e".to_string(), std::f64::consts::E);
+        constants.insert("phi".to_string(), (1.0 + 5.0_f64.sqrt()) / 2.0);
+        constants.insert("tau".to_string(), std::f64::consts::TAU);
+
+        let expression = args.join(" ");
+
+        match tokenize(&expression, &constants).and_then(|tokens| evaluate(&tokens, &constants)) {
+            Ok(result) => {
+                let response = format!("Result: {}", result);
+                ctx.bot_client.send_message(&ctx.channel, &response).await?;
+            },
+            Err(e) => {
+                let error_message = format!("Error: {}", e);
+                ctx.bot_client.send_message(&ctx.channel, &error_message).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -144,40 +186,5 @@ fn apply_operator(output: &mut Vec<f64>, op: Token) -> Result<(), String> {
         _ => return Err("Invalid operator".to_string()),
     };
     output.push(result);
-    Ok(())
-}
-
-pub async fn handle_calc(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-    params: &[&str],
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if params.is_empty() {
-        client.send_message(channel, "Usage: !calc <expression>").await?;
-        return Ok(());
-    }
-
-    let mut constants = HashMap::new();
-    constants.insert("pi".to_string(), std::f64::consts::PI);
-    constants.insert("e".to_string(), std::f64::consts::E);
-    constants.insert("phi".to_string(), (1.0 + 5.0_f64.sqrt()) / 2.0);
-    constants.insert("tau".to_string(), std::f64::consts::TAU);
-
-    let expression = params.join(" ");
-
-    match tokenize(&expression, &constants).and_then(|tokens| evaluate(&tokens, &constants)) {
-        Ok(result) => {
-            let response = format!("Result: {}", result);
-            client.send_message(channel, &response).await?;
-        },
-        Err(e) => {
-            let error_message = format!("Error: {}", e);
-            client.send_message(channel, &error_message).await?;
-        }
-    }
-
     Ok(())
 }

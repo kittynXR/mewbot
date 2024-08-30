@@ -1,9 +1,9 @@
 // src/twitch/irc/commands/mod.rs
 
-mod uptime;
-mod world;
-mod ping;
-mod shoutout;
+pub mod uptime;
+pub mod world;
+pub(crate) mod ping;
+pub mod shoutout;
 pub(crate) mod verify;
 pub(crate) mod discord;
 pub(crate) mod vrc;
@@ -14,7 +14,14 @@ pub(crate) mod ad_commands;
 
 pub use verify::*;
 
-pub use uptime::handle_uptime;
-pub use world::handle_world;
-pub use ping::handle_ping;
-pub use shoutout::{handle_shoutout, ShoutoutCooldown};
+
+pub use ping::PingCommand;
+pub use calc::CalcCommand;
+pub use discord::DiscordCommand;
+pub use followers::{FollowersCommand, FollowAgeCommand};
+pub use fun_commands::{IsItFridayCommand, XmasCommand};
+pub use shoutout::ShoutoutCommand;
+pub use uptime::UptimeCommand;
+pub use verify::VerifyCommand;
+pub use vrc::VRCCommand;
+pub use world::WorldCommand;

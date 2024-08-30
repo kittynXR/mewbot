@@ -22,6 +22,7 @@ use crate::twitch::redeems::RedeemManager;
 use crate::twitch::roles::UserRole;
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 use crate::twitch::irc::commands::ad_commands::AdManager;
+use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 #[derive(Clone)]
 pub struct TwitchUser {
@@ -183,6 +184,8 @@ pub struct TwitchManager {
     pub ai_client: Option<Arc<AIClient>>,
     shoutout_queue: Arc<Mutex<VecDeque<(String, String)>>>, // (user_id, username)
     shoutout_last_processed: Arc<Mutex<Instant>>,
+    pub shoutout_cooldowns: Arc<Mutex<ShoutoutCooldown>>,
+    shoutout_sender: mpsc::Sender<(String, String)>,
     pub ad_manager: Arc<RwLock<AdManager>>,
 }
 
@@ -222,6 +225,8 @@ impl TwitchManager {
 
         let shoutout_queue = Arc::new(Mutex::new(VecDeque::new()));
         let shoutout_last_processed = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(120)));
+        let shoutout_cooldowns = Arc::new(Mutex::new(ShoutoutCooldown::new()));
+        let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
 
         let ad_manager = Arc::new(RwLock::new(AdManager::new()));
 
@@ -240,6 +245,8 @@ impl TwitchManager {
             ai_client: ai_client.clone(),
             shoutout_queue,
             shoutout_last_processed,
+            shoutout_cooldowns,
+            shoutout_sender,
             ad_manager,
         };
 
@@ -258,9 +265,9 @@ impl TwitchManager {
         twitch_manager.check_initial_stream_status().await?;
 
         // Start the shoutout queue processor
-        let tm_clone = Arc::new(twitch_manager.clone());
+        let manager_clone = Arc::new(twitch_manager.clone());
         tokio::spawn(async move {
-            tm_clone.process_shoutout_queue().await;
+            manager_clone.process_shoutout_queue(shoutout_receiver).await;
         });
 
         Ok(twitch_manager)
@@ -396,6 +403,11 @@ impl TwitchManager {
         self.ad_manager.clone()
     }
 
+    pub fn get_shoutout_cooldowns(&self) -> Arc<Mutex<ShoutoutCooldown>> {
+        // Assuming ShoutoutCooldown is now a field in TwitchManager
+        self.shoutout_cooldowns.clone()
+    }
+
     pub fn get_user_links(&self) -> Arc<UserLinks> {
         self.user_links.clone()
     }
@@ -412,42 +424,46 @@ impl TwitchManager {
         }
     }
 
-    async fn process_shoutout_queue(&self) {
-        let cooldown_duration = Duration::from_secs(120); // 2 minutes
+    pub async fn queue_shoutout(&self, user_id: String, username: String) {
+        info!("Queueing shoutout for user: {} (ID: {})", username, user_id);
+        if let Err(e) = self.shoutout_sender.send((user_id, username)).await {
+            error!("Failed to queue shoutout: {:?}", e);
+        }
+    }
 
-        loop {
-            tokio::time::sleep(Duration::from_secs(5)).await; // Check queue every 5 seconds
+    async fn process_shoutout_queue(&self, mut receiver: mpsc::Receiver<(String, String)>) {
+        let cooldown_duration = Duration::from_secs(121); // 2 minutes
+        let mut last_processed = Instant::now() - cooldown_duration;
 
-            let mut last_processed = self.shoutout_last_processed.lock().await;
+        while let Some((user_id, username)) = receiver.recv().await {
             if last_processed.elapsed() < cooldown_duration {
-                continue;
+                info!("Cooldown period not elapsed, delaying API shoutout");
+                tokio::time::sleep(cooldown_duration - last_processed.elapsed()).await;
             }
 
-            let mut queue = self.shoutout_queue.lock().await;
-            if let Some((user_id, username)) = queue.pop_front() {
-                // Process the API shoutout
+            info!("Processing API shoutout for user: {} (ID: {})", username, user_id);
+
+            if self.is_stream_live().await {
                 if let Err(e) = self.execute_api_shoutout(&user_id).await {
                     error!("Failed to execute API shoutout for {}: {:?}", username, e);
-                    // Optionally, we could push the failed shoutout back to the queue
+                } else {
+                    info!("Successfully executed API shoutout for {}", username);
                 }
-                *last_processed = Instant::now();
+                last_processed = Instant::now();
+            } else {
+                info!("Stream is offline. Skipping API shoutout for {}.", username);
             }
         }
     }
 
     async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Executing API shoutout for user ID: {}", user_id);
         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
-        let moderator_id = self.api_client.get_bot_id().await?;
 
-        // Send the API shoutout
-        self.api_client.send_shoutout(&broadcaster_id, user_id, &moderator_id).await?;
+        info!("Sending shoutout: broadcaster_id={}, user_id={}, moderator_id={}", broadcaster_id, user_id, broadcaster_id);
+        self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await?;
 
         Ok(())
-    }
-
-    pub async fn queue_shoutout(&self, user_id: String, username: String) {
-        let mut queue = self.shoutout_queue.lock().await;
-        queue.push_back((user_id, username));
     }
 
     pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

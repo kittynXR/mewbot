@@ -1,17 +1,24 @@
-use crate::twitch::irc::TwitchBotClient;
-use std::sync::Arc;
-use twitch_irc::message::PrivmsgMessage;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
-use tokio::sync::RwLock;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 
-pub async fn handle_ping(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    client.send_message(channel, "Pong!").await?;
-    Ok(())
+pub struct PingCommand;
+
+#[async_trait::async_trait]
+impl Command for PingCommand {
+    fn name(&self) -> &'static str {
+        "!ping"
+    }
+
+    fn description(&self) -> &'static str {
+        "Responds with Pong!"
+    }
+
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        ctx.bot_client.send_message(&ctx.channel, "Pong!").await?;
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }

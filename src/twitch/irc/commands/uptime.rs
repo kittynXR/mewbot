@@ -1,43 +1,47 @@
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 use crate::twitch::utils::get_stream_uptime;
-use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::irc::TwitchBotClient;
-use std::sync::Arc;
 use log::{error, warn};
-use tokio::sync::RwLock;
-use twitch_irc::message::PrivmsgMessage;
-use crate::discord::UserLinks;
-use crate::storage::StorageClient;
-use crate::twitch::TwitchManager;
 
-pub async fn handle_uptime(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    warn!("Starting handle_uptime for channel: {}", channel);
+pub struct UptimeCommand;
 
-    match get_stream_uptime(channel, twitch_manager.get_api_client()).await {
-        Ok(uptime) => {
-            let response = match uptime {
-                Some(duration) => format!(
-                    "Stream has been live for {} hours, {} minutes, and {} seconds",
-                    duration.num_hours(),
-                    duration.num_minutes() % 60,
-                    duration.num_seconds() % 60,
-                ),
-                None => "Stream is currently offline.".to_string(),
-            };
-            client.send_message(channel, &response).await?;
-        },
-        Err(e) => {
-            error!("Error getting stream uptime: {:?}", e);
-            let error_response = "Sorry, I couldn't retrieve the stream uptime. Please try again later.".to_string();
-            client.send_message(channel, &error_response).await?;
-        }
+#[async_trait::async_trait]
+impl Command for UptimeCommand {
+    fn name(&self) -> &'static str {
+        "!uptime"
     }
-    warn!("Completed handle_uptime");
-    Ok(())
+
+    fn description(&self) -> &'static str {
+        "Shows how long the stream has been live"
+    }
+
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        warn!("Starting handle_uptime for channel: {}", ctx.channel);
+
+        match get_stream_uptime(&ctx.channel, ctx.twitch_manager.get_api_client()).await {
+            Ok(uptime) => {
+                let response = match uptime {
+                    Some(duration) => format!(
+                        "Stream has been live for {} hours, {} minutes, and {} seconds",
+                        duration.num_hours(),
+                        duration.num_minutes() % 60,
+                        duration.num_seconds() % 60,
+                    ),
+                    None => "Stream is currently offline.".to_string(),
+                };
+                ctx.bot_client.send_message(&ctx.channel, &response).await?;
+            },
+            Err(e) => {
+                error!("Error getting stream uptime: {:?}", e);
+                let error_response = "Sorry, I couldn't retrieve the stream uptime. Please try again later.".to_string();
+                ctx.bot_client.send_message(&ctx.channel, &error_response).await?;
+            }
+        }
+        warn!("Completed handle_uptime");
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }

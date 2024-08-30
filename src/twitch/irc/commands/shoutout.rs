@@ -1,18 +1,13 @@
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
+use crate::twitch::api::requests::shoutout::send_shoutout;
+use crate::ai::AIClient;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 use log::{debug, error, info};
-use twitch_irc::message::PrivmsgMessage;
-use crate::twitch::irc::TwitchBotClient;
-use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::api::requests::shoutout::send_shoutout;
-use crate::twitch::redeems::RedeemManager;
-use tokio::sync::RwLock;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
 use crate::twitch::TwitchManager;
-use crate::ai::AIClient;
 
 const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
 const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
@@ -68,8 +63,7 @@ impl ShoutoutCooldown {
         let now = Instant::now();
         let global_passed = now.duration_since(self.global) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS);
         let user_passed = self.per_user.get(target)
-            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS))
-            ;
+            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS));
 
         (global_passed, user_passed)
     }
@@ -108,85 +102,73 @@ impl ShoutoutCooldown {
     }
 }
 
-pub async fn handle_shoutout(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    cooldowns: &Arc<Mutex<ShoutoutCooldown>>,
-    params: &[&str],
-    redeem_manager: &Arc<RwLock<RedeemManager>>,
-    storage: &Arc<RwLock<StorageClient>>,
-    user_links: &Arc<UserLinks>,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if params.is_empty() {
-        client.send_message(channel, "Please specify a user to shoutout!").await?;
-        return Ok(());
+pub struct ShoutoutCommand;
+
+#[async_trait::async_trait]
+impl Command for ShoutoutCommand {
+    fn name(&self) -> &'static str {
+        "!so"
     }
 
-    let target_username = strip_at_symbol(params[0]);
-    debug!("Shoutout target: {}", target_username);
-
-    // Check if the user is trying to shout themselves out or the broadcaster
-    if target_username.to_lowercase() == msg.sender.name.to_lowercase() || target_username.to_lowercase() == channel.to_lowercase() {
-        let message = if target_username.to_lowercase() == msg.sender.name.to_lowercase() {
-            format!("@{}, you're already awesome! No need to shout yourself out! pepeStepBro pepeStepBro", msg.sender.name)
-        } else {
-            format!("@{}, 推し～！ Cannot shout out our oshi {}! They're already here blessing us with their sugoi presence! ٩(◕‿◕｡)۶", msg.sender.name, channel)
-        };
-        client.send_message(channel, &message).await?;
-        return Ok(());
+    fn description(&self) -> &'static str {
+        "Gives a shoutout to another streamer"
     }
 
-    // Check cooldowns
-    let mut cooldowns = cooldowns.lock().await;
-    let (global_cooldown_passed, user_cooldown_passed) = cooldowns.check_cooldowns(target_username);
+    fn required_role(&self) -> UserRole {
+        UserRole::Subscriber
+    }
 
-    if !user_cooldown_passed {
-        if let (_, Some(remaining)) = cooldowns.get_remaining_cooldown(target_username) {
-            client.send_message(channel, &format!("Cannot shoutout {} again so soon. Please wait {} minutes.", target_username, remaining.as_secs() / 60)).await?;
+    async fn execute(&self, ctx: &CommandContext, args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if args.is_empty() {
+            ctx.bot_client.send_message(&ctx.channel, "Usage: !so <username>").await?;
             return Ok(());
         }
+
+        let target_username = args[0].trim_start_matches('@').to_lowercase();
+
+        // Generate and send AI shoutout message
+        let shoutout_message = if let Some(ai_client) = &ctx.ai_client {
+            generate_ai_shoutout(ai_client, &target_username).await
+        } else {
+            format!("Huge shoutout to {}! Go check out their channel!", target_username)
+        };
+
+        // Send the shoutout message
+        ctx.bot_client.send_message(&ctx.channel, &shoutout_message).await?;
+
+        // Queue the API shoutout
+        let api_client = ctx.twitch_manager.get_api_client();
+        match api_client.get_user_info(&target_username).await {
+            Ok(user_info) => {
+                if let Some(user) = user_info["data"].as_array().and_then(|arr| arr.first()) {
+                    let user_id = user["id"].as_str().unwrap_or("");
+                    let display_name = user["display_name"].as_str().unwrap_or(&target_username);
+                    ctx.twitch_manager.queue_shoutout(user_id.to_string(), display_name.to_string()).await;
+                }
+            },
+            Err(e) => {
+                eprintln!("Error fetching user info: {:?}", e);
+            }
+        }
+
+        Ok(())
     }
-
-    // Update cooldowns and generate shoutout message
-    cooldowns.update_cooldowns(target_username);
-    let shoutout_message = generate_shoutout_message(twitch_manager, ai_client, target_username).await?;
-
-    // Send the shoutout message immediately
-    client.send_message(channel, &shoutout_message).await?;
-
-    // Queue the API shoutout if the stream is live
-    if twitch_manager.is_stream_live().await {
-        let broadcaster_id = twitch_manager.get_api_client().get_broadcaster_id().await?;
-        let moderator_id = msg.sender.id.clone();
-        let target_id = twitch_manager.get_api_client().get_user_info(target_username).await?["data"][0]["id"].as_str().unwrap_or("").to_string();
-
-        cooldowns.enqueue_api_shoutout(broadcaster_id, moderator_id, target_id);
-    }
-
-    drop(cooldowns);
-
-    Ok(())
 }
 
-async fn generate_shoutout_message(
-    twitch_manager: &Arc<TwitchManager>,
-    ai_client: &Option<Arc<AIClient>>,
-    target_username: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let api_client = twitch_manager.get_api_client();
-    let user_info = api_client.get_user_info(target_username).await?;
-    let user_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
+async fn generate_ai_shoutout(ai_client: &Arc<AIClient>, username: &str) -> String {
+    let prompt = format!(
+        "Generate a friendly and enthusiastic shoutout message for a Twitch streamer named {}. \
+        The message should be brief (1-2 sentences) and encourage viewers to check out their channel. \
+        Make it sound natural and avoid using cliche phrases.",
+        username
+    );
 
-    if let Err(e) = twitch_manager.update_streamer_data(&user_id).await {
-        error!("Failed to update streamer data: {}", e);
-    }
-
-    match ai_client {
-        Some(ai) => generate_ai_shoutout_message(twitch_manager, ai, &user_id).await,
-        None => generate_simple_shoutout_message(twitch_manager, &user_id).await,
+    match ai_client.generate_response_without_history(&prompt).await {
+        Ok(response) => response,
+        Err(e) => {
+            eprintln!("Error generating AI shoutout: {:?}", e);
+            format!("Huge shoutout to {}! Go check out their channel!", username)
+        }
     }
 }
 
@@ -211,59 +193,35 @@ pub async fn start_api_shoutout_processor(
     });
 }
 
-
-async fn process_shoutout(
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    target_username: &str,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let twitch_api_client = twitch_manager.get_api_client();
-
-    match twitch_api_client.get_user_info(target_username).await {
-        Ok(user_info) => {
-            let user_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
-            let display_name = user_info["data"][0]["display_name"].as_str().unwrap_or(target_username);
-            let login = user_info["data"][0]["login"].as_str().unwrap_or(target_username);
-
-            if let Err(e) = twitch_manager.update_streamer_data(&user_id).await {
-                error!("Failed to update streamer data: {}", e);
-            }
-
-            let shoutout_message = match ai_client {
-                Some(ai) => generate_ai_shoutout_message(twitch_manager, ai, &user_id).await?,
-                None => generate_simple_shoutout_message(twitch_manager, &user_id).await?,
-            };
-
-            client.send_message(channel, &shoutout_message).await?;
-
-            if twitch_manager.is_stream_live().await {
-                let broadcaster_id = twitch_api_client.get_broadcaster_id().await?;
-                let moderator_id = broadcaster_id.clone(); // Assuming the bot is always a moderator
-
-                if let Err(e) = send_shoutout(twitch_manager, &broadcaster_id, &moderator_id, &user_id).await {
-                    error!("Error sending API shoutout: {}", e);
-                }
-            }
-        },
-        Err(e) => {
-            error!("Error getting user info for shoutout target: {}", e);
-            client.send_message(channel, &format!("Sorry, I couldn't find information for user {}.", target_username)).await?;
-        }
-    }
-
-    Ok(())
-}
-
-
-
 fn strip_at_symbol(username: &str) -> &str {
     username.strip_prefix('@').unwrap_or(username)
 }
 
-async fn is_user_moderator(api_client: Arc<TwitchAPIClient>, broadcaster_id: &str, user_id: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    api_client.is_user_moderator(user_id).await
+async fn generate_shoutout_message(
+    twitch_manager: &Arc<TwitchManager>,
+    ai_client: &Option<Arc<AIClient>>,
+    target_username: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let api_client = twitch_manager.get_api_client();
+    let user_info = api_client.get_user_info(target_username).await?;
+    let user_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get user ID")?.to_string();
+
+    if let Err(e) = twitch_manager.update_streamer_data(&user_id).await {
+        error!("Failed to update streamer data: {}", e);
+    }
+
+    match ai_client {
+        Some(ai) => {
+            match generate_ai_shoutout_message(twitch_manager, ai, &user_id).await {
+                Ok(message) => Ok(message),
+                Err(e) => {
+                    error!("Failed to generate AI shoutout message: {:?}", e);
+                    generate_simple_shoutout_message(twitch_manager, &user_id).await
+                }
+            }
+        },
+        None => generate_simple_shoutout_message(twitch_manager, &user_id).await,
+    }
 }
 
 async fn generate_ai_shoutout_message(
@@ -275,16 +233,11 @@ async fn generate_ai_shoutout_message(
 
     // Double-check user information
     if user.display_name == "displayname" || user.username == user_id {
-        // If the display name is still "displayname" or the username is the user ID,
-        // try to update the user information again
         twitch_manager.update_streamer_data(user_id).await?;
-        // Fetch the updated user information
         let updated_user = twitch_manager.get_user(user_id).await?;
         if updated_user.display_name != "displayname" && updated_user.username != user_id {
-            // Use the updated user information if it's valid
             user = updated_user;
         } else {
-            // If we still can't get valid information, return an error
             return Err("Unable to fetch valid user information for shoutout".into());
         }
     }
@@ -325,7 +278,7 @@ async fn generate_ai_shoutout_message(
 
         Ok(shoutout_message)
     } else {
-        Ok(format!("Go check out @{}! They're an awesome streamer you don't want to miss! Follow them at https://twitch.tv/{}", user.display_name, user.username))
+        generate_simple_shoutout_message(twitch_manager, user_id).await
     }
 }
 

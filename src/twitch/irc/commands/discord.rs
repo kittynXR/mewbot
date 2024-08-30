@@ -1,40 +1,40 @@
-use crate::twitch::irc::TwitchBotClient;
-use crate::twitch::api::TwitchAPIClient;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 use crate::twitch::api::requests::announcement::send_announcement;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
 use crate::ai::AIClient;
-use twitch_irc::message::PrivmsgMessage;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::twitch::TwitchManager;
 
-pub async fn handle_discord(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let irc_manager = client.get_manager();
-    let discord_link = irc_manager.get_discord_link().await;
+pub struct DiscordCommand;
 
-    // Generate a custom greeting using AI
-    let discord_message = generate_discord_message(ai_client, &discord_link).await;
+#[async_trait::async_trait]
+impl Command for DiscordCommand {
+    fn name(&self) -> &'static str {
+        "!discord"
+    }
 
-    // Send a message in the chat
-    // client.send_message(channel, &discord_message).await?;
+    fn description(&self) -> &'static str {
+        "Provides a link to join our Discord community and sends an announcement"
+    }
 
-    let api_client = twitch_manager.get_api_client();
-    // Send an announcement
-    let broadcaster_id = api_client.get_broadcaster_id().await?;
-    let bot_id = api_client.get_bot_id().await?;
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let irc_manager = ctx.bot_client.get_manager();
+        let discord_link = irc_manager.get_discord_link().await;
 
-    send_announcement(api_client, &broadcaster_id, &broadcaster_id, &discord_message, Some("primary")).await?;
+        // Generate a custom greeting using AI
+        let discord_message = generate_discord_message(&ctx.ai_client, &discord_link).await;
 
-    Ok(())
+        let api_client = ctx.twitch_manager.get_api_client();
+        // Send an announcement
+        let broadcaster_id = api_client.get_broadcaster_id().await?;
+
+        send_announcement(api_client, &broadcaster_id, &broadcaster_id, &discord_message, Some("primary")).await?;
+
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }
 
 async fn generate_discord_message(ai_client: &Option<Arc<AIClient>>, discord_link: &str) -> String {

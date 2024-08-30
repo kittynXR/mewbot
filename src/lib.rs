@@ -305,8 +305,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.ai_client.clone(),
     ));
 
-    clients.twitch_manager.start_message_handler(message_handler.clone()).await?;
-
+    // Start only one message handler
     let twitch_handler = tokio::spawn({
         let message_handler = message_handler.clone();
         let dashboard_state = clients.dashboard_state.clone();

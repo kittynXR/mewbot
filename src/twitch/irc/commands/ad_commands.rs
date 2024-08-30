@@ -3,11 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
-use twitch_irc::message::PrivmsgMessage;
-use crate::twitch::irc::TwitchBotClient;
-use crate::twitch::TwitchManager;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 
 pub struct AdInfo {
     pub text: String,
@@ -39,7 +36,7 @@ impl AdManager {
     }
 
     pub fn clear_ads(&mut self) {
-        self.ads.clear();
+        self.ads.clear()
     }
 
     pub fn get_active_ads(&self) -> Vec<(String, &AdInfo)> {
@@ -51,74 +48,92 @@ impl AdManager {
     }
 }
 
-pub async fn handle_startad(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    storage: &Arc<RwLock<StorageClient>>,
-    user_links: &Arc<UserLinks>,
-    params: &[&str],
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if params.len() < 3 {
-        client.send_message(channel, "Usage: !startad <interval_minutes> <duration_minutes> <ad_text>").await?;
-        return Ok(());
+pub struct StartAdCommand;
+
+#[async_trait::async_trait]
+impl Command for StartAdCommand {
+    fn name(&self) -> &'static str {
+        "!startad"
     }
 
-    let interval_minutes: u64 = params[0].parse()?;
-    let duration_minutes: u64 = params[1].parse()?;
-    let ad_text = params[2..].join(" ");
+    fn description(&self) -> &'static str {
+        "Starts a scheduled ad. Usage: !startad <interval_minutes> <duration_minutes> <ad_text>"
+    }
 
-    let ad_manager = twitch_manager.get_ad_manager();
-    let mut ad_manager_lock = ad_manager.write().await;
-    let ad_id = format!("ad_{}", Instant::now().elapsed().as_secs());
-    ad_manager_lock.add_ad(
-        ad_id.clone(),
-        ad_text.clone(),
-        Duration::from_secs(interval_minutes * 60),
-        Duration::from_secs(duration_minutes * 60),
-    );
-    drop(ad_manager_lock);
+    fn required_role(&self) -> UserRole {
+        UserRole::Moderator
+    }
 
-    // Start the ad loop
-    let client_clone = client.clone();
-    let channel_clone = channel.to_string();
-    let ad_manager_clone = ad_manager.clone();
-    tokio::spawn(async move {
-        loop {
-            sleep(Duration::from_secs(interval_minutes * 60)).await;
-            let ad_manager_lock = ad_manager_clone.read().await;
-            if let Some(ad_info) = ad_manager_lock.ads.get(&ad_id) {
-                if Instant::now() < ad_info.end_time {
-                    client_clone.send_message(&channel_clone, &ad_info.text).await.ok();
+    async fn execute(&self, ctx: &CommandContext, args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if args.len() < 3 {
+            ctx.bot_client.send_message(&ctx.channel, "Usage: !startad <interval_minutes> <duration_minutes> <ad_text>").await?;
+            return Ok(());
+        }
+
+        let interval_minutes: u64 = args[0].parse()?;
+        let duration_minutes: u64 = args[1].parse()?;
+        let ad_text = args[2..].join(" ");
+
+        let ad_manager = ctx.twitch_manager.get_ad_manager();
+        let mut ad_manager_lock = ad_manager.write().await;
+        let ad_id = format!("ad_{}", Instant::now().elapsed().as_secs());
+        ad_manager_lock.add_ad(
+            ad_id.clone(),
+            ad_text.clone(),
+            Duration::from_secs(interval_minutes * 60),
+            Duration::from_secs(duration_minutes * 60),
+        );
+        drop(ad_manager_lock);
+
+        // Start the ad loop
+        let bot_client = ctx.bot_client.clone();
+        let channel = ctx.channel.clone();
+        let ad_manager_clone = ad_manager.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(interval_minutes * 60)).await;
+                let ad_manager_lock = ad_manager_clone.read().await;
+                if let Some(ad_info) = ad_manager_lock.ads.get(&ad_id) {
+                    if Instant::now() < ad_info.end_time {
+                        bot_client.send_message(&channel, &ad_info.text).await.ok();
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
-            } else {
-                break;
+                drop(ad_manager_lock);
             }
-            drop(ad_manager_lock);
-        }
-    });
+        });
 
-    client.send_message(channel, &format!("Ad started: will run every {} minutes for {} minutes", interval_minutes, duration_minutes)).await?;
-    Ok(())
+        ctx.bot_client.send_message(&ctx.channel, &format!("Ad started: will run every {} minutes for {} minutes", interval_minutes, duration_minutes)).await?;
+        Ok(())
+    }
 }
 
-pub async fn handle_stopads(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    storage: &Arc<RwLock<StorageClient>>,
-    user_links: &Arc<UserLinks>,
-    params: &[&str],
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ad_manager = twitch_manager.get_ad_manager();
-    let mut ad_manager_lock = ad_manager.write().await;
-    ad_manager_lock.clear_ads();
-    drop(ad_manager_lock);
+pub struct StopAdsCommand;
 
-    client.send_message(channel, "All ads have been stopped.").await?;
-    Ok(())
+#[async_trait::async_trait]
+impl Command for StopAdsCommand {
+    fn name(&self) -> &'static str {
+        "!stopads"
+    }
+
+    fn description(&self) -> &'static str {
+        "Stops all running ads"
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Moderator
+    }
+
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let ad_manager = ctx.twitch_manager.get_ad_manager();
+        let mut ad_manager_lock = ad_manager.write().await;
+        ad_manager_lock.clear_ads();
+        drop(ad_manager_lock);
+
+        ctx.bot_client.send_message(&ctx.channel, "All ads have been stopped.").await?;
+        Ok(())
+    }
 }

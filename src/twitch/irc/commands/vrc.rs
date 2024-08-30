@@ -1,40 +1,40 @@
-use crate::twitch::irc::TwitchBotClient;
-use crate::twitch::api::TwitchAPIClient;
+use crate::twitch::irc::command_system::{Command, CommandContext};
+use crate::twitch::roles::UserRole;
 use crate::twitch::api::requests::announcement::send_announcement;
-use crate::storage::StorageClient;
-use crate::discord::UserLinks;
 use crate::ai::AIClient;
-use twitch_irc::message::PrivmsgMessage;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::twitch::TwitchManager;
 
-pub async fn handle_discord(
-    msg: &PrivmsgMessage,
-    client: &Arc<TwitchBotClient>,
-    channel: &str,
-    twitch_manager: &Arc<TwitchManager>,
-    _storage: &Arc<RwLock<StorageClient>>,
-    _user_links: &Arc<UserLinks>,
-    ai_client: &Option<Arc<AIClient>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let irc_manager = client.get_manager();
-    let vrc_link = irc_manager.get_vrchat_group_link().await;
+pub struct VRCCommand;
 
-    // Generate a custom greeting using AI
-    let vrc_message = generate_vrc_message(ai_client, &vrc_link).await;
+#[async_trait::async_trait]
+impl Command for VRCCommand {
+    fn name(&self) -> &'static str {
+        "!vrc"
+    }
 
-    // Send a message in the chat
-    // client.send_message(channel, &discord_message).await?;
+    fn description(&self) -> &'static str {
+        "Provides a link to join our VRChat community group and sends an announcement"
+    }
 
-    let api_client = twitch_manager.get_api_client();
-    // Send an announcement
-    let broadcaster_id = api_client.get_broadcaster_id().await?;
-    let bot_id = api_client.get_bot_id().await?;
+    async fn execute(&self, ctx: &CommandContext, _args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let irc_manager = ctx.bot_client.get_manager();
+        let vrc_link = irc_manager.get_vrchat_group_link().await;
 
-    send_announcement(api_client, &broadcaster_id, &broadcaster_id, &vrc_message, Some("primary")).await?;
+        // Generate a custom greeting using AI
+        let vrc_message = generate_vrc_message(&ctx.ai_client, &vrc_link).await;
 
-    Ok(())
+        let api_client = ctx.twitch_manager.get_api_client();
+        // Send an announcement
+        let broadcaster_id = api_client.get_broadcaster_id().await?;
+
+        send_announcement(api_client, &broadcaster_id, &broadcaster_id, &vrc_message, Some("primary")).await?;
+
+        Ok(())
+    }
+
+    fn required_role(&self) -> UserRole {
+        UserRole::Viewer
+    }
 }
 
 async fn generate_vrc_message(ai_client: &Option<Arc<AIClient>>, vrc_link: &str) -> String {
@@ -44,14 +44,14 @@ async fn generate_vrc_message(ai_client: &Option<Arc<AIClient>>, vrc_link: &str)
             Feel free to mention: VR, technology, cute & funny anime, catgirls, foxgirls, \
             catboys, foxboys, 3D art or living in the matrix. \
             Don't use the word viewers.  If anything, say chatters or everyone. Good vibes. Good vibes. \
-            The message should be brief (1-2 sentences) and include the following Discord link: {}. \
+            The message should be brief (1-2 sentences) and include the following VRChat group link: {}. \
             Make sure the tone is casual and welcoming.",
             vrc_link
         );
 
         match ai.generate_response_without_history(&prompt).await {
             Ok(response) => {
-                // Add spaces around the discord_link within the response
+                // Add spaces around the vrc_link within the response
                 let cleaned_response = response.replace(vrc_link, &format!(" {} ", vrc_link));
 
                 // Trim any leading or trailing whitespace
@@ -59,14 +59,14 @@ async fn generate_vrc_message(ai_client: &Option<Arc<AIClient>>, vrc_link: &str)
             }
             Err(e) => {
                 eprintln!("Error generating AI response: {:?}", e);
-                default_discord_message(vrc_link)
+                default_vrc_message(vrc_link)
             }
         }
     } else {
-        default_discord_message(vrc_link)
+        default_vrc_message(vrc_link)
     }
 }
 
-fn default_discord_message(discord_link: &str) -> String {
-    format!("Join our Discord community! {} ", discord_link)
+fn default_vrc_message(vrc_link: &str) -> String {
+    format!("Join our VRChat community group! {} ", vrc_link)
 }
