@@ -126,12 +126,22 @@ impl Command for ShoutoutCommand {
 
         let target_username = args[0].trim_start_matches('@').to_lowercase();
 
-        // Generate and send AI shoutout message
-        let shoutout_message = if let Some(ai_client) = &ctx.ai_client {
-            generate_ai_shoutout(ai_client, &target_username).await
-        } else {
-            format!("Huge shoutout to {}! Go check out their channel!", target_username)
-        };
+        // Check if the user is trying to shout themselves out
+        if target_username.to_lowercase() == ctx.msg.sender.name.to_lowercase() {
+            let self_shoutout_message = format!("@{}, you're already awesome! No need to shout yourself out! pepeStepBro pepeStepBro ", ctx.msg.sender.name);
+            ctx.bot_client.send_message(&ctx.channel, &self_shoutout_message).await?;
+            return Ok(());
+        }
+
+        // Check if the target is the broadcaster
+        if target_username.to_lowercase() == ctx.channel.to_lowercase() {
+            let broadcaster_shoutout_message = format!("@{}, 推し～！ Cannot shout out our oshi {}! They're already here blessing us with their sugoi presence! ٩(◕‿◕｡)۶", ctx.msg.sender.name, ctx.channel);
+            ctx.bot_client.send_message(&ctx.channel, &broadcaster_shoutout_message).await?;
+            return Ok(());
+        }
+
+        // Generate and send shoutout message
+        let shoutout_message = generate_shoutout_message(&ctx.twitch_manager, &ctx.ai_client, &target_username).await?;
 
         // Send the shoutout message
         ctx.bot_client.send_message(&ctx.channel, &shoutout_message).await?;
@@ -147,7 +157,7 @@ impl Command for ShoutoutCommand {
                 }
             },
             Err(e) => {
-                eprintln!("Error fetching user info: {:?}", e);
+                error!("Error fetching user info: {:?}", e);
             }
         }
 
