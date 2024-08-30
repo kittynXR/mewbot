@@ -40,7 +40,7 @@ pub struct StreamerData {
     pub(crate) recent_games: Vec<String>,
     pub(crate) current_tags: Vec<String>,
     pub(crate) current_title: String,
-    recent_titles: VecDeque<String>,
+    pub(crate) recent_titles: VecDeque<String>,
     pub(crate) top_clips: Vec<(String, String)>, // (clip_title, clip_url)
 }
 
@@ -496,13 +496,22 @@ impl TwitchManager {
         let current_title = channel_info["data"][0]["title"].as_str().unwrap_or("").to_string();
         info!("Current title: {}", current_title);
 
+        let recent_vods = api_client.get_recent_vods(user_id, 5).await?;
+
         let mut recent_titles = VecDeque::new();
         recent_titles.push_back(current_title.clone());
-        info!("Recent titles: {:?}", recent_titles);
+        for vod_title in recent_vods {
+            recent_titles.push_back(vod_title);
+        }
+        info!("Recent titles:");
+        for (i, title) in recent_titles.iter().enumerate() {
+            info!("  {}. {}", i + 1, title);
+        }
 
         info!("Top clips:");
-        for clip in &top_clips {
-            info!("  Title: {}, URL: {}", clip.title, clip.url);
+        for (i, clip) in top_clips.iter().enumerate() {
+            info!("  {}. Title: {}", i + 1, clip.title);
+            info!("     URL: {}", clip.url);
         }
 
         let streamer_data = StreamerData {

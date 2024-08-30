@@ -141,6 +141,27 @@ impl TwitchAPIClient {
         Ok(clips)
     }
 
+    pub async fn get_recent_vods(&self, user_id: &str, limit: u32) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let response: serde_json::Value = self.authenticated_request(
+            reqwest::Method::GET,
+            "videos",
+            Some(&[
+                ("user_id", user_id),
+                ("type", "archive"),
+                ("first", &limit.to_string()),
+            ]),
+            None,
+        ).await?;
+
+        let vods = response["data"].as_array()
+            .ok_or("No VODs data found")?
+            .iter()
+            .filter_map(|vod| vod["title"].as_str().map(String::from))
+            .collect();
+
+        Ok(vods)
+    }
+
     pub async fn send_shoutout(
         &self,
         from_broadcaster_id: &str,

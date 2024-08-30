@@ -61,10 +61,17 @@ impl Command for FollowAgeCommand {
         let broadcaster_id = twitch_api_client.get_broadcaster_id().await?;
 
         let target_user = if !args.is_empty() {
-            args[0].trim_start_matches('@')
+            args[0].trim_start_matches('@').trim()
         } else {
             &ctx.msg.sender.name
         };
+
+        // Check if the target_user is empty or contains only whitespace
+        if target_user.is_empty() {
+            let response = format!("@{}, please provide a valid username.", ctx.msg.sender.name);
+            ctx.bot_client.send_message(&ctx.channel, &response).await?;
+            return Ok(());
+        }
 
         match twitch_api_client.get_user_info(target_user).await {
             Ok(user_info) => {
@@ -84,13 +91,15 @@ impl Command for FollowAgeCommand {
                     },
                     Err(e) => {
                         error!("Failed to get follower info: {:?}", e);
-                        ctx.bot_client.send_message(&ctx.channel, &format!("Sorry, I couldn't retrieve follow information for {}.", target_user)).await?;
+                        let response = format!("@{}, I couldn't retrieve follow information for {}. Please try again later.", ctx.msg.sender.name, target_user);
+                        ctx.bot_client.send_message(&ctx.channel, &response).await?;
                     }
                 }
             },
             Err(e) => {
                 error!("Failed to get user info: {:?}", e);
-                ctx.bot_client.send_message(&ctx.channel, &format!("Sorry, I couldn't retrieve information for user {}.", target_user)).await?;
+                let response = format!("@{}, I couldn't find user information for {}. Please check the username and try again.", ctx.msg.sender.name, target_user);
+                ctx.bot_client.send_message(&ctx.channel, &response).await?;
             }
         }
 
@@ -104,32 +113,33 @@ impl Command for FollowAgeCommand {
 
 fn format_duration(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
     let duration = end.signed_duration_since(start);
-    let years = duration.num_days() / 365;
-    let months = (duration.num_days() % 365) / 30;
-    let days = duration.num_days() % 30;
-    let hours = duration.num_hours() % 24;
-    let minutes = duration.num_minutes() % 60;
-    let seconds = duration.num_seconds() % 60;
+
+    let seconds = duration.num_seconds();
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+    let months = days / 30;
+    let years = months / 12;
 
     let mut parts = Vec::new();
 
     if years > 0 {
         parts.push(format!("{} year{}", years, if years > 1 { "s" } else { "" }));
     }
-    if months > 0 {
-        parts.push(format!("{} month{}", months, if months > 1 { "s" } else { "" }));
+    if months % 12 > 0 {
+        parts.push(format!("{} month{}", months % 12, if months % 12 > 1 { "s" } else { "" }));
     }
-    if days > 0 {
-        parts.push(format!("{} day{}", days, if days > 1 { "s" } else { "" }));
+    if days % 30 > 0 {
+        parts.push(format!("{} day{}", days % 30, if days % 30 > 1 { "s" } else { "" }));
     }
-    if hours > 0 {
-        parts.push(format!("{} hour{}", hours, if hours > 1 { "s" } else { "" }));
+    if hours % 24 > 0 {
+        parts.push(format!("{} hour{}", hours % 24, if hours % 24 > 1 { "s" } else { "" }));
     }
-    if minutes > 0 {
-        parts.push(format!("{} minute{}", minutes, if minutes > 1 { "s" } else { "" }));
+    if minutes % 60 > 0 {
+        parts.push(format!("{} minute{}", minutes % 60, if minutes % 60 > 1 { "s" } else { "" }));
     }
-    if seconds > 0 || parts.is_empty() {
-        parts.push(format!("{} second{}", seconds, if seconds != 1 { "s" } else { "" }));
+    if seconds % 60 > 0 || parts.is_empty() {
+        parts.push(format!("{} second{}", seconds % 60, if seconds % 60 != 1 { "s" } else { "" }));
     }
 
     match parts.len() {

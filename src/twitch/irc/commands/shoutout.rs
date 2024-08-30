@@ -262,8 +262,11 @@ async fn generate_ai_shoutout_message(
             prompt.push_str(&format!("- Last played game: {}\n", streamer_data.recent_games[0]));
         }
 
-        if !streamer_data.current_title.is_empty() {
-            prompt.push_str(&format!("- Last stream title: \"{}\"\n", streamer_data.current_title));
+        if !streamer_data.recent_titles.is_empty() {
+            prompt.push_str("- Recent stream titles:\n");
+            for (i, title) in streamer_data.recent_titles.iter().enumerate().take(3) {
+                prompt.push_str(&format!("  {}. \"{}\"\n", i + 1, title));
+            }
         }
 
         if !streamer_data.current_tags.is_empty() {
@@ -271,11 +274,14 @@ async fn generate_ai_shoutout_message(
         }
 
         if !streamer_data.top_clips.is_empty() {
-            prompt.push_str("- Has some popular clips\n");
+            prompt.push_str("- Popular clips:\n");
+            for (i, (title, _)) in streamer_data.top_clips.iter().enumerate().take(3) {
+                prompt.push_str(&format!("  {}. \"{}\"\n", i + 1, title));
+            }
         }
 
         prompt.push_str(&format!("- Twitch URL: https://twitch.tv/{}\n", user.username));
-        prompt.push_str("\nThe shoutout should be enthusiastic, brief (1-2 sentences), and encourage viewers to check out the streamer's channel. Use the streamer's display name (@{}) in the message. Don't directly list all the information, but use it to craft a compelling message. Make sure to include the correct Twitch URL at the end of the message, with a space before and after the URL.");
+        prompt.push_str("\nThe shoutout should be enthusiastic, brief (1-2 sentences), and encourage viewers to check out the streamer's channel. Use the streamer's display name (@{}) in the message. Don't directly list all the information, but use it to craft a compelling message. If relevant, mention a recent game, stream title, or popular clip. Make sure to include the correct Twitch URL at the end of the message, with a space before and after the URL.");
 
         // Use the AI client to generate the shoutout message
         let mut shoutout_message = ai_client.generate_response_without_history(&prompt).await?;
