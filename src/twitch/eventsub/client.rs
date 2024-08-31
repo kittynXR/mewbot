@@ -392,7 +392,7 @@ impl TwitchEventSubClient {
         let configs = self.osc_configs.read().await;
         if let Some(osc_config) = configs.get_config(event_type) {
             if let Some(vrchat_osc) = &self.twitch_manager.vrchat_osc {
-                vrchat_osc.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value)?;
+                vrchat_osc.send_osc_message_with_reset(osc_config).await?;
                 debug!("Sent OSC message for event: {}", event_type);
             }
         }

@@ -1,35 +1,5 @@
 use std::time::Duration;
-use rosc::{OscPacket, OscType};
 use serde::{Deserialize, Serialize};
-
-pub struct OSCMessage {
-    pub address: String,
-    pub args: Vec<OscType>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum EventType {
-    ChatMessage,
-    Redeem,
-    EventSub,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventMessage {
-    pub event_type: EventType,
-    pub endpoint: String,
-    pub message: String,
-    pub user: Option<String>,
-    pub redeem_title: Option<String>,
-    pub event_data: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventConfig {
-    pub event_type: EventType,
-    pub osc_endpoint: String,
-}
-
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OSCConfig {
@@ -39,7 +9,7 @@ pub struct OSCConfig {
     pub osc_value: OSCValue,
     pub default_value: OSCValue,
     pub execution_duration: Option<Duration>,
-    pub send_chat_message: bool,  // New field
+    pub send_chat_message: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

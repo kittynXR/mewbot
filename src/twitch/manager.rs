@@ -13,7 +13,8 @@ use crate::ai::AIClient;
 use crate::config::Config;
 use crate::discord::UserLinks;
 use crate::osc::osc_config::OSCConfigurations;
-use crate::osc::VRChatOSC;
+use crate::osc::{OSCManager, VRChatOSC};
+use crate::osc::client::OSCClient;
 use crate::storage::{ChatterData, StorageClient};
 use crate::twitch::{TwitchAPIClient, TwitchIRCManager};
 use crate::twitch::eventsub::TwitchEventSubClient;
@@ -214,10 +215,15 @@ impl TwitchManager {
 
         let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
 
+        let vrchat_osc = Self::initialize_vrchat_osc(vrchat_osc).await;
+
         let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
             api_client.clone(),
             ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
-            vrchat_osc.clone().unwrap_or_else(|| Arc::new(VRChatOSC::new("127.0.0.1:9000").expect("Failed to create VRChatOSC"))),
+            vrchat_osc.clone().unwrap_or_else(|| {
+                error!("VRChatOSC not initialized. Some functionality may be limited.");
+                Arc::new(VRChatOSC::new(Arc::new(RwLock::new(OSCClient::new_sync("127.0.0.1:9000").expect("Failed to create OSCClient")))))
+            }),
             osc_configs.clone(),
         )));
 
@@ -299,6 +305,26 @@ impl TwitchManager {
 
         info!("TwitchManager shutdown complete.");
         Ok(())
+    }
+
+    async fn initialize_vrchat_osc(existing_osc: Option<Arc<VRChatOSC>>) -> Option<Arc<VRChatOSC>> {
+        if let Some(osc) = existing_osc {
+            return Some(osc);
+        }
+
+        match OSCManager::new("127.0.0.1:9000").await {
+            Ok(manager) => Some(manager.get_vrchat_osc()),
+            Err(e) => {
+                error!("Failed to create OSCManager: {:?}", e);
+                match OSCClient::new("127.0.0.1:9000").await {
+                    Ok(client) => Some(Arc::new(VRChatOSC::new(Arc::new(RwLock::new(client))))),
+                    Err(e) => {
+                        error!("Failed to create OSCClient: {:?}", e);
+                        None
+                    }
+                }
+            }
+        }
     }
 
     async fn initialize_irc_clients(

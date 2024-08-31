@@ -26,6 +26,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 use crate::discord::UserLinks;
 use crate::osc::VRChatOSC;
+use crate::osc::{OSCManager, OSCError};
 use crate::osc::osc_config::OSCConfigurations;
 use crate::storage::StorageClient;
 use crate::twitch::eventsub::TwitchEventSubClient;
@@ -138,16 +139,19 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         None
     };
 
-    let vrchat_osc = match VRChatOSC::new("127.0.0.1:9000") {
-        Ok(osc) => {
-            info!("VRChatOSC initialized successfully.");
-            Some(Arc::new(osc))
-        },
+    let osc_manager = match OSCManager::new("127.0.0.1:9000").await {
+        Ok(manager) => {
+            info!("OSCManager initialized successfully.");
+            Some(Arc::new(manager))
+        }
         Err(e) => {
-            error!("Failed to initialize VRChatOSC: {}. OSC functionality will be disabled.", e);
+            error!("Failed to initialize OSCManager: {}. OSC functionality will be disabled.", e);
             None
         }
     };
+
+    // Then, get the VRChatOSC instance from the OSCManager:
+    let vrchat_osc = osc_manager.as_ref().map(|manager| manager.get_vrchat_osc());
 
     let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
     let user_links = Arc::new(UserLinks::new());

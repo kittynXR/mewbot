@@ -47,7 +47,7 @@ impl Default for OSCConfigurations {
             osc_endpoint: "/avatar/parameters/NewFollower".to_string(),
             osc_type: OSCMessageType::Boolean,
             osc_value: OSCValue::Boolean(true),
-            default_value: OSCValue::Integer(0),
+            default_value: OSCValue::Boolean(false),
             execution_duration: Some(Duration::from_secs(5)),
             send_chat_message: false,
         });
@@ -56,7 +56,7 @@ impl Default for OSCConfigurations {
             osc_endpoint: "/avatar/parameters/NewSubscriber".to_string(),
             osc_type: OSCMessageType::Boolean,
             osc_value: OSCValue::Boolean(true),
-            default_value: OSCValue::Integer(0),
+            default_value: OSCValue::Boolean(false),
             execution_duration: Some(Duration::from_secs(5)),
             send_chat_message: false,
         });
