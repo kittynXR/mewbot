@@ -1,19 +1,26 @@
 use std::sync::Arc;
 use log::info;
 use tokio::sync::RwLock;
+use crate::osc::OSCManager;
 use crate::vrchat::{VRChatClient, VRChatError, World};
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 
 pub struct VRChatManager {
     vrchat_client: Arc<VRChatClient>,
     dashboard_state: Arc<RwLock<DashboardState>>,
+    osc_manager: Option<Arc<OSCManager>>,
 }
 
 impl VRChatManager {
-    pub fn new(vrchat_client: Arc<VRChatClient>, dashboard_state: Arc<RwLock<DashboardState>>) -> Self {
+    pub fn new(
+        vrchat_client: Arc<VRChatClient>,
+        dashboard_state: Arc<RwLock<DashboardState>>,
+        osc_manager: Option<Arc<OSCManager>>,
+    ) -> Self {
         Self {
             vrchat_client,
             dashboard_state,
+            osc_manager,
         }
     }
 
@@ -86,5 +93,23 @@ impl VRChatManager {
 
     pub async fn get_current_world(&self) -> Result<World, VRChatError> {
         self.vrchat_client.get_current_world().await
+    }
+
+    pub async fn connect_osc(&self) -> Result<(), VRChatError> {
+        match &self.osc_manager {
+            Some(osc_manager) => {
+                osc_manager.connect().await.map_err(|e| VRChatError(format!("Failed to connect OSC: {}", e)))
+            },
+            None => Err(VRChatError("OSC manager not initialized".to_string())),
+        }
+    }
+
+    pub async fn disconnect_osc(&self) -> Result<(), VRChatError> {
+        match &self.osc_manager {
+            Some(osc_manager) => {
+                osc_manager.disconnect().await.map_err(|e| VRChatError(format!("Failed to disconnect OSC: {}", e)))
+            },
+            None => Err(VRChatError("OSC manager not initialized".to_string())),
+        }
     }
 }

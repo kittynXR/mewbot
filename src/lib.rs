@@ -204,7 +204,8 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     let vrchat_manager = vrchat.as_ref().map(|vrchat_client| {
         Arc::new(VRChatManager::new(
             Arc::clone(vrchat_client),
-            dashboard_state.clone()
+            dashboard_state.clone(),
+            osc_manager.clone(),
         ))
     });
 

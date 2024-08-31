@@ -11,7 +11,7 @@ use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::http::{Request, Uri};
 use tokio_tungstenite::tungstenite::http::header;
 use tokio::sync::mpsc;
-use crate::vrchat::{VRChatClient, VRChatManager};
+use crate::vrchat::{ErrorMessage, VRChatClient, VRChatManager, VRChatMessage};
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 
 pub async fn handler(
@@ -24,6 +24,7 @@ pub async fn handler(
     let max_delay = Duration::from_secs(64);
 
     loop {
+        info!("Attempting to connect to VRChat WebSocket");
         match connect_to_websocket(&auth_cookie).await {
             Ok(mut ws_stream) => {
                 info!("WebSocket connection established");
@@ -32,38 +33,82 @@ pub async fn handler(
                 while let Some(message) = ws_stream.next().await {
                     match message {
                         Ok(TungsteniteMessage::Text(msg)) => {
-                            if let Ok(Some(new_world)) = extract_user_location_info(&msg, &current_user_id) {
-                                // Update the VRChatManager with the new world information
-                                if let Err(e) = vrchat_manager.update_current_world(new_world.clone()).await {
-                                    error!("Failed to update VRChatManager with new world: {}", e);
-                                }
+                            match parse_vrchat_message(&msg, &current_user_id) {
+                                Ok(Some(message_type)) => {
+                                    match message_type {
+                                        VRChatMessage::UserLocation(content) => {
+                                            info!("Current user location update: {:?}", content);
+                                            if let Ok(Some(new_world)) = extract_user_location_info(&msg, &current_user_id) {
+                                                info!("Current user entered new world: {:?}", new_world);
+                                                if let Err(e) = vrchat_manager.update_current_world(new_world.clone()).await {
+                                                    error!("Failed to update VRChatManager with new world: {}", e);
+                                                }
 
-                                let mut dashboard = dashboard_state.write().await;
-                                dashboard.update_vrchat_world(Some(new_world.clone()));
-                                info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                                let mut dashboard = dashboard_state.write().await;
+                                                dashboard.update_vrchat_world(Some(new_world.clone()));
+                                                info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                            }
+                                        },
+                                        VRChatMessage::UserOnline(_) => {
+                                            info!("Current user is now online");
+                                            dashboard_state.write().await.update_vrchat_status(true);
+                                            if let Err(e) = vrchat_manager.connect_osc().await {
+                                                error!("Failed to reestablish OSC connection: {}", e);
+                                            } else {
+                                                info!("OSC connection reestablished");
+                                            }
+                                        },
+                                        VRChatMessage::UserOffline(_) => {
+                                            info!("Current user is now offline");
+                                            dashboard_state.write().await.update_vrchat_status(false);
+                                            if let Err(e) = vrchat_manager.disconnect_osc().await {
+                                                error!("Failed to close OSC connection: {}", e);
+                                            } else {
+                                                info!("OSC connection closed");
+                                            }
+                                        },
+                                        VRChatMessage::Error(err) => {
+                                            error!("Received error message: {:?}", err);
+                                        },
+                                        VRChatMessage::Unknown(_) => {
+                                            debug!("Received unknown message type for current user");
+                                        },
+                                    }
+                                },
+                                Ok(None) => {
+                                    // Message not related to current user, ignore
+                                },
+                                Err(e) => {
+                                    error!("Failed to parse VRChat message: {}", e);
+                                }
                             }
-                        }
+                        },
+                        Ok(TungsteniteMessage::Close(frame)) => {
+                            info!("WebSocket connection closed: {:?}", frame);
+                            break;
+                        },
+                        Ok(_) => {
+                            debug!("Received non-text WebSocket message");
+                        },
                         Err(err) => {
                             error!("WebSocket error: {}", err);
                             break;
                         }
-                        _ => {}
                     }
                 }
                 delay = Duration::from_secs(1);
             }
             Err(err) => {
-                error!("Failed to connect: {}", err);
+                error!("Failed to connect to WebSocket: {}", err);
                 dashboard_state.write().await.update_vrchat_status(false);
                 delay = std::cmp::min(delay * 2, max_delay);
             }
         }
 
-        warn!("Attempting to reconnect after {:?}", delay);
+        warn!("WebSocket disconnected. Attempting to reconnect after {:?}", delay);
         sleep(delay).await;
     }
 }
-
 
 async fn connect_to_websocket(auth_cookie: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, VRChatError> {
     let auth_token = extract_auth_token(auth_cookie)?;
@@ -157,4 +202,33 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
     }
 
     Ok(None)
+}
+
+fn parse_vrchat_message(json_message: &str, current_user_id: &str) -> Result<Option<VRChatMessage>, VRChatError> {
+    let message: serde_json::Value = serde_json::from_str(json_message)
+        .map_err(|e| VRChatError(format!("Failed to parse JSON: {}", e)))?;
+
+    if let Some(content) = message.get("content") {
+        let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap_or(""))
+            .map_err(|e| VRChatError(format!("Failed to parse content JSON: {}", e)))?;
+
+        if let Some(user_id) = content.get("userId").and_then(|id| id.as_str()) {
+            if user_id == current_user_id {
+                match message.get("type").and_then(|t| t.as_str()) {
+                    Some("friend-online") | Some("friend-active") => {
+                        return Ok(Some(VRChatMessage::UserOnline(content)));
+                    },
+                    Some("friend-offline") => {
+                        return Ok(Some(VRChatMessage::UserOffline(content)));
+                    },
+                    Some("friend-location") => {
+                        return Ok(Some(VRChatMessage::UserLocation(content)));
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(None) // Return None for messages not related to the current user
 }

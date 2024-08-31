@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use crate::ai::AIClient;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
-use crate::osc::VRChatOSC;
+use crate::osc::{OSCManager, VRChatOSC};
 use crate::twitch::api::TwitchAPIClient;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::twitch::api::models::ChannelPointReward;
@@ -19,7 +19,7 @@ use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
 pub struct RedeemManager {
     api_client: Arc<TwitchAPIClient>,
     ai_client: Arc<AIClient>,
-    vrchat_osc: Arc<VRChatOSC>,
+    osc_manager: Arc<OSCManager>,
     handlers: HashMap<String, Box<dyn RedeemHandler>>,
     coin_game_state: Arc<RwLock<CoinGameState>>,
     stream_status: Arc<RwLock<StreamStatus>>,
@@ -41,14 +41,14 @@ impl RedeemManager {
     pub fn new(
         api_client: Arc<TwitchAPIClient>,
         ai_client: Arc<AIClient>,
-        vrchat_osc: Arc<VRChatOSC>,
+        osc_manager: Arc<OSCManager>,
         osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
         let coin_game_state = Arc::new(RwLock::new(CoinGameState::new(20)));
         let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
 
-        let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(vrchat_osc.clone(), osc_configs.clone()));
+        let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(osc_manager.clone(), osc_configs.clone()));
 
         let mut handlers = HashMap::new();
         handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone(), ai_client.clone(), api_client.clone())) as Box<dyn RedeemHandler>);
@@ -62,7 +62,7 @@ impl RedeemManager {
         Self {
             api_client,
             ai_client,
-            vrchat_osc,
+            osc_manager,
             handlers,
             coin_game_state,
             stream_status,

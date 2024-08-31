@@ -41,6 +41,9 @@ pub struct World {
 pub enum VRChatMessage {
     Error(ErrorMessage),
     UserLocation(serde_json::Value),
+    UserOnline(serde_json::Value),
+    UserOffline(serde_json::Value),
+    Unknown(serde_json::Value),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

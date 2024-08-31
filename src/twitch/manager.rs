@@ -214,16 +214,14 @@ impl TwitchManager {
         let (bot_client, broadcaster_client) = Self::initialize_irc_clients(&config, &irc_manager).await?;
 
         let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
-
+        let osc_manager = Arc::new(OSCManager::new("127.0.0.1:9000").await?);
+        
         let vrchat_osc = Self::initialize_vrchat_osc(vrchat_osc).await;
 
         let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
             api_client.clone(),
             ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
-            vrchat_osc.clone().unwrap_or_else(|| {
-                error!("VRChatOSC not initialized. Some functionality may be limited.");
-                Arc::new(VRChatOSC::new(Arc::new(RwLock::new(OSCClient::new_sync("127.0.0.1:9000").expect("Failed to create OSCClient")))))
-            }),
+            osc_manager.clone(),
             osc_configs.clone(),
         )));
 
