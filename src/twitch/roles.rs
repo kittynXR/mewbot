@@ -2,6 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::cmp::Ordering;
 use log::{debug, error};
+use twitch_irc::message::Badge;
 use crate::twitch::manager::TwitchManager;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,58 +78,32 @@ impl FromStr for UserRole {
 pub async fn get_user_role(
     user_id: &str,
     twitch_manager: &TwitchManager,
+    badges: Option<&Vec<Badge>>,
 ) -> Result<UserRole, Box<dyn std::error::Error + Send + Sync>> {
     debug!("Getting user role for user_id: {}", user_id);
 
-    // Get user from TwitchManager
-    let user = twitch_manager.user_manager.get_user(user_id).await?;
-
-    // If the user has a role, return it
-    if user.role != UserRole::Viewer {
-        debug!("Role found for user: {:?}", user.role);
-        return Ok(user.role);
-    }
-
-    debug!("No specific role found, checking with Twitch API");
-
-    // If the user doesn't have a specific role, check with the Twitch API
-    let channel_id = twitch_manager.api_client.get_broadcaster_id().await?;
-
-    let role = if user_id == channel_id {
-        UserRole::Broadcaster
-    } else {
-        match twitch_manager.api_client.check_user_mod(&channel_id, user_id).await {
-            Ok(true) => UserRole::Moderator,
-            Ok(false) => match twitch_manager.api_client.check_user_vip(&channel_id, user_id).await {
-                Ok(true) => UserRole::VIP,
-                Ok(false) => match twitch_manager.api_client.check_user_subscription(&channel_id, user_id).await {
-                    Ok(true) => UserRole::Subscriber,
-                    Ok(false) => UserRole::Viewer,
-                    Err(e) => {
-                        error!("Error checking subscription status: {:?}", e);
-                        UserRole::Viewer
-                    }
-                },
-                Err(e) => {
-                    error!("Error checking VIP status: {:?}", e);
-                    UserRole::Viewer
-                }
-            },
-            Err(e) => {
-                error!("Error checking moderator status: {:?}", e);
-                UserRole::Viewer
+    // Check badges first if available
+    if let Some(badges) = badges {
+        for badge in badges {
+            match badge.name.as_str() {
+                "broadcaster" => return Ok(UserRole::Broadcaster),
+                "moderator" => return Ok(UserRole::Moderator),
+                "vip" => return Ok(UserRole::VIP),
+                "subscriber" => return Ok(UserRole::Subscriber),
+                _ => {}
             }
         }
-    };
-
-    debug!("Role fetched from API: {:?}", role);
-
-    // Update the user's role in the TwitchManager
-    if let Err(e) = twitch_manager.user_manager.update_user_role(user_id, role.clone()).await {
-        error!("Error updating user role: {:?}", e);
-    } else {
-        debug!("User role updated in TwitchManager");
     }
 
-    Ok(role)
+    // If no role determined from badges, fetch from UserManager
+    match twitch_manager.user_manager.get_user(user_id).await {
+        Ok(user) => {
+            debug!("User found: {:?}", user);
+            Ok(user.role)
+        },
+        Err(e) => {
+            error!("Failed to get user: {:?}", e);
+            Ok(UserRole::Viewer) // Default to Viewer if we can't determine the role
+        }
+    }
 }

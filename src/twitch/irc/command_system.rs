@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::{debug, error};
 use tokio::sync::{Mutex, RwLock};
 use twitch_irc::message::PrivmsgMessage;
 
@@ -10,7 +11,7 @@ use crate::storage::StorageClient;
 use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::manager::TwitchManager;
 use crate::twitch::redeems::RedeemManager;
-use crate::twitch::roles::UserRole;
+use crate::twitch::roles::{get_user_role, UserRole};
 use crate::vrchat::VRChatManager;
 use crate::vrchat::models::World;
 
@@ -54,15 +55,22 @@ impl CommandRegistry {
 
     pub async fn execute(&self, name: &str, ctx: &CommandContext, args: Vec<String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(command) = self.commands.get(name) {
-            let user_role = ctx.twitch_manager.get_user(&ctx.msg.sender.id).await?.role;
+            debug!("Executing command '{}' for user '{}'", name, ctx.msg.sender.name);
+            let user_role = get_user_role(&ctx.msg.sender.id, &ctx.twitch_manager, Some(&ctx.msg.badges)).await?;
+
+            debug!("User role: {:?}, Required role: {:?}", user_role, command.required_role());
+
             if user_role >= command.required_role() {
+                debug!("User has sufficient role. Executing command.");
                 command.execute(ctx, args).await
             } else {
+                debug!("User does not have sufficient role. Sending error message.");
                 let response = format!("@{}, this command is only available to {:?}s and above.", ctx.msg.sender.name, command.required_role());
                 ctx.bot_client.send_message(&ctx.channel, &response).await?;
                 Ok(())
             }
         } else {
+            debug!("Command '{}' not found", name);
             Ok(())
         }
     }

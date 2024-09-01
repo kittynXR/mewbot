@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use futures_util::TryFutureExt;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::time::timeout;
@@ -25,30 +25,31 @@ use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
-#[derive(Clone)]
+use std::fmt::Debug;
+
+#[derive(Clone, Debug)]
 pub struct TwitchUser {
-    user_id: String,
-    pub(crate) username: String,
-    pub(crate) display_name: String,
-    pub(crate) role: UserRole,
-    last_seen: DateTime<Utc>,
-    messages: VecDeque<(DateTime<Utc>, String)>,
-    pub(crate) streamer_data: Option<StreamerData>,
+    pub user_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub role: UserRole,
+    pub last_seen: DateTime<Utc>,
+    pub last_role_check: DateTime<Utc>,
+    pub messages: VecDeque<(DateTime<Utc>, String)>,
+    pub streamer_data: Option<StreamerData>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StreamerData {
-    pub(crate) recent_games: Vec<String>,
-    pub(crate) current_tags: Vec<String>,
-    pub(crate) current_title: String,
-    pub(crate) recent_titles: VecDeque<String>,
-    pub(crate) top_clips: Vec<(String, String)>, // (clip_title, clip_url)
+    pub recent_games: Vec<String>,
+    pub current_tags: Vec<String>,
+    pub current_title: String,
+    pub recent_titles: VecDeque<String>,
+    pub top_clips: Vec<(String, String)>, // (clip_title, clip_url)
 }
 
-#[derive(Clone)]
 pub struct UserManager {
     user_cache: Arc<RwLock<HashMap<String, TwitchUser>>>,
-    storage: Arc<RwLock<StorageClient>>,
     api_client: Arc<TwitchAPIClient>,
 }
 
@@ -72,100 +73,180 @@ impl From<TwitchUser> for ChatterData {
     }
 }
 impl UserManager {
-    pub fn new(storage: Arc<RwLock<StorageClient>>, api_client: Arc<TwitchAPIClient>) -> Self {
+    pub fn new(api_client: Arc<TwitchAPIClient>) -> Self {
         Self {
             user_cache: Arc::new(RwLock::new(HashMap::new())),
-            storage,
             api_client,
         }
     }
 
     pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn std::error::Error + Send + Sync>> {
-        // Check cache
-        if let Some(user) = self.user_cache.read().await.get(user_id) {
+        debug!("Attempting to get user with ID: {}", user_id);
+        let cache = self.user_cache.read().await;
+
+        if let Some(user) = cache.get(user_id) {
+            debug!("User found in cache: {:?}", user);
             return Ok(user.clone());
         }
+        drop(cache);
 
-        // Check storage
-        let storage_read = self.storage.read().await;
-        if let Some(chatter_data) = storage_read.get_chatter_data(user_id)? {
-            let username = chatter_data.username.clone(); // Clone here
-            let user = TwitchUser {
-                user_id: chatter_data.user_id,
-                username: username.clone(), // Use the cloned value
-                display_name: username, // Use the cloned value as display_name
-                role: chatter_data.role,
-                last_seen: chatter_data.last_seen,
-                messages: VecDeque::new(),
-                streamer_data: None,
-            };
-            drop(storage_read);
-            self.user_cache.write().await.insert(user_id.to_string(), user.clone());
-            return Ok(user);
+        debug!("User not found in cache. Fetching from API...");
+        match self.api_client.get_user_info_by_id(user_id).await {
+            Ok(user_info) => {
+                debug!("API response for user info: {:?}", user_info);
+
+                let user_data = user_info["data"].as_array()
+                    .and_then(|arr| arr.first())
+                    .ok_or_else(|| {
+                        error!("User data not found in API response");
+                        Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "User data not found"))
+                    })?;
+
+                let username = user_data["login"].as_str()
+                    .ok_or_else(|| {
+                        error!("Username not found in API response");
+                        Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Username not found"))
+                    })?
+                    .to_string();
+                let display_name = user_data["display_name"].as_str().unwrap_or(&username).to_string();
+
+                let user = TwitchUser {
+                    user_id: user_id.to_string(),
+                    username,
+                    display_name,
+                    role: UserRole::Viewer, // Default role, will be updated later if needed
+                    last_seen: Utc::now(),
+                    last_role_check: Utc::now(),
+                    messages: VecDeque::new(),
+                    streamer_data: None,
+                };
+
+                debug!("New user created: {:?}", user);
+                let mut cache = self.user_cache.write().await;
+                cache.insert(user_id.to_string(), user.clone());
+                Ok(user)
+            },
+            Err(e) => {
+                error!("Failed to fetch user info from API: {:?}", e);
+                Err(e)
+            }
         }
-        drop(storage_read);
+    }
 
-        // Fetch from API
-        let user_info = self.api_client.get_user_info(user_id).await?;
-        let user_data = user_info["data"].as_array()
-            .and_then(|arr| arr.first())
-            .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "User data not found")))?;
+    async fn fetch_user_role(&self, user_id: &str) -> Result<UserRole, Box<dyn std::error::Error + Send + Sync>> {
+        let channel_id = self.api_client.get_broadcaster_id().await?;
 
-        let username = user_data["login"].as_str()
-            .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Username not found")))?
-            .to_string();
-        let display_name = user_data["display_name"].as_str().unwrap_or(&username).to_string();
+        if user_id == channel_id {
+            return Ok(UserRole::Broadcaster);
+        }
 
-        let user = TwitchUser {
-            user_id: user_id.to_string(),
-            username,
-            display_name,
-            role: UserRole::Viewer,
-            last_seen: Utc::now(),
-            messages: VecDeque::new(),
-            streamer_data: None,
-        };
+        if self.api_client.check_user_mod(&channel_id, user_id).await? {
+            return Ok(UserRole::Moderator);
+        }
 
-        // Update cache and storage
-        self.user_cache.write().await.insert(user_id.to_string(), user.clone());
-        let mut storage_write = self.storage.write().await;
-        storage_write.upsert_chatter(&user.clone().into())?;
+        if self.api_client.check_user_vip(&channel_id, user_id).await? {
+            return Ok(UserRole::VIP);
+        }
 
-        Ok(user)
+        if self.api_client.check_user_subscription(&channel_id, user_id).await? {
+            return Ok(UserRole::Subscriber);
+        }
+
+        Ok(UserRole::Viewer)
     }
 
     pub async fn update_user(&self, user_id: String, user: TwitchUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.user_cache.write().await.insert(user_id.clone(), user.clone());
-        let mut storage_write = self.storage.write().await;
-        storage_write.upsert_chatter(&user.into())?;
+        let mut cache = self.user_cache.write().await;
+        cache.insert(user_id, user);
         Ok(())
     }
 
     pub async fn update_user_role(&self, user_id: &str, role: UserRole) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut user = self.get_user(user_id).await?;
-        user.role = role;
-
-        // Update cache
-        self.user_cache.write().await.insert(user_id.to_string(), user.clone());
-
-        // Update storage
-        let mut storage_write = self.storage.write().await;
-        storage_write.upsert_chatter(&user.into())?;
-
+        let mut cache = self.user_cache.write().await;
+        if let Some(user) = cache.get_mut(user_id) {
+            user.role = role.clone();
+            user.last_role_check = Utc::now();
+            info!("Updated role for user {}: {:?}", user_id, role);
+        } else {
+            error!("Attempted to update role for non-existent user: {}", user_id);
+        }
         Ok(())
     }
 
     pub async fn add_user_message(&self, user_id: &str, message: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut user = self.get_user(user_id).await?;
-        user.messages.push_front((Utc::now(), message));
-        if user.messages.len() > 100 {
-            user.messages.pop_back();
+        let mut cache = self.user_cache.write().await;
+        if let Some(user) = cache.get_mut(user_id) {
+            user.messages.push_front((Utc::now(), message));
+            if user.messages.len() > 100 {
+                user.messages.pop_back();
+            }
+            user.last_seen = Utc::now();
+        } else {
+            // If the user doesn't exist, create a new user entry
+            let new_user = TwitchUser {
+                user_id: user_id.to_string(),
+                username: String::new(), // We'll need to fetch this from the API
+                display_name: String::new(),
+                role: UserRole::Viewer, // Default role
+                last_seen: Utc::now(),
+                last_role_check: Utc::now(),
+                messages: VecDeque::from([(Utc::now(), message)]),
+                streamer_data: None,
+            };
+            cache.insert(user_id.to_string(), new_user);
         }
-
-        // Update cache
-        self.user_cache.write().await.insert(user_id.to_string(), user);
-
         Ok(())
+    }
+
+    pub async fn refresh_roles(&self) {
+        let users_to_refresh = {
+            let cache = self.user_cache.read().await;
+            cache.keys().cloned().collect::<Vec<String>>()
+        };
+
+        for user_id in users_to_refresh {
+            match self.fetch_user_role(&user_id).await {
+                Ok(role) => {
+                    if let Err(e) = self.update_user_role(&user_id, role).await {
+                        error!("Failed to update role for user {}: {:?}", user_id, e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to fetch role for user {}: {:?}", user_id, e);
+                }
+            }
+        }
+    }
+
+    pub async fn start_role_refresh_task(&self) {
+        let user_manager = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(900)).await; // Run every 15 minutes
+                user_manager.refresh_roles().await;
+            }
+        });
+    }
+
+    // Add this method to update streamer data
+    pub async fn update_streamer_data(&self, user_id: &str, streamer_data: StreamerData) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut cache = self.user_cache.write().await;
+        if let Some(user) = cache.get_mut(user_id) {
+            user.streamer_data = Some(streamer_data);
+            debug!("Updated streamer data for user {}", user_id);
+        } else {
+            error!("Attempted to update streamer data for non-existent user: {}", user_id);
+        }
+        Ok(())
+    }
+}
+
+impl Clone for UserManager {
+    fn clone(&self) -> Self {
+        UserManager {
+            user_cache: self.user_cache.clone(),
+            api_client: self.api_client.clone(),
+        }
     }
 }
 
@@ -225,7 +306,7 @@ impl TwitchManager {
             osc_configs.clone(),
         )));
 
-        let user_manager = UserManager::new(storage.clone(), api_client.clone());
+        let user_manager = UserManager::new(api_client.clone());
 
         let shoutout_queue = Arc::new(Mutex::new(VecDeque::new()));
         let shoutout_last_processed = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(120)));
@@ -546,21 +627,59 @@ impl TwitchManager {
             top_clips: top_clips.into_iter().map(|clip| (clip.title, clip.url)).collect(),
         };
 
-        // Update user in the user manager
-        let user = TwitchUser {
-            user_id: user_id.to_string(),
-            username,
-            display_name,
-            role: UserRole::Viewer, // You might want to fetch the actual role if available
-            last_seen: chrono::Utc::now(),
-            messages: VecDeque::new(),
-            streamer_data: Some(streamer_data),
+        // Get the existing user or create a new one
+        let mut user = match self.user_manager.get_user(user_id).await {
+            Ok(existing_user) => existing_user,
+            Err(_) => TwitchUser {
+                user_id: user_id.to_string(),
+                username,
+                display_name,
+                role: UserRole::Viewer, // Default role
+                last_seen: Utc::now(),
+                last_role_check: Utc::now(),
+                messages: VecDeque::new(),
+                streamer_data: None,
+            },
         };
 
+        // Update the streamer data
+        user.streamer_data = Some(streamer_data);
+
+        // Update the user in the UserManager
         self.user_manager.update_user(user_id.to_string(), user).await?;
 
         info!("Streamer data updated successfully for user_id: {}", user_id);
 
+        Ok(())
+    }
+
+    pub async fn start_role_refresh_task(&self) {
+        let user_manager = self.user_manager.clone();
+        let api_client = self.api_client.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(900)).await; // Run every 15 minutes
+
+                let users_to_refresh = {
+                    let cache = user_manager.user_cache.read().await;
+                    cache.keys().cloned().collect::<Vec<String>>()
+                };
+
+                for user_id in users_to_refresh {
+                    if let Err(e) = user_manager.get_user(&user_id).await {
+                        error!("Error refreshing role for user {}: {:?}", user_id, e);
+                    }
+                }
+            }
+        });
+    }
+
+    pub async fn preload_broadcaster_data(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        debug!("Preloading broadcaster data for ID: {}", broadcaster_id);
+        let broadcaster = self.user_manager.get_user(&broadcaster_id).await?;
+        debug!("Broadcaster data loaded: {:?}", broadcaster);
         Ok(())
     }
 }
