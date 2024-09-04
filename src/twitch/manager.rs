@@ -26,6 +26,7 @@ use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
+use crate::twitch::api::client::TwitchAPIError;
 
 #[derive(Clone, Debug)]
 pub struct TwitchUser {
@@ -128,7 +129,7 @@ impl UserManager {
             },
             Err(e) => {
                 error!("Failed to fetch user info from API: {:?}", e);
-                Err(e)
+                Err(Box::new(e))  // Box the error here
             }
         }
     }
@@ -561,26 +562,63 @@ impl TwitchManager {
         }
     }
 
-    async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
         info!("Executing API shoutout for user ID: {}", user_id);
         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
 
         info!("Sending shoutout: broadcaster_id={}, user_id={}, moderator_id={}", broadcaster_id, user_id, broadcaster_id);
-        self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await?;
 
-        Ok(())
+        let max_retries = 3;
+        for attempt in 1..=max_retries {
+            match self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await {
+                Ok(_) => {
+                    info!("Shoutout sent successfully");
+                    return Ok(());
+                },
+                Err(e) => {
+                    error!("Attempt {} failed to send shoutout: {:?}", attempt, e);
+                    if attempt == max_retries {
+                        return Err(Box::new(e));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+
+        Err("Failed to send shoutout after multiple attempts".into())
     }
 
-    pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Helper method to convert any error to Box<dyn StdError + Send + Sync>
+    fn box_err<E: StdError + Send + Sync + 'static>(e: E) -> Box<dyn StdError + Send + Sync> {
+        Box::new(e)
+    }
+
+    pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        info!("Updating streamer data for user ID: {}", user_id);
         let api_client = self.get_api_client();
 
         // Fetch user info
         let user_info = api_client.get_user_info_by_id(user_id).await?;
+
         let user_data = user_info["data"].as_array()
             .and_then(|arr| arr.first())
-            .ok_or("User data not found")?;
+            .ok_or_else(|| {
+                let err = TwitchAPIError::APIError {
+                    status: 404,
+                    message: "User data not found".to_string(),
+                };
+                error!("User data not found in API response for user ID {}", user_id);
+                err
+            })?;
 
-        let username = user_data["login"].as_str().ok_or("Failed to get username")?.to_string();
+        let username = user_data["login"].as_str()
+            .ok_or_else(|| {
+                TwitchAPIError::APIError {
+                    status: 500,
+                    message: "Username not found in API response".to_string(),
+                }
+            })?
+            .to_string();
         let display_name = user_data["display_name"].as_str().unwrap_or(&username).to_string();
 
         info!("User info - Username: {}, Display Name: {}", username, display_name);
@@ -608,16 +646,9 @@ impl TwitchManager {
         for vod_title in recent_vods {
             recent_titles.push_back(vod_title);
         }
-        info!("Recent titles:");
-        for (i, title) in recent_titles.iter().enumerate() {
-            info!("  {}. {}", i + 1, title);
-        }
+        debug!("Recent titles: {:?}", recent_titles);
 
-        info!("Top clips:");
-        for (i, clip) in top_clips.iter().enumerate() {
-            info!("  {}. Title: {}", i + 1, clip.title);
-            info!("     URL: {}", clip.url);
-        }
+        debug!("Top clips: {:?}", top_clips);
 
         let streamer_data = StreamerData {
             recent_games: vec![game_name],
@@ -628,19 +659,7 @@ impl TwitchManager {
         };
 
         // Get the existing user or create a new one
-        let mut user = match self.user_manager.get_user(user_id).await {
-            Ok(existing_user) => existing_user,
-            Err(_) => TwitchUser {
-                user_id: user_id.to_string(),
-                username,
-                display_name,
-                role: UserRole::Viewer, // Default role
-                last_seen: Utc::now(),
-                last_role_check: Utc::now(),
-                messages: VecDeque::new(),
-                streamer_data: None,
-            },
-        };
+        let mut user = self.user_manager.get_user(user_id).await?;
 
         // Update the streamer data
         user.streamer_data = Some(streamer_data);

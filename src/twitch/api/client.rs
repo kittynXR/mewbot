@@ -9,10 +9,35 @@ use tokio::time::timeout;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use log::{debug, error, info, warn};
+use serde_json::Value;
+use thiserror::Error;
+use std::error::Error as StdError;
 use crate::twitch::api::models::ChannelPointReward;
 use crate::twitch::api::requests::channel::Clip;
 use crate::twitch::api::requests::followers;
 use crate::twitch::api::requests::followers::FollowerInfo;
+
+#[derive(Error, Debug)]
+pub enum TwitchAPIError {
+    #[error("HTTP request failed: {0}")]
+    RequestFailed(#[from] reqwest::Error),
+    #[error("Failed to parse JSON: {0}")]
+    JsonParseError(#[from] serde_json::Error),
+    #[error("API returned an error: {status}, {message}")]
+    APIError { status: u16, message: String },
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    #[error("Authentication error: {0}")]
+    AuthError(String),
+    #[error("Generic error: {0}")]
+    GenericError(Box<dyn StdError + Send + Sync>),
+}
+
+impl From<Box<dyn StdError + Send + Sync>> for TwitchAPIError {
+    fn from(error: Box<dyn StdError + Send + Sync>) -> Self {
+        TwitchAPIError::GenericError(error)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct TwitchToken {
@@ -53,10 +78,12 @@ impl TwitchAPIClient {
         endpoint: &str,
         query: Option<&[(&str, &str)]>,
         body: Option<serde_json::Value>,
-    ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<T, TwitchAPIError> {
         let token = self.get_token().await?;
         let client_id = self.get_client_id().await?;
         let url = format!("https://api.twitch.tv/helix/{}", endpoint);
+
+        debug!("Sending {} request to {}", method, url);
 
         let mut request = self.client.request(method, &url)
             .header("Client-ID", client_id)
@@ -75,14 +102,20 @@ impl TwitchAPIClient {
 
         if !status.is_success() {
             let error_text = response.text().await?;
-            return Err(format!("API request failed. Status: {}, Error: {}", status, error_text).into());
+            error!("API request failed. Status: {}, Error: {}", status, error_text);
+            return Err(TwitchAPIError::APIError {
+                status: status.as_u16(),
+                message: error_text,
+            });
         }
 
         let result: T = response.json().await?;
+        debug!("Successfully received and parsed response from {}", url);
         Ok(result)
     }
 
-    pub async fn get_user_info(&self, user_login: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn get_user_info(&self, user_login: &str) -> Result<Value, TwitchAPIError> {
         self.authenticated_request(
             reqwest::Method::GET,
             "users",
@@ -91,7 +124,7 @@ impl TwitchAPIClient {
         ).await
     }
 
-    pub async fn get_user_info_by_id(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_user_info_by_id(&self, user_id: &str) -> Result<Value, TwitchAPIError> {
         self.authenticated_request(
             reqwest::Method::GET,
             "users",
@@ -100,7 +133,7 @@ impl TwitchAPIClient {
         ).await
     }
 
-    pub async fn get_stream_info(&self, user_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_stream_info(&self, user_id: &str) -> Result<Value, TwitchAPIError> {
         self.authenticated_request(
             reqwest::Method::GET,
             "streams",
@@ -109,7 +142,7 @@ impl TwitchAPIClient {
         ).await
     }
 
-    pub async fn get_channel_information(&self, broadcaster_id: &str) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_channel_information(&self, broadcaster_id: &str) -> Result<Value, TwitchAPIError> {
         self.authenticated_request(
             reqwest::Method::GET,
             "channels",
@@ -167,7 +200,8 @@ impl TwitchAPIClient {
         from_broadcaster_id: &str,
         to_broadcaster_id: &str,
         moderator_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), TwitchAPIError> {
+        info!("Sending shoutout from {} to {}", from_broadcaster_id, to_broadcaster_id);
         self.authenticated_request::<serde_json::Value>(
             reqwest::Method::POST,
             "chat/shoutouts",
@@ -179,8 +213,10 @@ impl TwitchAPIClient {
             })),
         ).await?;
 
+        info!("Shoutout sent successfully");
         Ok(())
     }
+
 
     pub async fn authenticate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.config.twitch_access_token.is_some() && self.config.twitch_refresh_token.is_some() {
@@ -328,14 +364,14 @@ impl TwitchAPIClient {
         Ok(())
     }
 
-    pub async fn get_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_token(&self) -> Result<String, TwitchAPIError> {
         if !self.is_initialized() {
             self.initialize().await?;
         }
 
         let token = self.token.lock().await;
         if let Some(token) = &*token {
-            if token.expires_at.map_or(false, |expires_at| expires_at > Instant::now()) {
+            if token.expires_at.map_or(false, |expires_at| expires_at > std::time::Instant::now()) {
                 return Ok(token.access_token.clone());
             }
         }
@@ -344,16 +380,18 @@ impl TwitchAPIClient {
         self.refresh_token().await
     }
 
-    pub(crate) async fn refresh_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub(crate) async fn refresh_token(&self) -> Result<String, TwitchAPIError> {
         let token = self.token.lock().await;
-        let refresh_token = token.as_ref().map(|t| t.refresh_token.clone()).ok_or("No refresh token available")?;
+        let refresh_token = token.as_ref()
+            .map(|t| t.refresh_token.clone())
+            .ok_or_else(|| TwitchAPIError::AuthError("No refresh token available".to_string()))?;
         drop(token);
 
         let res = self.client
             .post("https://id.twitch.tv/oauth2/token")
             .form(&[
-                ("client_id", self.config.twitch_client_id.as_ref().ok_or("Twitch API client ID not set")?),
-                ("client_secret", self.config.twitch_client_secret.as_ref().ok_or("Twitch API client secret not set")?),
+                ("client_id", self.config.twitch_client_id.as_ref().ok_or_else(|| TwitchAPIError::ConfigError("Twitch API client ID not set".to_string()))?),
+                ("client_secret", self.config.twitch_client_secret.as_ref().ok_or_else(|| TwitchAPIError::ConfigError("Twitch API client secret not set".to_string()))?),
                 ("refresh_token", &refresh_token),
                 ("grant_type", &"refresh_token".to_string()),
             ])
@@ -363,7 +401,7 @@ impl TwitchAPIClient {
             .await?;
 
         let mut new_token = res;
-        new_token.expires_at = Some(Instant::now() + Duration::from_secs(new_token.expires_in));
+        new_token.expires_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(new_token.expires_in));
 
         let access_token = new_token.access_token.clone();
         *self.token.lock().await = Some(new_token.clone());
@@ -387,9 +425,9 @@ impl TwitchAPIClient {
         Ok(!stream_info["data"].as_array().unwrap_or(&vec![]).is_empty())
     }
 
-    pub async fn get_client_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_client_id(&self) -> Result<String, TwitchAPIError> {
         let config = self.config.as_ref();
-        config.twitch_client_id.clone().ok_or_else(|| "Twitch client ID not set".into())
+        config.twitch_client_id.clone().ok_or_else(|| TwitchAPIError::ConfigError("Twitch client ID not set".to_string()))
     }
 
     pub async fn get_broadcaster_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
