@@ -29,7 +29,7 @@ impl VRChatManager {
         // Disconnect from VRChat
         self.vrchat_client.disconnect().await?;
         // Update dashboard state
-        self.dashboard_state.write().await.update_vrchat_status(false);
+        self.dashboard_state.write().await.update_vrchat_status(false).await;
         info!("VRChatManager shutdown complete.");
         Ok(())
     }
@@ -71,7 +71,7 @@ impl VRChatManager {
     }
 
     pub async fn update_current_world(&self, world: World) -> Result<(), VRChatError> {
-        self.vrchat_client.update_current_world(world).await;
+        let _ = self.vrchat_client.update_current_world(world).await;
         Ok(())
     }
 

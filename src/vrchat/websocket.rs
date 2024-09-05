@@ -4,15 +4,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{RwLock};
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async_tls_with_config, Connector};
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::http::{Request, Uri};
 use tokio_tungstenite::tungstenite::http::header;
-use tokio::sync::mpsc;
-use crate::vrchat::{ErrorMessage, VRChatClient, VRChatManager, VRChatMessage};
-use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
+use crate::vrchat::{VRChatManager, VRChatMessage};
+use crate::web_ui::websocket::{DashboardState};
 
 pub async fn handler(
     auth_cookie: String,
@@ -28,7 +27,7 @@ pub async fn handler(
         match connect_to_websocket(&auth_cookie).await {
             Ok(mut ws_stream) => {
                 info!("WebSocket connection established");
-                dashboard_state.write().await.update_vrchat_status(true);
+                dashboard_state.write().await.update_vrchat_status(true).await;
 
                 while let Some(message) = ws_stream.next().await {
                     match message {
@@ -45,13 +44,13 @@ pub async fn handler(
                                                 }
 
                                                 let mut dashboard = dashboard_state.write().await;
-                                                dashboard.update_vrchat_world(Some(new_world.clone()));
+                                                dashboard.update_vrchat_world(Some(new_world.clone())).await;
                                                 info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
                                             }
                                         },
                                         VRChatMessage::UserOnline(_) => {
                                             info!("Current user is now online");
-                                            dashboard_state.write().await.update_vrchat_status(true);
+                                            dashboard_state.write().await.update_vrchat_status(true).await;
                                             if let Err(e) = vrchat_manager.connect_osc().await {
                                                 error!("Failed to reestablish OSC connection: {}", e);
                                             } else {
@@ -60,7 +59,7 @@ pub async fn handler(
                                         },
                                         VRChatMessage::UserOffline(_) => {
                                             info!("Current user is now offline");
-                                            dashboard_state.write().await.update_vrchat_status(false);
+                                            dashboard_state.write().await.update_vrchat_status(false).await;
                                             if let Err(e) = vrchat_manager.disconnect_osc().await {
                                                 error!("Failed to close OSC connection: {}", e);
                                             } else {
@@ -100,7 +99,7 @@ pub async fn handler(
             }
             Err(err) => {
                 error!("Failed to connect to WebSocket: {}", err);
-                dashboard_state.write().await.update_vrchat_status(false);
+                dashboard_state.write().await.update_vrchat_status(false).await;
                 delay = std::cmp::min(delay * 2, max_delay);
             }
         }

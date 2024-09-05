@@ -1,4 +1,3 @@
-use std::fs;
 use rusqlite::{Connection, Result, params};
 use crate::storage::models::ChatterData;
 use std::path::Path;

@@ -2,7 +2,7 @@ use crate::twitch::manager::TwitchManager;
 use crate::twitch::redeems::{Redemption, RedemptionStatus};
 use serde_json::Value;
 use std::sync::Arc;
-use log::{debug, error, info, trace};
+use log::{debug, error};
 
 pub async fn handle_new_redemption(
     event: &Value,
@@ -30,7 +30,6 @@ pub async fn handle_new_redemption(
 
 pub async fn handle_redemption_update(
     event: &Value,
-    twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     debug!("Received channel point redemption update: {:?}", event);
 

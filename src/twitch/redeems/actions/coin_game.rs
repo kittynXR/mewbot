@@ -42,7 +42,7 @@ impl CoinGameAction {
             .unwrap_or_else(|_| format!("Coin game! New price: {} points", current_price))
     }
 
-    async fn update_reward(&self, broadcaster_id: &str, reward_id: &str, new_price: u32, new_prompt: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn update_reward(&self, reward_id: &str, new_price: u32, new_prompt: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.api_client.update_custom_reward(
             reward_id,
             "Coin Game",
@@ -87,7 +87,7 @@ impl RedeemHandler for CoinGameAction {
 
         // Generate new message and update reward
         let new_message = self.generate_silly_message(&state.previous_redeemer, new_price).await;
-        if let Err(e) = self.update_reward(&redemption.broadcaster_id, "Coin Game", new_price, &new_message).await {
+        if let Err(e) = self.update_reward("Coin Game", new_price, &new_message).await {
             log::error!("Failed to update reward: {:?}", e);
         }
 

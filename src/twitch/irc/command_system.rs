@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use log::{debug, error};
+use log::{debug};
 use tokio::sync::{Mutex, RwLock};
 use twitch_irc::message::PrivmsgMessage;
 

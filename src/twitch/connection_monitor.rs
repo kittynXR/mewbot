@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use log::{info, warn, error};
+use log::{info, warn};
 
 pub struct ConnectionMonitor {
     last_connected: Option<Instant>,

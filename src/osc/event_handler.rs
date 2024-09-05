@@ -53,7 +53,7 @@ impl EventHandler {
                 },
                 EventType::Redeem => {
                     if let (Some(redeem_title), Some(user)) = (event.redeem_title, event.user) {
-                        vrchat_osc.send_redeem_event(&redeem_title, &user).await?;
+                        vrchat_osc.send_redeem_event(&redeem_title).await?;
                     } else {
                         return Err(OSCError::MissingInfo);
                     }

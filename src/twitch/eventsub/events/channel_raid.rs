@@ -1,12 +1,7 @@
 use serde_json::Value;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use log::{debug, info};
-use crate::twitch::api::TwitchAPIClient;
+use log::{debug};
 use crate::twitch::api::requests::get_channel_game;
-use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::TwitchManager;
 
 pub async fn handle(

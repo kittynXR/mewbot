@@ -310,12 +310,10 @@ impl Config {
 
         let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
         let twitch_bot_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
-        let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
-        let twitch_broadcaster_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
 
-        let twitch_irc_oauth_token = Self::prompt_input("Enter your Twitch Chat OAuth Token: ")?;
-        let twitch_bot_username = Self::prompt_input("Enter the username of your Twitch bot: ")?;
         let twitch_channel_to_join = Self::prompt_input("Enter the Twitch channel you want the bot to join: ")?;
+        let twitch_broadcaster_oauth_token = Self::prompt_input("Enter your broadcaster Twitch Chat OAuth Token: ")?;
+
 
         println!("\nNow, let's set up your Discord bot.");
         println!("Please follow these steps:");

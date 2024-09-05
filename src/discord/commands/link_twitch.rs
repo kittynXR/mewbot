@@ -5,7 +5,6 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::builder::CreateInteractionResponseMessage;
 use rand::Rng;
-use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
 use log::{error, info};

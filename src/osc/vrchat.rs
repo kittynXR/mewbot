@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use tokio::time::Duration;
 
 use crate::osc::client::OSCClient;
 use crate::osc::errors::OSCError;
@@ -40,8 +39,7 @@ impl VRChatOSC {
         Ok(())
     }
 
-    pub async fn send_redeem_event(&self, redeem_title: &str, user: &str) -> Result<(), OSCError> {
-        let message = format!("{} redeemed {}", user, redeem_title);
+    pub async fn send_redeem_event(&self, redeem_title: &str) -> Result<(), OSCError> {
         self.client.read().await.send_osc_message(
             "/avatar/parameters/LastRedeem",
             &OSCMessageType::String,

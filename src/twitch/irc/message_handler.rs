@@ -1,14 +1,11 @@
 use super::command_system::{CommandContext, CommandRegistry};
 use crate::config::Config;
-use crate::twitch::redeems::RedeemManager;
 use crate::storage::StorageClient;
-use crate::discord::UserLinks;
 use std::sync::Arc;
 use log::{debug, error};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use twitch_irc::message::ServerMessage;
 use crate::ai::AIClient;
-use crate::twitch::irc::TwitchBotClient;
 use crate::vrchat::{VRChatManager, World};
 use crate::web_ui::websocket::WebSocketMessage;
 use crate::twitch::manager::TwitchManager;

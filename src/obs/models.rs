@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tungstenite::Message;
 use async_trait::async_trait;
-use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
+use crate::web_ui::websocket::{WebSocketMessage};
 use serde_json::{json, Value};
 use crate::obs::websocket::ConnectionState;
 
@@ -176,7 +175,7 @@ impl OBSManager {
             action: "update".to_string(),
             data: update,
         };
-        self.ws_sender.send(message);
+        let _ = self.ws_sender.send(message);
         Ok(())
     }
 

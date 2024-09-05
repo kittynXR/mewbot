@@ -1,6 +1,6 @@
 use super::client::{TwitchIRCManager, TwitchIRCClientType};
 use std::sync::Arc;
-use log::{debug, error, trace, warn};
+use log::{ error, warn};
 use tokio::sync::broadcast;
 use twitch_irc::message::ServerMessage;
 

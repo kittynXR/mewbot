@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use warp::Filter;
 use std::sync::Arc;
 use log::{error, info};
@@ -18,7 +17,7 @@ pub fn api_routes(
         start_bot(config.clone())
             .or(stop_bot(config.clone()))
             .or(update_settings(config.clone()))
-            .or(get_bot_status(config.clone(), storage.clone(), dashboard_state.clone()))
+            .or(get_bot_status(config.clone(), dashboard_state.clone()))
             .or(get_user_list(storage.clone()))
             .or(get_recent_messages(storage.clone()))
             .or(get_twitch_channel(config.clone()))
@@ -76,13 +75,11 @@ fn update_settings(
 
 fn get_bot_status(
     config: Arc<RwLock<Config>>,
-    storage: Arc<RwLock<StorageClient>>,
     dashboard_state: Arc<RwLock<DashboardState>>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::path("bot-status")
         .and(warp::get())
         .and(with_config(config))
-        .and(with_storage(storage))
         .and(with_dashboard_state(dashboard_state))
         .and_then(handle_get_bot_status)
 }
@@ -187,14 +184,14 @@ async fn handle_get_twitch_channel(
     Ok(warp::reply::json(&serde_json::json!({ "channel": channel })))
 }
 
-async fn handle_start_bot(config: Arc<RwLock<Config>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_start_bot(_config: Arc<RwLock<Config>>) -> Result<impl warp::Reply, warp::Rejection> {
     // Implement logic to start the bot
     info!("Starting bot...");
     // TODO: Implement actual bot start logic
     Ok(warp::reply::json(&json!({"status": "Bot started"})))
 }
 
-async fn handle_stop_bot(config: Arc<RwLock<Config>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_stop_bot(_config: Arc<RwLock<Config>>) -> Result<impl warp::Reply, warp::Rejection> {
     // Implement logic to stop the bot
     info!("Stopping bot...");
     // TODO: Implement actual bot stop logic
@@ -203,7 +200,7 @@ async fn handle_stop_bot(config: Arc<RwLock<Config>>) -> Result<impl warp::Reply
 
 async fn handle_update_settings(
     new_settings: serde_json::Value,
-    config: Arc<RwLock<Config>>,
+    _config: Arc<RwLock<Config>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     // Implement logic to update settings
     info!("Updating settings: {:?}", new_settings);
@@ -212,8 +209,7 @@ async fn handle_update_settings(
 }
 
 async fn handle_get_bot_status(
-    config: Arc<RwLock<Config>>,
-    storage: Arc<RwLock<StorageClient>>,
+    _config: Arc<RwLock<Config>>,
 
     dashboard_state: Arc<RwLock<DashboardState>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {

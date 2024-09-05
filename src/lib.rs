@@ -12,28 +12,21 @@ pub mod obs;
 use bot_status::BotStatus;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use crate::twitch::irc::{TwitchIRCManager, TwitchBotClient, TwitchBroadcasterClient};
 use crate::twitch::irc::message_handler::MessageHandler;
-use crate::config::{Config, SocialLinks};
-use crate::twitch::api::TwitchAPIClient;
+use crate::config::{Config};
 use crate::vrchat::{VRChatClient, VRChatManager};
 use crate::vrchat::World;
-use crate::twitch::redeems::RedeemManager;
 use crate::ai::AIClient;
 use std::time::Duration;
-use log::{debug, error, info, warn};
-use tokio::io::AsyncWriteExt;
+use log::{error, info, warn};
 use tokio::task::JoinHandle;
 use crate::discord::UserLinks;
 use crate::osc::VRChatOSC;
-use crate::osc::{OSCManager, OSCError};
-use crate::osc::osc_config::OSCConfigurations;
+use crate::osc::{OSCManager};
 use crate::storage::StorageClient;
-use crate::twitch::eventsub::TwitchEventSubClient;
 use crate::web_ui::websocket::{DashboardState};
 use tokio::sync::mpsc;
-use tokio::time::timeout;
-use crate::obs::{OBSInstance, OBSManager, OBSStateUpdate};
+use crate::obs::{OBSInstance, OBSManager};
 use crate::twitch::TwitchManager;
 use crate::web_ui::websocket::WebSocketMessage;
 
@@ -57,7 +50,7 @@ impl BotClients {
 
         let shutdown_timeout = Duration::from_secs(15);
 
-        let (twitch_result, vrchat_result, obs_result, discord_result) = tokio::join!(
+        let (_twitch_result, _vrchat_result, _obs_result, _discord_result) = tokio::join!(
         tokio::time::timeout(shutdown_timeout, self.twitch_manager.shutdown()),
         tokio::time::timeout(shutdown_timeout, async {
             if let Some(vrchat) = &self.vrchat {
@@ -94,17 +87,6 @@ impl BotClients {
         info!("All modules shut down.");
         self.bot_status.write().await.set_online(false);
         Ok(())
-    }
-
-    async fn notify_shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let channel = self.get_twitch_channel()?;
-        // self.twitch_bot_client.send_message(&channel, "MewBot is shutting down. Thank you for using our services!").await?;
-        Ok(())
-    }
-
-    fn get_twitch_channel(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        // Implement this method to return the correct Twitch channel
-        Ok("kittyn".to_string())
     }
 }
 
@@ -168,7 +150,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
 
     let dashboard_state = Arc::new(RwLock::new(DashboardState::new(
         bot_status.clone(),
-        config.clone(),
     )));
 
     let obs_manager = Arc::new(OBSManager::new(websocket_tx.clone()));
@@ -263,8 +244,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         clients.storage.clone(),
         clients.bot_status.clone(),
         clients.twitch_manager.irc_manager.clone(),
-        clients.vrchat_osc.clone(),
-        clients.discord.clone(),
         clients.dashboard_state.clone(),
         clients.obs.clone().expect("OBS manager should be initialized"),
         clients.vrchat.clone().expect("VRChat manager should be initialized"),
@@ -272,7 +251,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
 
-    let web_ui_handle = tokio::spawn({
+    let _web_ui_handle = tokio::spawn({
         let web_ui = web_ui.clone();
         let shutdown_signal = shutdown_signal.clone();
         async move {
@@ -288,7 +267,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     }
 
     info!("Setting up Twitch IRC message handling...");
-    let channel = config.read().await.twitch_channel_to_join.clone()
+    let _channel = config.read().await.twitch_channel_to_join.clone()
         .ok_or("Twitch channel to join not set")?;
 
     // if let Some(irc_client) = clients.twitch_manager.bot_client.get_client().await {
@@ -318,7 +297,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             let result = message_handler.handle_messages().await;
             if let Err(e) = &result {
                 error!("Twitch handler error: {:?}", e);
-                dashboard_state.write().await.update_twitch_status(false);
+                dashboard_state.write().await.update_twitch_status(false).await;
             }
             result
         }
@@ -326,7 +305,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     handles.push(twitch_handler);
 
     info!("Twitch IRC handler started.");
-    clients.dashboard_state.write().await.update_twitch_status(true);
+    clients.dashboard_state.write().await.update_twitch_status(true).await;
 
     if let Some(discord_client) = &clients.discord {
         let discord_handle: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> = tokio::spawn({
@@ -337,13 +316,13 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
                 if let Err(e) = &result {
                     error!("Discord client error: {:?}", e);
-                    dashboard_state.write().await.update_discord_status(false);
+                    dashboard_state.write().await.update_discord_status(false).await;
                 }
                 result
             }
         });
         handles.push(discord_handle);
-        clients.dashboard_state.write().await.update_discord_status(true);
+        clients.dashboard_state.write().await.update_discord_status(true).await;
     }
 
     let eventsub_client = clients.twitch_manager.eventsub_client.clone();
@@ -395,31 +374,27 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
                 ).await;
                 if let Err(e) = &result {
                     error!("VRChat websocket handler error: {:?}", e);
-                    dashboard_state.write().await.update_vrchat_status(false);
+                    dashboard_state.write().await.update_vrchat_status(false).await;
                 }
                 result
             }
         });
         handles.push(vrchat_handle);
         info!("VRChat websocket handler started.");
-        clients.dashboard_state.write().await.update_vrchat_status(true);
+        clients.dashboard_state.write().await.update_vrchat_status(true).await;
     }
 
     // Start the WebSocket handler
     let ws_handle = tokio::spawn({
-        let dashboard_state = clients.dashboard_state.clone();
-        let storage = clients.storage.clone();
         let obs_manager = clients.obs.clone().expect("OBS manager should be initialized");
         let twitch_manager = clients.twitch_manager.clone();
         let vrchat_manager = clients.vrchat.clone().expect("VRChat manager should be initialized");
-        let mut websocket_rx = clients.websocket_rx.take();
+        let websocket_rx = clients.websocket_rx.take();
         async move {
             if let Some(mut rx) = websocket_rx {
                 while let Some(msg) = rx.recv().await {
                     web_ui::websocket::handle_websocket(
                         msg,
-                        dashboard_state.clone(),
-                        storage.clone(),
                         obs_manager.clone(),
                         twitch_manager.irc_manager.clone(),
                         vrchat_manager.clone(),
@@ -433,7 +408,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
 
     info!("Bot is now running. Press Ctrl+C to exit.");
 
-    let ctrl_c_signal = shutdown_signal.clone();
+    let _ctrl_c_signal = shutdown_signal.clone();
 
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let shutdown_signal_clone = shutdown_signal.clone();

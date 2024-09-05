@@ -1,16 +1,12 @@
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use futures_util::{SinkExt, StreamExt};
-use warp::ws::{Message, WebSocket};
+use tokio::sync::{broadcast, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
 use log::{error, info, debug, warn, trace};
 use tokio::sync::broadcast::error::SendError;
-use crate::storage::StorageClient;
 use crate::obs::OBSManager;
 use crate::twitch::{TwitchIRCManager};
-use crate::vrchat::{VRChatClient, VRChatManager};
-use crate::config::Config;
+use crate::vrchat::{VRChatManager};
 use crate::bot_status::BotStatus;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -54,18 +50,15 @@ pub struct DashboardState {
     pub(crate) vrchat_status: bool,
     pub(crate) obs_status: bool,
     recent_messages: Vec<String>,
-    config: Arc<RwLock<Config>>,
     pub(crate) tx: broadcast::Sender<WebSocketMessage>,
-    pub(crate) rx: broadcast::Receiver<WebSocketMessage>,
     pub obs_instances: Vec<crate::obs::OBSInstanceState>,
 }
 
 impl DashboardState {
     pub fn new(
         bot_status: Arc<RwLock<BotStatus>>,
-        config: Arc<RwLock<Config>>,
     ) -> Self {
-        let (tx, rx) = broadcast::channel(100); // You can adjust the channel size as needed
+        let (tx, _rx) = broadcast::channel(100); // You can adjust the channel size as needed
         Self {
             bot_status,
             vrchat_world: None,
@@ -74,35 +67,33 @@ impl DashboardState {
             vrchat_status: false,
             obs_status: false,
             recent_messages: Vec::new(),
-            config,
             tx,
-            rx,
             obs_instances: Vec::new(),
         }
     }
-    pub fn update_twitch_status(&mut self, status: bool) {
+    pub async fn update_twitch_status(&mut self, status: bool) {
         self.twitch_status = status;
-        self.broadcast_update();
+        self.broadcast_update().await;
     }
 
-    pub fn update_discord_status(&mut self, status: bool) {
+    pub async fn update_discord_status(&mut self, status: bool) {
         self.discord_status = status;
-        self.broadcast_update();
+        self.broadcast_update().await;
     }
 
-    pub fn update_vrchat_status(&mut self, status: bool) {
+    pub async fn update_vrchat_status(&mut self, status: bool) {
         self.vrchat_status = status;
-        self.broadcast_update();
+        self.broadcast_update().await;
     }
 
-    pub fn update_obs_status(&mut self, status: bool) {
+    pub async fn update_obs_status(&mut self, status: bool) {
         self.obs_status = status;
-        self.broadcast_update();
+        self.broadcast_update().await;
     }
 
-    pub fn update_vrchat_world(&mut self, world: Option<crate::vrchat::models::World>) {
+    pub async fn update_vrchat_world(&mut self, world: Option<crate::vrchat::models::World>) {
         self.vrchat_world = world;
-        self.broadcast_update();
+        self.broadcast_update().await;
     }
 
     async fn broadcast_update(&self) {
@@ -133,8 +124,6 @@ impl DashboardState {
 
 pub async fn handle_websocket(
     msg: WebSocketMessage,
-    dashboard_state: Arc<RwLock<DashboardState>>,
-    storage: Arc<RwLock<StorageClient>>,
     obs_manager: Arc<OBSManager>,
     twitch_irc_manager: Arc<TwitchIRCManager>,
     vrchat_manager: Arc<VRChatManager>,
@@ -162,9 +151,6 @@ pub async fn handle_websocket(
             debug!("Unknown module: {}", msg.module);
         }
     }
-
-    // Remove the websocket loop logic
-    // The function now handles a single message and returns
 }
 
 pub async fn send_dashboard_update(
@@ -191,7 +177,6 @@ pub async fn send_dashboard_update(
 
 pub async fn update_dashboard_state(
     state: Arc<RwLock<DashboardState>>,
-    storage: Arc<RwLock<StorageClient>>,
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
@@ -214,19 +199,4 @@ pub async fn update_dashboard_state(
     }
 
     warn!("Dashboard update task has stopped.");
-}
-
-pub async fn start_dashboard_update_task(
-    dashboard_state: Arc<RwLock<DashboardState>>,
-    storage: Arc<RwLock<StorageClient>>,
-) -> tokio::sync::oneshot::Sender<()> {
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    tokio::spawn(update_dashboard_state(
-        dashboard_state,
-        storage,
-        shutdown_rx
-    ));
-
-    shutdown_tx
 }

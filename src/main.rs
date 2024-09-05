@@ -2,7 +2,7 @@ use clap::{Parser, ArgAction};
 use mewbot::{config::Config, init, run};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{error, warn, info, debug, trace, LevelFilter};
+use log::{error, info, LevelFilter};
 use fern::colors::{Color, ColoredLevelConfig};
 use chrono::Local;
 use std::{fs, panic};
@@ -84,7 +84,6 @@ fn setup_logger(log_level: LevelFilter, single_level: bool) -> Result<(), fern::
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
-    let config_path = args.config.unwrap_or_else(|| "mewbot.conf".to_string());
     let mut config = Config::new()?;
 
     // Set log level

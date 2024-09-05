@@ -35,7 +35,7 @@ impl RedeemHandler for AskAIAction {
         match self.ai_client.generate_response_without_history(&full_prompt).await {
             Ok(response) => RedemptionResult {
                 success: true,
-                message: Some(format!("Q: {}\n\nA: {}", user_input, response)),
+                message: Some(response),
             },
             Err(e) => RedemptionResult {
                 success: false,

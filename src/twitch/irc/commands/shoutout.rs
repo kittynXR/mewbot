@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
-use log::{debug, error, info};
+use log::{error};
 use crate::twitch::TwitchManager;
 
 const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
@@ -48,6 +48,8 @@ pub struct ShoutoutCooldown {
     global: Instant,
     per_user: HashMap<String, Instant>,
     queue: ShoutoutQueue,
+    global_cooldown: Duration,
+    user_cooldown: Duration,
 }
 
 impl ShoutoutCooldown {
@@ -56,7 +58,22 @@ impl ShoutoutCooldown {
             global: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
             per_user: HashMap::new(),
             queue: ShoutoutQueue::new(),
+            global_cooldown: Duration::from_secs(GLOBAL_COOLDOWN_SECONDS),
+            user_cooldown: Duration::from_secs(USER_COOLDOWN_SECONDS),
         }
+    }
+
+    pub fn can_shoutout(&self, target: &str) -> bool {
+        let now = Instant::now();
+        now.duration_since(self.global) >= self.global_cooldown &&
+            self.per_user.get(target)
+                .map_or(true, |&last_use| now.duration_since(last_use) >= self.user_cooldown)
+    }
+
+    pub fn update_cooldowns(&mut self, target: &str) {
+        let now = Instant::now();
+        self.global = now;
+        self.per_user.insert(target.to_string(), now);
     }
 
     pub fn check_cooldowns(&self, target: &str) -> (bool, bool) {
@@ -66,12 +83,6 @@ impl ShoutoutCooldown {
             .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS));
 
         (global_passed, user_passed)
-    }
-
-    pub fn update_cooldowns(&mut self, target: &str) {
-        let now = Instant::now();
-        self.global = now;
-        self.per_user.insert(target.to_string(), now);
     }
 
     pub fn get_remaining_cooldown(&self, target: &str) -> (Option<Duration>, Option<Duration>) {
@@ -165,22 +176,6 @@ impl Command for ShoutoutCommand {
     }
 }
 
-async fn generate_ai_shoutout(ai_client: &Arc<AIClient>, username: &str) -> String {
-    let prompt = format!(
-        "Generate a friendly and enthusiastic shoutout message for a Twitch streamer named {}. \
-        The message should be brief (1-2 sentences) and encourage viewers to check out their channel. \
-        Make it sound natural and avoid using cliche phrases.",
-        username
-    );
-
-    match ai_client.generate_response_without_history(&prompt).await {
-        Ok(response) => response,
-        Err(e) => {
-            eprintln!("Error generating AI shoutout: {:?}", e);
-            format!("Huge shoutout to {}! Go check out their channel!", username)
-        }
-    }
-}
 
 pub async fn start_api_shoutout_processor(
     twitch_manager: Arc<TwitchManager>,
@@ -201,10 +196,6 @@ pub async fn start_api_shoutout_processor(
             }
         }
     });
-}
-
-fn strip_at_symbol(username: &str) -> &str {
-    username.strip_prefix('@').unwrap_or(username)
 }
 
 async fn generate_shoutout_message(

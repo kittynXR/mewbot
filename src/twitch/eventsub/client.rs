@@ -1,33 +1,22 @@
 use std::error::Error;
 use crate::config::Config;
-use crate::twitch::{TwitchAPIClient, TwitchManager};
-use crate::ai::AIClient;
-use crate::osc::VRChatOSC;
+use crate::twitch::{TwitchManager};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use super::handlers;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
 use std::time::Duration;
-use crate::twitch::redeems::{Redemption, RedeemManager, RedemptionResult, RedemptionStatus};
-use crate::twitch::irc::client::TwitchIRCClientType;
 use tokio::time::timeout;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
-use log::{debug, error, info, trace, warn};
-use tokio::io::AsyncReadExt;
+use log::{debug, error, info, warn};
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
-use crate::twitch::irc::TwitchBotClient;
 
 type BoxedError = Box<dyn StdError + Send + Sync>;
 type WebSocketTx = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -36,7 +25,6 @@ type WebSocketRx = SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream
 pub struct TwitchEventSubClient {
     twitch_manager: Arc<TwitchManager>,
     http_client: Client,
-    channel: String,
     ws_tx: Mutex<Option<WebSocketTx>>,
     ws_rx: Mutex<Option<WebSocketRx>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
@@ -60,13 +48,11 @@ impl Error for TwitchEventSubError {}
 impl TwitchEventSubClient {
     pub fn new(
         twitch_manager: Arc<TwitchManager>,
-        channel: String,
         osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
         Self {
             twitch_manager: twitch_manager.clone(),
             http_client: Client::new(),
-            channel,
             ws_tx: Mutex::new(None),
             ws_rx: Mutex::new(None),
             osc_configs,
@@ -189,7 +175,6 @@ impl TwitchEventSubClient {
                     return Err(Box::new(e) as Box<dyn StdError + Send + Sync>);
                 }
                 _ => {
-                    let config = self.twitch_manager.config.clone();
                     debug!("Received non-text message: {:?}", message);
                 }
             }
@@ -239,7 +224,6 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let config = self.twitch_manager.config.clone();
         debug!("Received EventSub keepalive: {:?}", response);
         Ok(())
     }
@@ -251,7 +235,6 @@ impl TwitchEventSubClient {
         handlers::handle_message(
             &message,
             &self.twitch_manager,
-            self,
         ).await?;
 
         Ok(())
@@ -284,7 +267,7 @@ impl TwitchEventSubClient {
         let stream_info = self.twitch_manager.api_client.get_stream_info(&channel_id).await?;
 
         let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
-        let game_name = if is_live {
+        let _game_name = if is_live {
             stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
         } else {
             "".to_string()
@@ -386,17 +369,6 @@ impl TwitchEventSubClient {
         let user_info = self.twitch_manager.api_client.get_user_info(channel_name).await?;
         let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
         Ok(channel_id)
-    }
-
-    pub async fn handle_osc_event(&self, event_type: &str, event_data: &Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let configs = self.osc_configs.read().await;
-        if let Some(osc_config) = configs.get_config(event_type) {
-            if let Some(vrchat_osc) = &self.twitch_manager.vrchat_osc {
-                vrchat_osc.send_osc_message_with_reset(osc_config).await?;
-                debug!("Sent OSC message for event: {}", event_type);
-            }
-        }
-        Ok(())
     }
 
     pub async fn add_osc_config(&self, event_type: String, config: OSCConfig) {

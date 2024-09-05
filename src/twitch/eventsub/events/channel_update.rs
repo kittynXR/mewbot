@@ -1,12 +1,6 @@
 use serde_json::Value;
-use twitch_irc::TwitchIRCClient as ExternalTwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use log::{error, info};
-use tokio::sync::RwLock;
-use crate::twitch::irc::TwitchBotClient;
-use crate::twitch::redeems::RedeemManager;
+use log::{info};
 use crate::twitch::TwitchManager;
 
 pub async fn handle(

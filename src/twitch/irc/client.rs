@@ -13,11 +13,7 @@ use twitch_irc::message::{ServerMessage, ClearChatAction};
 use crate::web_ui::websocket::{DashboardState, WebSocketMessage};
 use crate::config::{Config, SocialLinks};
 use crate::twitch::connection_monitor::ConnectionMonitor;
-use crate::twitch::TwitchManager;
-
 pub type TwitchIRCClientType = TwitchIRC<SecureTCPTransport, StaticLoginCredentials>;
-
-use twitch_irc::TwitchIRCClient;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,7 +270,7 @@ impl TwitchIRCManager {
         }
 
         irc_client.connect().await?;
-        self.dashboard_state.write().await.update_twitch_status(true);
+        self.dashboard_state.write().await.update_twitch_status(true).await;
         info!("Successfully added Twitch IRC client for user: {}", username);
         Ok(())
     }
@@ -339,12 +335,12 @@ impl TwitchIRCManager {
                 ServerMessage::Reconnect(_) => {
                     warn!("Received reconnect message for user: {}", username);
                     irc_client.monitor.lock().await.on_disconnect();
-                    dashboard_state.write().await.update_twitch_status(false);
+                    dashboard_state.write().await.update_twitch_status(false).await;
                     if let Err(e) = irc_client.reconnect().await {
                         error!("Failed to reconnect for user {}: {:?}", username, e);
                     } else {
                         info!("Successfully reconnected for user: {}", username);
-                        dashboard_state.write().await.update_twitch_status(true);
+                        dashboard_state.write().await.update_twitch_status(true).await;
                     }
                 },
                 ServerMessage::Join(msg) => {
@@ -398,7 +394,7 @@ impl TwitchIRCManager {
 
         warn!("Exiting handle_client_messages for {}", username);
         irc_client.monitor.lock().await.on_disconnect();
-        dashboard_state.write().await.update_twitch_status(false);
+        dashboard_state.write().await.update_twitch_status(false).await;
     }
 
     pub async fn handle_message(&self, message: WebSocketMessage) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -416,8 +412,16 @@ impl TwitchIRCManager {
                 let username = message.data["username"].as_str().ok_or("Missing username")?;
 
                 if let Some(client) = self.get_client(username).await {
-                    client.join(channel.to_string());
-                    Ok(())
+                    match client.join(channel.to_string()) {
+                        Ok(_) => {
+                            info!("Successfully joined channel {} for user {}", channel, username);
+                            Ok(())
+                        },
+                        Err(e) => {
+                            error!("Failed to join channel {} for user {}: {:?}", channel, username, e);
+                            Err(format!("Failed to join channel: {:?}", e).into())
+                        }
+                    }
                 } else {
                     Err("Client not found".into())
                 }

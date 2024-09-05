@@ -1,8 +1,6 @@
 use crate::twitch::irc::command_system::{Command, CommandContext};
 use crate::twitch::roles::UserRole;
-use crate::vrchat::models::World;
 use log::{error, info};
-use std::sync::Arc;
 use tokio::time::Duration;
 
 pub struct WorldCommand;

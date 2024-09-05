@@ -1,9 +1,5 @@
 use serde_json::Value;
-use twitch_irc::TwitchIRCClient;
-use twitch_irc::SecureTCPTransport;
-use twitch_irc::login::StaticLoginCredentials;
 use std::sync::Arc;
-use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::TwitchManager;
 
 pub async fn handle_shoutout_create(
@@ -12,7 +8,6 @@ pub async fn handle_shoutout_create(
     twitch_manager: &Arc<TwitchManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
-        let from_broadcaster_user_name = payload["from_broadcaster_user_name"].as_str().unwrap_or("Unknown");
         let to_broadcaster_user_name = payload["to_broadcaster_user_name"].as_str().unwrap_or("Unknown");
 
         let message = format!("Hey, you should go check out {}! Click the heart at the top of the chatbox ~ it's easy! luv luv", to_broadcaster_user_name);

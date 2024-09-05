@@ -2,30 +2,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use async_trait::async_trait;
-use futures_util::future::join_all;
 use log::{debug, error, info, warn};
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 use crate::ai::AIClient;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
-use crate::osc::{OSCManager, VRChatOSC};
+use crate::osc::{OSCManager};
 use crate::twitch::api::TwitchAPIClient;
 use crate::osc::osc_config::OSCConfigurations;
-use crate::twitch::api::models::ChannelPointReward;
 use crate::twitch::api::requests::channel_points;
-use super::models::{Redemption, RedemptionResult, RedemptionStatus, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings};
+use super::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings};
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
 
 pub struct RedeemManager {
     api_client: Arc<TwitchAPIClient>,
-    ai_client: Arc<AIClient>,
-    osc_manager: Arc<OSCManager>,
     handlers: HashMap<String, Box<dyn RedeemHandler>>,
     coin_game_state: Arc<RwLock<CoinGameState>>,
     stream_status: Arc<RwLock<StreamStatus>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
-    vrc_osc_redeems: Arc<VRCOscRedeems>,
 }
 
 struct VRCOscRedeemWrapper(Arc<VRCOscRedeems>);
@@ -61,14 +55,11 @@ impl RedeemManager {
 
         Self {
             api_client,
-            ai_client,
-            osc_manager,
             handlers,
             coin_game_state,
             stream_status,
             osc_configs,
             redeem_settings,
-            vrc_osc_redeems,
         }
     }
 
@@ -123,12 +114,6 @@ impl RedeemManager {
         }
 
         result
-    }
-
-    // You might want to add this method if you need cancellation handling
-    pub async fn cancel_redemption(&self, redemption_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Implement cancellation logic here
-        Ok(())
     }
 
     pub async fn initialize_redeems(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -329,12 +314,6 @@ impl RedeemManager {
         }
 
         info!("Redeem initialization complete");
-        Ok(())
-    }
-
-    pub async fn update_redeem(&self, settings: RedeemSettings) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Implement the logic to update a redeem on Twitch
-        // Update self.redeem_settings with the new settings
         Ok(())
     }
 

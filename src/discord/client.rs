@@ -13,9 +13,6 @@ use super::events::EventHandler;
 
 pub struct DiscordClient {
     client: Arc<Mutex<Option<Client>>>,
-    storage: Arc<RwLock<StorageClient>>,
-    user_links: Arc<UserLinks>,
-    config: Arc<RwLock<Config>>,
 }
 
 impl DiscordClient {
@@ -42,9 +39,6 @@ impl DiscordClient {
 
         Ok(Self {
             client: Arc::new(Mutex::new(Some(client))),
-            storage,
-            user_links,
-            config
         })
     }
 

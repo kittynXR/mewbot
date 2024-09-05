@@ -12,9 +12,6 @@ pub(crate) mod calc;
 pub(crate) mod fun_commands;
 pub(crate) mod ad_commands;
 
-pub use verify::*;
-
-
 pub use ping::PingCommand;
 pub use calc::CalcCommand;
 pub use discord::DiscordCommand;

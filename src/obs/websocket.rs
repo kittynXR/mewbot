@@ -5,20 +5,19 @@ use tokio::sync::{mpsc, RwLock, oneshot, Mutex};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use futures_util::{SinkExt, StreamExt};
-use log::{error, info, warn, debug, trace};
-use serde::{Deserialize, Serialize};
+use log::{error, info, warn, debug};
+use serde::{Deserialize};
 use tokio_tungstenite::{connect_async_with_config, tungstenite::protocol::Message, tungstenite::client::IntoClientRequest, Connector, WebSocketStream, MaybeTlsStream};
 use tokio_tungstenite::tungstenite::http::Uri;
 use serde_json::{json, Value};
 use tokio::time::{timeout, Duration};
-use rand::Rng;
 use sha256::digest;
 use base64::{engine::general_purpose, Engine as _};
 use futures_util::stream::SplitSink;
 use native_tls::TlsConnector;
 use tokio::net::TcpStream;
 use crate::obs::models::{OBSInstance, OBSScene, OBSSceneItem};
-use crate::obs::{OBSClientState, OBSInstanceState, OBSManager, OBSWebSocketClient};
+use crate::obs::{OBSClientState, OBSInstanceState, OBSWebSocketClient};
 
 pub const TIMEOUT_DURATION: Duration = Duration::from_millis(1000);
 pub const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(10);
@@ -155,7 +154,7 @@ impl OBSWebSocketClient {
             let uri: Uri = url.parse()?;
             let request = uri.into_client_request()?;
 
-            let connector = if self.instance.use_ssl {
+            let _connector = if self.instance.use_ssl {
                 Some(Connector::NativeTls(TlsConnector::builder().build()?))
             } else {
                 None

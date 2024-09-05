@@ -2,7 +2,7 @@ use crate::config::Config;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex};
 use std::time::{Duration, Instant};
 use warp::Filter;
 use tokio::time::timeout;
@@ -433,7 +433,7 @@ impl TwitchAPIClient {
     pub async fn get_broadcaster_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.as_ref();
         let channel_name = config.twitch_channel_to_join.clone().ok_or("Channel name not set")?;
-        drop(config);
+        let _ = config;
 
         let user_info = self.get_user_info(&channel_name).await?;
         let channel_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get channel ID")?.to_string();
@@ -444,7 +444,7 @@ impl TwitchAPIClient {
     pub async fn get_bot_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let config = self.config.as_ref();
         let bot_name = config.twitch_bot_username.clone().ok_or("Bot name not set")?;
-        drop(config);
+        let _ = config;
         info!("bot username: {}", bot_name);
         let user_info = self.get_user_info(&bot_name).await?;
         let bot_id = user_info["data"][0]["id"].as_str().ok_or("Failed to get bot ID")?.to_string();
@@ -726,7 +726,7 @@ impl TwitchAPIClient {
         let config = self.config.as_ref();
         let access_token = config.twitch_access_token.clone().ok_or("Twitch access token not set")?;
         let client_id = config.twitch_client_id.clone().ok_or("Twitch client ID not set")?;
-        drop(config);
+        let _ = config;
 
         let client = reqwest::Client::new();
         let response = client.get(url)

@@ -4,7 +4,7 @@ use tokio::time::{Duration, Instant};
 
 use crate::osc::client::OSCClient;
 use crate::osc::errors::OSCError;
-use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
+use crate::osc::models::{OSCMessageType, OSCValue};
 use crate::osc::vrchat::VRChatOSC;
 
 pub struct OSCManager {

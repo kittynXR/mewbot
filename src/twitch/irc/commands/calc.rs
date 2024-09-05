@@ -1,7 +1,6 @@
 use crate::twitch::irc::command_system::{Command, CommandContext};
 use crate::twitch::roles::UserRole;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 pub struct CalcCommand;
 
