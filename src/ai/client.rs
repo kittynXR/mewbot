@@ -67,28 +67,4 @@ impl AIClient {
             Err(AIError::APIError("No AI provider available".to_string()))
         }
     }
-
-    pub async fn generate_openai_response(&self, model: &str, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String, AIError> {
-        if let Some(provider) = &self.openai_provider {
-            // For now, we'll ignore the model, max_tokens, and temperature parameters
-            provider.generate_response(prompt).await
-        } else {
-            Err(AIError::APIError("OpenAI provider not available".to_string()))
-        }
-    }
-
-    pub async fn generate_anthropic_response(&self, model: &str, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String, AIError> {
-        if let Some(provider) = &self.anthropic_provider {
-            // For now, we'll ignore the model, max_tokens, and temperature parameters
-            provider.generate_response(prompt).await
-        } else {
-            Err(AIError::APIError("Anthropic provider not available".to_string()))
-        }
-    }
-
-    pub async fn generate_local_response(&self, model: &str, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String, AIError> {
-        // Implement local model response generation
-        // For now, we'll return an error as it's not implemented
-        Err(AIError::APIError("Local AI provider not implemented".to_string()))
-    }
 }

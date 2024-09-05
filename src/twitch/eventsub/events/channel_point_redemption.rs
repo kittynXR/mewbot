@@ -1,5 +1,5 @@
 use crate::twitch::manager::TwitchManager;
-use crate::twitch::redeems::{Redemption, RedemptionStatus};
+use crate::twitch::models::{Redemption, RedemptionStatus};
 use serde_json::Value;
 use std::sync::Arc;
 use log::{debug, error};

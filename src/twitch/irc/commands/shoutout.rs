@@ -12,11 +12,10 @@ use crate::twitch::TwitchManager;
 const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
 const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
 
-struct ShoutoutQueueItem {
+pub struct ShoutoutQueueItem {
     broadcaster_id: String,
     moderator_id: String,
     target_id: String,
-    enqueue_time: Instant,
 }
 
 struct ShoutoutQueue {
@@ -35,7 +34,6 @@ impl ShoutoutQueue {
             broadcaster_id,
             moderator_id,
             target_id,
-            enqueue_time: Instant::now(),
         });
     }
 

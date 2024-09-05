@@ -3,7 +3,7 @@ use std::sync::Arc;
 use log::{debug, error, warn};
 use tokio::sync::RwLock;
 use crate::osc::osc_config::OSCConfigurations;
-use crate::twitch::redeems::models::{Redemption, RedemptionResult, RedeemHandler};
+use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
 
 use crate::osc::OSCManager;
 

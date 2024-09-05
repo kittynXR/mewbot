@@ -2,7 +2,7 @@ use serenity::async_trait;
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use crate::config::Config;
-use crate::storage::StorageClient;
+// use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
 use log::{debug, error, info};
@@ -12,13 +12,12 @@ use crate::discord::commands::{link_twitch, ping};
 
 pub struct EventHandler {
     config: Arc<RwLock<Config>>,
-    storage: Arc<RwLock<StorageClient>>,
     user_links: Arc<UserLinks>,
 }
 
 impl EventHandler {
-    pub fn new(config: Arc<RwLock<Config>>, storage: Arc<RwLock<StorageClient>>, user_links: Arc<UserLinks>) -> Self {
-        Self { config, storage, user_links }
+    pub fn new(config: Arc<RwLock<Config>>, user_links: Arc<UserLinks>) -> Self {
+        Self { config, user_links }
     }
 }
 

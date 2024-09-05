@@ -141,7 +141,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     let discord = if config.read().await.is_discord_configured() {
         Some(Arc::new(discord::DiscordClient::new(
             config.clone(),
-            storage.clone(),
+            // storage.clone(),
             user_links.clone()
         ).await?))
     } else {

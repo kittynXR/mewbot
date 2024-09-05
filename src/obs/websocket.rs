@@ -38,8 +38,14 @@ pub struct OBSResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct HelloMessage {
-    obsWebSocketVersion: String,
-    rpcVersion: i32,
+    #[serde(rename = "obsWebSocketVersion")]
+    #[allow(dead_code)]
+    obs_web_socket_version: String,
+
+    #[serde(rename = "rpcVersion")]
+    #[allow(dead_code)]
+    rpc_version: i32,
+
     authentication: Option<AuthenticationInfo>,
 }
 

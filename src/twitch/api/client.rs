@@ -12,10 +12,11 @@ use log::{debug, error, info, warn};
 use serde_json::Value;
 use thiserror::Error;
 use std::error::Error as StdError;
-use crate::twitch::api::models::ChannelPointReward;
+use crate::twitch::models::channel_points::ChannelPointReward;
 use crate::twitch::api::requests::channel::Clip;
 use crate::twitch::api::requests::followers;
 use crate::twitch::api::requests::followers::FollowerInfo;
+use crate::twitch::models::channel_points;
 
 #[derive(Error, Debug)]
 pub enum TwitchAPIError {
@@ -533,8 +534,22 @@ impl TwitchAPIClient {
             is_paused: reward["is_paused"].as_bool().unwrap_or(false),
             is_user_input_required: reward["is_user_input_required"].as_bool().unwrap_or(false),
             prompt: reward["prompt"].as_str().unwrap_or("").to_string(),
+            cooldown_seconds: reward["cooldown_seconds"].as_u64().map(|v| v as u32),
+            global_cooldown: reward["global_cooldown"].as_object().map(|gc| channel_points::GlobalCooldown {
+                is_enabled: gc["is_enabled"].as_bool().unwrap_or(false),
+                global_cooldown_seconds: gc["global_cooldown_seconds"].as_u64().unwrap_or(0) as u32,
+            }),
+            max_per_stream: reward["max_per_stream"].as_object().map(|mps| channel_points::MaxPerStream {
+                is_enabled: mps["is_enabled"].as_bool().unwrap_or(false),
+                max_per_stream: mps["max_per_stream"].as_u64().unwrap_or(0) as u32,
+            }),
+            max_per_user_per_stream: reward["max_per_user_per_stream"].as_object().map(|mpups| channel_points::MaxPerUserPerStream {
+                is_enabled: mpups["is_enabled"].as_bool().unwrap_or(false),
+                max_per_user_per_stream: mpups["max_per_user_per_stream"].as_u64().unwrap_or(0) as u32,
+            }),
         })
     }
+
 
     pub async fn get_channel_point_rewards(&self) -> Result<Vec<ChannelPointReward>, Box<dyn std::error::Error + Send + Sync>> {
         let token = self.get_token().await?;
@@ -556,7 +571,33 @@ impl TwitchAPIClient {
         }
 
         let body: serde_json::Value = response.json().await?;
-        let rewards: Vec<ChannelPointReward> = serde_json::from_value(body["data"].clone())?;
+        let rewards = body["data"].as_array()
+            .ok_or("No rewards data found")?
+            .iter()
+            .map(|reward| ChannelPointReward {
+                id: reward["id"].as_str().unwrap_or("").to_string(),
+                title: reward["title"].as_str().unwrap_or("").to_string(),
+                cost: reward["cost"].as_u64().unwrap_or(0) as u32,
+                is_enabled: reward["is_enabled"].as_bool().unwrap_or(false),
+                is_in_stock: reward["is_in_stock"].as_bool().unwrap_or(false),
+                is_paused: reward["is_paused"].as_bool().unwrap_or(false),
+                is_user_input_required: reward["is_user_input_required"].as_bool().unwrap_or(false),
+                prompt: reward["prompt"].as_str().unwrap_or("").to_string(),
+                cooldown_seconds: reward["cooldown_seconds"].as_u64().map(|v| v as u32),
+                global_cooldown: reward["global_cooldown"].as_object().map(|gc| channel_points::GlobalCooldown {
+                    is_enabled: gc["is_enabled"].as_bool().unwrap_or(false),
+                    global_cooldown_seconds: gc["global_cooldown_seconds"].as_u64().unwrap_or(0) as u32,
+                }),
+                max_per_stream: reward["max_per_stream"].as_object().map(|mps| channel_points::MaxPerStream {
+                    is_enabled: mps["is_enabled"].as_bool().unwrap_or(false),
+                    max_per_stream: mps["max_per_stream"].as_u64().unwrap_or(0) as u32,
+                }),
+                max_per_user_per_stream: reward["max_per_user_per_stream"].as_object().map(|mpups| channel_points::MaxPerUserPerStream {
+                    is_enabled: mpups["is_enabled"].as_bool().unwrap_or(false),
+                    max_per_user_per_stream: mpups["max_per_user_per_stream"].as_u64().unwrap_or(0) as u32,
+                }),
+            })
+            .collect();
 
         Ok(rewards)
     }

@@ -5,13 +5,13 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use std::sync::{Arc, Mutex};
 use log::info;
-use parking_lot::RwLock;
-use lru_cache::LruCache;
+// use parking_lot::RwLock;
+// use lru_cache::LruCache;
 use crate::twitch::roles::UserRole;
 
 pub struct StorageClient {
     pub(crate) conn: Arc<Mutex<Connection>>,
-    statement_cache: Arc<RwLock<LruCache<String, String>>>,
+    // statement_cache: Arc<RwLock<LruCache<String, String>>>,
 }
 
 impl StorageClient {
@@ -74,7 +74,7 @@ impl StorageClient {
 
         Ok(StorageClient {
             conn: Arc::new(Mutex::new(conn)),
-            statement_cache: Arc::new(RwLock::new(LruCache::new(100))),
+            // statement_cache: Arc::new(RwLock::new(LruCache::new(100))),
         })
     }
 

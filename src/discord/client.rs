@@ -2,7 +2,7 @@
 
 use serenity::prelude::*;
 use crate::config::Config;
-use crate::storage::StorageClient;
+// use crate::storage::StorageClient;
 use crate::discord::UserLinks;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +18,7 @@ pub struct DiscordClient {
 impl DiscordClient {
     pub async fn new(
         config: Arc<RwLock<Config>>,
-        storage: Arc<RwLock<StorageClient>>,
+        // storage: Arc<RwLock<StorageClient>>,
         user_links: Arc<UserLinks>
     ) -> Result<Self, serenity::Error> {
         let token = {
@@ -34,7 +34,7 @@ impl DiscordClient {
             | GatewayIntents::GUILD_MESSAGE_REACTIONS;
 
         let client = Client::builder(&token, intents)
-            .event_handler(EventHandler::new(config.clone(), storage.clone(), user_links.clone()))
+            .event_handler(EventHandler::new(config.clone(), user_links.clone()))
             .await?;
 
         Ok(Self {

@@ -2,7 +2,6 @@ mod manager;
 pub(crate) mod client;
 mod vrchat;
 pub(crate) mod models;
-mod event_handler;
 pub(crate) mod osc_config;
 mod errors;
 

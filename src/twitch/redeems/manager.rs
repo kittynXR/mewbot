@@ -5,13 +5,13 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use tokio::sync::RwLock;
 use crate::ai::AIClient;
-use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 use crate::osc::{OSCManager};
 use crate::twitch::api::TwitchAPIClient;
 use crate::osc::osc_config::OSCConfigurations;
 use crate::twitch::api::requests::channel_points;
-use super::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings};
+use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
+
 
 pub struct RedeemManager {
     api_client: Arc<TwitchAPIClient>,
@@ -126,8 +126,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 20,
                 prompt: "Enter the coin game! The price changes with each redemption.".to_string(),
-                cooldown: 0,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(0),
                 use_osc: false,
                 osc_config: None,
                 enabled_games: vec![],
@@ -143,8 +145,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 555,
                 prompt: "mao?".to_string(),
-                cooldown: 60,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(60),
                 use_osc: false,
                 osc_config: None,
                 enabled_games: vec![],
@@ -160,8 +164,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 48,
                 prompt: "Toss a virtual pillow!".to_string(),
-                cooldown: 0,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(0),
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
@@ -185,8 +191,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 50,
                 prompt: "Throw a virtual cream pie!".to_string(),
-                cooldown: 0,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(0),
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
@@ -210,8 +218,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 40,
                 prompt: "Splash with a virtual water balloon!".to_string(),
-                cooldown: 0,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(0),
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
@@ -235,8 +245,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 840,
                 prompt: "Deploy a virtual cat trap!".to_string(),
-                cooldown: 60,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(60),
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
@@ -260,8 +272,10 @@ impl RedeemManager {
                 twitch_reward_id: None,
                 cost: 45,
                 prompt: "Throw a virtual snowball!".to_string(),
-                cooldown: 0,
                 is_global_cooldown: false,
+                limit_per_stream: None,
+                limit_per_user: None,
+                cooldown: Some(0),
                 use_osc: true,
                 osc_config: Some(OSCConfig {
                     uses_osc: true,
@@ -292,7 +306,7 @@ impl RedeemManager {
 
             if redeem.use_osc {
                 if let Some(osc_config) = redeem.osc_config.clone() {
-                    osc_configs.add_config(&redeem.title, osc_config);
+                    osc_configs.add_config(&redeem.title, osc_config.into());
                     info!("Added OSC config for {} with key {}", redeem.title, redeem.title);
                 } else {
                     warn!("OSC is enabled for {} but no OSC config was provided", redeem.title);
@@ -372,21 +386,29 @@ impl RedeemManager {
             info!("Processing redeem: {}", redeem_setting.title);
             let should_be_active = self.should_redeem_be_active(redeem_setting).await;
 
+            if let Err(e) = redeem_setting.validate_cooldown_settings() {
+                error!("Invalid cooldown settings for {}: {}", redeem_setting.title, e);
+                continue;
+            }
+
             if should_be_active && redeem_setting.is_active {
                 match existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
                     Some(existing_reward) => {
-                        // Update existing reward if needed
+                        let (cooldown, limit_per_stream, limit_per_user) = redeem_setting.get_cooldown_settings();
                         if existing_reward.cost != redeem_setting.cost ||
                             !existing_reward.is_enabled ||
                             existing_reward.is_user_input_required != redeem_setting.user_input_required ||
-                            existing_reward.prompt != redeem_setting.prompt {
+                            existing_reward.prompt != redeem_setting.prompt ||
+                            existing_reward.cooldown_seconds != cooldown ||
+                            existing_reward.max_per_stream.is_some() != limit_per_stream.is_some() ||
+                            existing_reward.max_per_user_per_stream.is_some() != limit_per_user.is_some() {
                             info!("Updating existing reward: {}", redeem_setting.title);
                             if let Err(e) = self.api_client.update_custom_reward(
                                 &existing_reward.id,
                                 &redeem_setting.title,
                                 redeem_setting.cost,
                                 true, // is_enabled
-                                redeem_setting.cooldown,
+                                cooldown.unwrap_or(0),
                                 &redeem_setting.prompt,
                                 redeem_setting.user_input_required,
                             ).await {
@@ -399,11 +421,12 @@ impl RedeemManager {
                     None => {
                         // Create new reward
                         info!("Creating new reward: {}", redeem_setting.title);
+                        let (cooldown, _, _) = redeem_setting.get_cooldown_settings();
                         match self.api_client.create_custom_reward(
                             &redeem_setting.title,
                             redeem_setting.cost,
                             true, // is_enabled
-                            redeem_setting.cooldown,
+                            cooldown.unwrap_or(0),
                             &redeem_setting.prompt,
                             redeem_setting.user_input_required,
                         ).await {
@@ -503,7 +526,7 @@ impl RedeemManager {
                             &redeem_setting.title,
                             redeem_setting.cost,
                             should_be_enabled,
-                            redeem_setting.cooldown,
+                            redeem_setting.cooldown.unwrap_or(0),
                             &redeem_setting.prompt,
                             redeem_setting.user_input_required,
                         ).await?;

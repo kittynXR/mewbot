@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use crate::ai::AIClient;
-use crate::twitch::redeems::models::{Redemption, RedemptionResult, RedeemHandler};
+use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
 
 pub struct AskAIAction {
     ai_client: Arc<AIClient>,

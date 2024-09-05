@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 use tokio::sync::{Mutex, RwLock};
 use crate::ai::AIClient;
 use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::redeems::models::{Redemption, RedemptionResult, RedeemHandler, CoinGameState};
+use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, CoinGameState};
 
 
 pub struct CoinGameAction {

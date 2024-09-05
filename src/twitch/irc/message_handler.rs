@@ -97,6 +97,20 @@ impl MessageHandler {
                 .trim()
                 .to_string();
 
+            // Send the message to the WebSocket clients
+            let websocket_message = WebSocketMessage {
+                module: "twitch".to_string(),
+                action: "new_message".to_string(),
+                data: serde_json::json!({
+                    "message": cleaned_message,
+                    "user": msg.sender.name,
+                    "channel": msg.channel_login,
+                }),
+            };
+            if let Err(e) = self.websocket_sender.send(websocket_message) {
+                error!("Failed to send message to WebSocket: {:?}", e);
+            }
+
             let mut parts = cleaned_message.split_whitespace();
             let command = parts.next();
             let args: Vec<String> = parts.map(String::from).collect();
