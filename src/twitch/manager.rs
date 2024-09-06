@@ -339,7 +339,7 @@ impl TwitchManager {
         // Start the shoutout queue processor
         let manager_clone = Arc::new(twitch_manager.clone());
         tokio::spawn(async move {
-            manager_clone.process_shoutout_queue(shoutout_receiver).await;
+            manager_clone.process_shoutout_queue().await;
         });
 
         Ok(twitch_manager)
@@ -510,40 +510,39 @@ impl TwitchManager {
 
     pub async fn queue_shoutout(&self, user_id: String, username: String) {
         info!("Queueing shoutout for user: {} (ID: {})", username, user_id);
-        if let Err(e) = self.shoutout_sender.send((user_id, username)).await {
-            error!("Failed to queue shoutout: {:?}", e);
-        }
+        let mut cooldowns = self.shoutout_cooldowns.lock().await;
+        cooldowns.enqueue(user_id, username);
     }
 
-    async fn process_shoutout_queue(&self, mut receiver: mpsc::Receiver<(String, String)>) {
-        while let Some((user_id, username)) = receiver.recv().await {
-            let can_shoutout = {
-                let cooldowns = self.shoutout_cooldowns.lock().await;
-                cooldowns.can_shoutout(&user_id)
-            };
+    async fn process_shoutout_queue(&self) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-            if can_shoutout {
-                info!("Processing API shoutout for user: {} (ID: {})", username, user_id);
+            let mut cooldowns = self.shoutout_cooldowns.lock().await;
+            if let Some(item) = cooldowns.dequeue() {
+                if cooldowns.can_shoutout(&item.user_id) {
+                    drop(cooldowns);
 
-                if self.is_stream_live().await {
-                    match self.execute_api_shoutout(&user_id).await {
-                        Ok(_) => {
-                            info!("Successfully executed API shoutout for {}", username);
-                            let mut cooldowns = self.shoutout_cooldowns.lock().await;
-                            cooldowns.update_cooldowns(&user_id);
+                    if self.is_stream_live().await {
+                        match self.execute_api_shoutout(&item.user_id).await {
+                            Ok(_) => {
+                                info!("Successfully executed API shoutout for {}", item.username);
+                                let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                                cooldowns.update_cooldowns(&item.user_id);
+                            }
+                            Err(e) => {
+                                error!("Failed to execute API shoutout for {}: {:?}", item.username, e);
+                                // Optionally, re-queue the shoutout
+                                self.queue_shoutout(item.user_id, item.username).await;
+                            }
                         }
-                        Err(e) => {
-                            error!("Failed to execute API shoutout for {}: {:?}", username, e);
-                            // Optionally, requeue the shoutout if it failed due to a temporary error
-                            // self.queue_shoutout(user_id, username).await;
-                        }
+                    } else {
+                        info!("Stream is offline. Skipping API shoutout for {}.", item.username);
                     }
                 } else {
-                    info!("Stream is offline. Skipping API shoutout for {}.", username);
+                    // If cooldown hasn't elapsed, put it back in the queue
+                    cooldowns.enqueue(item.user_id, item.username);
                 }
-            } else {
-                info!("Cooldown not elapsed for {}. Requeueing shoutout.", username);
-                self.queue_shoutout(user_id, username).await;
             }
         }
     }

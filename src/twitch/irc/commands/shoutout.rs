@@ -6,48 +6,22 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
-use log::{error};
+use log::{error, info, debug};
 use crate::twitch::TwitchManager;
 
-const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
+pub const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
 const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
 
 pub struct ShoutoutQueueItem {
-    broadcaster_id: String,
-    moderator_id: String,
-    target_id: String,
-}
-
-struct ShoutoutQueue {
-    queue: VecDeque<ShoutoutQueueItem>,
-}
-
-impl ShoutoutQueue {
-    fn new() -> Self {
-        ShoutoutQueue {
-            queue: VecDeque::new(),
-        }
-    }
-
-    fn enqueue(&mut self, broadcaster_id: String, moderator_id: String, target_id: String) {
-        self.queue.push_back(ShoutoutQueueItem {
-            broadcaster_id,
-            moderator_id,
-            target_id,
-        });
-    }
-
-    fn dequeue(&mut self) -> Option<ShoutoutQueueItem> {
-        self.queue.pop_front()
-    }
+    pub(crate) user_id: String,
+    pub(crate) username: String,
+    enqueue_time: Instant,
 }
 
 pub struct ShoutoutCooldown {
     global: Instant,
     per_user: HashMap<String, Instant>,
-    queue: ShoutoutQueue,
-    global_cooldown: Duration,
-    user_cooldown: Duration,
+    queue: VecDeque<ShoutoutQueueItem>,
 }
 
 impl ShoutoutCooldown {
@@ -55,59 +29,33 @@ impl ShoutoutCooldown {
         ShoutoutCooldown {
             global: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
             per_user: HashMap::new(),
-            queue: ShoutoutQueue::new(),
-            global_cooldown: Duration::from_secs(GLOBAL_COOLDOWN_SECONDS),
-            user_cooldown: Duration::from_secs(USER_COOLDOWN_SECONDS),
+            queue: VecDeque::new(),
         }
     }
 
-    pub fn can_shoutout(&self, target: &str) -> bool {
+    pub fn can_shoutout(&self, user_id: &str) -> bool {
         let now = Instant::now();
-        now.duration_since(self.global) >= self.global_cooldown &&
-            self.per_user.get(target)
-                .map_or(true, |&last_use| now.duration_since(last_use) >= self.user_cooldown)
+        now.duration_since(self.global) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS) &&
+            self.per_user.get(user_id)
+                .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS))
     }
 
-    pub fn update_cooldowns(&mut self, target: &str) {
+    pub fn update_cooldowns(&mut self, user_id: &str) {
         let now = Instant::now();
         self.global = now;
-        self.per_user.insert(target.to_string(), now);
+        self.per_user.insert(user_id.to_string(), now);
     }
 
-    pub fn check_cooldowns(&self, target: &str) -> (bool, bool) {
-        let now = Instant::now();
-        let global_passed = now.duration_since(self.global) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS);
-        let user_passed = self.per_user.get(target)
-            .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS));
-
-        (global_passed, user_passed)
-    }
-
-    pub fn get_remaining_cooldown(&self, target: &str) -> (Option<Duration>, Option<Duration>) {
-        let now = Instant::now();
-        let global_remaining = if now.duration_since(self.global) < Duration::from_secs(GLOBAL_COOLDOWN_SECONDS) {
-            Some(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS) - now.duration_since(self.global))
-        } else {
-            None
-        };
-
-        let user_remaining = self.per_user.get(target).and_then(|&last_use| {
-            if now.duration_since(last_use) < Duration::from_secs(USER_COOLDOWN_SECONDS) {
-                Some(Duration::from_secs(USER_COOLDOWN_SECONDS) - now.duration_since(last_use))
-            } else {
-                None
-            }
+    pub fn enqueue(&mut self, user_id: String, username: String) {
+        self.queue.push_back(ShoutoutQueueItem {
+            user_id,
+            username,
+            enqueue_time: Instant::now(),
         });
-
-        (global_remaining, user_remaining)
     }
 
-    pub fn enqueue_api_shoutout(&mut self, broadcaster_id: String, moderator_id: String, target_id: String) {
-        self.queue.enqueue(broadcaster_id, moderator_id, target_id);
-    }
-
-    pub fn dequeue_api_shoutout(&mut self) -> Option<ShoutoutQueueItem> {
-        self.queue.dequeue()
+    pub fn dequeue(&mut self) -> Option<ShoutoutQueueItem> {
+        self.queue.pop_front()
     }
 }
 
@@ -172,28 +120,6 @@ impl Command for ShoutoutCommand {
 
         Ok(())
     }
-}
-
-
-pub async fn start_api_shoutout_processor(
-    twitch_manager: Arc<TwitchManager>,
-    cooldowns: Arc<Mutex<ShoutoutCooldown>>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
-
-            let mut cooldowns = cooldowns.lock().await;
-            if let Some(item) = cooldowns.dequeue_api_shoutout() {
-                drop(cooldowns);
-                if let Err(e) = send_shoutout(&twitch_manager, &item.broadcaster_id, &item.moderator_id, &item.target_id).await {
-                    error!("Error sending API shoutout: {}", e);
-                }
-            } else {
-                drop(cooldowns);
-            }
-        }
-    });
 }
 
 async fn generate_shoutout_message(
