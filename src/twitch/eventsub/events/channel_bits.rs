@@ -38,17 +38,20 @@ pub async fn handle(
             send_chat_message: false,
         };
 
-        // Send OSC message
-        match twitch_manager.get_vrchat_osc() {
-            Some(vrchat_osc) => {
-                match vrchat_osc.send_osc_message_with_reset(&osc_config).await {
-                    Ok(_) => debug!("Successfully sent OSC message for bits event"),
-                    Err(e) => error!("Failed to send OSC message for bits event: {}", e),
+        // Send OSC message using the OSCManager
+        let osc_manager = twitch_manager.get_osc_manager();
+        match osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value).await {
+            Ok(_) => {
+                debug!("Successfully sent OSC message for bits event");
+                // Reset the OSC value after the execution duration
+                if let Some(duration) = osc_config.execution_duration {
+                    tokio::time::sleep(duration).await;
+                    if let Err(e) = osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.default_value).await {
+                        error!("Failed to reset OSC value for bits event: {}", e);
+                    }
                 }
             },
-            None => {
-                error!("VRChatOSC instance not available for bits event");
-            }
+            Err(e) => error!("Failed to send OSC message for bits event: {}", e),
         }
 
         // Send chat message

@@ -8,6 +8,16 @@ pub struct BotStatus {
     is_online: bool,
 }
 
+impl Default for BotStatus {
+    fn default() -> Self {
+        Self {
+            // Initialize with default values
+            start_time: std::time::Instant::now(),
+            is_online: false,
+        }
+    }
+}
+
 impl BotStatus {
     pub fn new() -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self {

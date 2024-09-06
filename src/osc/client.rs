@@ -10,6 +10,15 @@ pub struct OSCClient {
     target_addr: SocketAddr,
 }
 
+impl Default for OSCClient {
+    fn default() -> Self {
+        Self {
+            socket: UdpSocket::from_std(std::net::UdpSocket::bind("0.0.0.0:0").unwrap()).unwrap(),
+            target_addr: "127.0.0.1:9000".parse().unwrap(),
+        }
+    }
+}
+
 impl OSCClient {
     pub async fn new(target_addr: &str) -> Result<Self, OSCError> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;

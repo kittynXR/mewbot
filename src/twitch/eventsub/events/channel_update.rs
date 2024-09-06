@@ -16,7 +16,9 @@ pub async fn handle(
 
             twitch_manager.send_message_as_bot(channel, response.as_str()).await?;
 
-            twitch_manager.get_redeem_manager().write().await.handle_stream_update(category_name.to_string()).await?;
+            if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
+                redeem_manager.handle_stream_update(category_name.to_string()).await?;
+            }
         }
     }
 

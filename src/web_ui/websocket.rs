@@ -54,6 +54,13 @@ pub struct DashboardState {
     pub obs_instances: Vec<crate::obs::OBSInstanceState>,
 }
 
+
+impl Default for DashboardState {
+    fn default() -> Self {
+        Self::new(Arc::new(RwLock::new(BotStatus::default())))
+    }
+}
+
 impl DashboardState {
     pub fn new(
         bot_status: Arc<RwLock<BotStatus>>,

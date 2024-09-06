@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::{error, info};
+use log::{error, info, debug};
 use crate::twitch::TwitchManager;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
@@ -22,7 +22,9 @@ pub async fn handle(
             _ => "Unknown Tier",
         };
 
-        // Create OSC config for gift subs (same as resubs)
+        debug!("Received gift sub event: {} gifted {} {} subs (Total: {})", user_name, total, tier_name, cumulative_total);
+
+        // Create OSC config for gift subs
         let osc_config = OSCConfig {
             uses_osc: true,
             osc_endpoint: "/avatar/parameters/twitch".to_string(),
@@ -33,16 +35,20 @@ pub async fn handle(
             send_chat_message: false,
         };
 
-        // Send OSC message
-        match twitch_manager.get_vrchat_osc() {
-            Some(vrchat_osc) => {
-                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
-                    error!("Failed to send OSC message for gift sub: {}", e);
+        // Send OSC message using the OSCManager
+        let osc_manager = twitch_manager.get_osc_manager();
+        match osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value).await {
+            Ok(_) => {
+                debug!("Successfully sent OSC message for gift sub event");
+                // Reset the OSC value after the execution duration
+                if let Some(duration) = osc_config.execution_duration {
+                    tokio::time::sleep(duration).await;
+                    if let Err(e) = osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.default_value).await {
+                        error!("Failed to reset OSC value for gift sub event: {}", e);
+                    }
                 }
             },
-            None => {
-                error!("VRChatOSC instance not available for gift sub event");
-            }
+            Err(e) => error!("Failed to send OSC message for gift sub event: {}", e),
         }
 
         let message = format!(
@@ -50,9 +56,15 @@ pub async fn handle(
             user_name, total, tier_name, cumulative_total
         );
 
-        twitch_manager.send_message_as_bot(channel, &message).await?;
+        if let Err(e) = twitch_manager.send_message_as_bot(channel, &message).await {
+            error!("Failed to send thank you message to chat: {}", e);
+        } else {
+            debug!("Successfully sent thank you message to chat");
+        }
 
         info!("Processed gift sub event: {} gifted {} {} subs", user_name, total, tier_name);
+    } else {
+        error!("Invalid event payload structure");
     }
 
     Ok(())

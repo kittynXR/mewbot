@@ -20,7 +20,9 @@ pub async fn handle(
         // Update stream status using TwitchManager
         twitch_manager.set_stream_live(false).await;
 
-        twitch_manager.get_redeem_manager().write().await.handle_stream_offline().await?;
+        if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
+            redeem_manager.handle_stream_offline().await?;
+        }
 
         info!("Stream is now offline");
     }

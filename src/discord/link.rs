@@ -2,10 +2,17 @@ use serenity::model::id::UserId;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
+#[derive(Debug)]
 pub struct UserLinks {
     discord_to_twitch: RwLock<HashMap<UserId, String>>,
     twitch_to_discord: RwLock<HashMap<String, UserId>>,
     pending_verifications: RwLock<HashMap<u32, UserId>>, // Verification code to Discord UserId
+}
+
+impl Default for UserLinks {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UserLinks {

@@ -196,6 +196,21 @@ pub struct TwitchIRCManager {
     config: Arc<Config>,
 }
 
+impl Default for TwitchIRCManager {
+    fn default() -> Self {
+        let (tx, _) = broadcast::channel(1000);
+        let (websocket_tx, _) = mpsc::unbounded_channel();
+        Self {
+            clients: RwLock::new(HashMap::new()),
+            message_sender: tx,
+            websocket_sender: websocket_tx,
+            social_links: Arc::new(RwLock::new(SocialLinks::default())),
+            dashboard_state: Arc::new(RwLock::new(DashboardState::default())),
+            config: Arc::new(Config::default()),
+        }
+    }
+}
+
 impl TwitchIRCManager {
     pub fn new(
         websocket_sender: mpsc::UnboundedSender<WebSocketMessage>,

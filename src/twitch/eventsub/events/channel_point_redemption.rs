@@ -14,11 +14,17 @@ pub async fn handle_new_redemption(
     debug!("Processing new redemption: {:?}", redemption);
 
     let redeem_manager = twitch_manager.redeem_manager.read().await;
-    let result = redeem_manager.handle_redemption(&redemption).await;
+    let result = if let Some(redeem_manager) = redeem_manager.as_ref() {
+        redeem_manager.handle_redemption(&redemption).await
+    } else {
+        // Handle the case where redeem_manager is None
+        // You might want to return an appropriate error or default value
+        return Err("RedeemManager is not initialized".into());
+    };
 
     if result.success {
         debug!("Redemption handled successfully: {:?}", result);
-        if let Some(message) = result.message {
+        if let Some(ref message) = result.message {
             twitch_manager.send_message_as_bot(channel, &message).await?;
         }
     } else {

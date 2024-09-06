@@ -1,26 +1,24 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use log::{debug, error, warn};
-use tokio::sync::RwLock;
-use crate::osc::osc_config::OSCConfigurations;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
-
-use crate::osc::OSCManager;
+use crate::twitch::TwitchManager;
 
 pub struct VRCOscRedeems {
-    osc_manager: Arc<OSCManager>,
-    osc_configs: Arc<RwLock<OSCConfigurations>>,
+    twitch_manager: Arc<TwitchManager>,
 }
 
 impl VRCOscRedeems {
-    pub fn new(osc_manager: Arc<OSCManager>, osc_configs: Arc<RwLock<OSCConfigurations>>) -> Self {
-        Self { osc_manager, osc_configs }
+    pub fn new(twitch_manager: Arc<TwitchManager>) -> Self {
+        Self { twitch_manager }
     }
 
     async fn handle_osc_redeem(&self, redemption: &Redemption) -> RedemptionResult {
-        if !self.osc_manager.is_connected().await {
+        let osc_manager = self.twitch_manager.get_osc_manager();
+
+        if !osc_manager.is_connected().await {
             warn!("OSC is not connected. Attempting to reconnect...");
-            if let Err(e) = self.osc_manager.reconnect().await {
+            if let Err(e) = osc_manager.reconnect().await {
                 error!("Failed to reconnect OSC: {}", e);
                 return RedemptionResult {
                     success: false,
@@ -29,17 +27,18 @@ impl VRCOscRedeems {
             }
         }
 
-        let configs = self.osc_configs.read().await;
+        let osc_configs = self.twitch_manager.get_osc_configs();
+        let configs = osc_configs.read().await;
         debug!("Available OSC configs: {:?}", configs.configs.keys().collect::<Vec<_>>());
 
         if let Some(config) = configs.get_config(&redemption.reward_title) {
             debug!("Found OSC config for {}: {:?}", redemption.reward_title, config);
             if config.uses_osc {
-                match self.osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value).await {
+                match osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value).await {
                     Ok(_) => {
                         if let Some(duration) = config.execution_duration {
                             tokio::time::sleep(duration).await;
-                            if let Err(e) = self.osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value).await {
+                            if let Err(e) = osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value).await {
                                 error!("Failed to reset OSC value for {}: {}", redemption.reward_title, e);
                             }
                         }

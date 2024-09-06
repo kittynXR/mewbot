@@ -14,6 +14,12 @@ pub struct AdManager {
     pub ads: HashMap<String, AdInfo>,
 }
 
+impl Default for AdManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdManager {
     pub fn new() -> Self {
         Self {

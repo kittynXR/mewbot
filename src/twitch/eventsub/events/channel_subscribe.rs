@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::error;
+use log::{error, debug, info};
 use crate::twitch::TwitchManager;
 use crate::osc::models::OSCConfig;
 use crate::osc::models::{OSCMessageType, OSCValue};
@@ -22,6 +22,8 @@ pub async fn handle(
             _ => "Unknown Tier",
         };
 
+        debug!("Received subscribe event: {} - {} (Gift: {})", user_name, tier_name, is_gift);
+
         // Create OSC config for new subscribers
         let osc_config = OSCConfig {
             uses_osc: true,
@@ -33,16 +35,20 @@ pub async fn handle(
             send_chat_message: false,
         };
 
-        // Send OSC message using VRChatOSC through the get_vrchat_osc method
-        match twitch_manager.get_vrchat_osc() {
-            Some(vrchat_osc) => {
-                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
-                    error!("Failed to send OSC message for new subscriber: {}", e);
+        // Send OSC message using the OSCManager
+        let osc_manager = twitch_manager.get_osc_manager();
+        match osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value).await {
+            Ok(_) => {
+                debug!("Successfully sent OSC message for new subscriber");
+                // Reset the OSC value after the execution duration
+                if let Some(duration) = osc_config.execution_duration {
+                    tokio::time::sleep(duration).await;
+                    if let Err(e) = osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.default_value).await {
+                        error!("Failed to reset OSC value for new subscriber: {}", e);
+                    }
                 }
             },
-            None => {
-                error!("VRChatOSC instance not available");
-            }
+            Err(e) => error!("Failed to send OSC message for new subscriber: {}", e),
         }
 
         let message = if is_gift {
@@ -51,7 +57,15 @@ pub async fn handle(
             format!("Thank you {} for subscribing with a {} subscription!", user_name, tier_name)
         };
 
-        twitch_manager.send_message_as_bot(channel, &message).await?;
+        if let Err(e) = twitch_manager.send_message_as_bot(channel, &message).await {
+            error!("Failed to send thank you message to chat: {}", e);
+        } else {
+            debug!("Successfully sent thank you message to chat");
+        }
+
+        info!("Processed subscribe event for {} - {} (Gift: {})", user_name, tier_name, is_gift);
+    } else {
+        error!("Invalid event payload structure");
     }
 
     Ok(())

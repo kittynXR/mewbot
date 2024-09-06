@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+use std::default::Default;
 use std::error::Error;
 use std::error::Error as StdError;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration};
 use chrono::{DateTime, Utc};
@@ -50,6 +52,12 @@ pub struct StreamerData {
 pub struct UserManager {
     user_cache: Arc<RwLock<HashMap<String, TwitchUser>>>,
     api_client: Arc<TwitchAPIClient>,
+}
+
+impl Default for UserManager {
+    fn default() -> Self {
+        Self::new(Arc::new(TwitchAPIClient::default()))
+    }
 }
 
 impl From<TwitchUser> for ChatterData {
@@ -256,16 +264,63 @@ pub struct TwitchManager {
     pub irc_manager: Arc<TwitchIRCManager>,
     pub bot_client: Arc<TwitchBotClient>,
     pub broadcaster_client: Option<Arc<TwitchBroadcasterClient>>,
-    pub redeem_manager: Arc<RwLock<RedeemManager>>,
+    pub redeem_manager: Arc<RwLock<Option<RedeemManager>>>,
     pub eventsub_client: Arc<Mutex<Option<TwitchEventSubClient>>>,
     pub user_manager: UserManager,
     pub(crate) user_links: Arc<UserLinks>,
     stream_status: Arc<RwLock<bool>>,
-    pub vrchat_osc: Option<Arc<VRChatOSC>>,
+    pub osc_manager: Arc<OSCManager>,
+    pub osc_configs: Arc<RwLock<OSCConfigurations>>,
     pub ai_client: Option<Arc<AIClient>>,
     pub shoutout_cooldowns: Arc<Mutex<ShoutoutCooldown>>,
     shoutout_sender: mpsc::Sender<(String, String)>,
     pub ad_manager: Arc<RwLock<AdManager>>,
+}
+
+impl Default for TwitchManager {
+    fn default() -> Self {
+        Self {
+            config: Arc::new(Config::default()),
+            api_client: Arc::new(TwitchAPIClient::default()),
+            irc_manager: Arc::new(TwitchIRCManager::default()),
+            bot_client: Arc::new(TwitchBotClient::default()),
+            broadcaster_client: None,
+            redeem_manager: Arc::new(RwLock::new(None)),
+            eventsub_client: Arc::new(Mutex::new(None)),
+            user_manager: UserManager::default(),
+            user_links: Arc::new(UserLinks::default()),
+            stream_status: Arc::new(RwLock::new(false)),
+            osc_manager: Arc::new(OSCManager::default()),
+            osc_configs: Arc::new(RwLock::new(OSCConfigurations::default())),
+            ai_client: None,
+            shoutout_cooldowns: Arc::new(Mutex::new(ShoutoutCooldown::default())),
+            shoutout_sender: mpsc::channel(1).0,
+            ad_manager: Arc::new(RwLock::new(AdManager::default())),
+        }
+    }
+}
+
+impl fmt::Debug for TwitchManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TwitchManager")
+            .field("config", &self.config)
+            .field("api_client", &"<TwitchAPIClient>")
+            .field("irc_manager", &"<TwitchIRCManager>")
+            .field("bot_client", &"<TwitchBotClient>")
+            .field("broadcaster_client", &self.broadcaster_client.as_ref().map(|_| "<TwitchBroadcasterClient>"))
+            .field("redeem_manager", &"<RedeemManager>")
+            .field("eventsub_client", &"<TwitchEventSubClient>")
+            .field("user_manager", &"<UserManager>")
+            .field("user_links", &self.user_links)
+            .field("stream_status", &self.stream_status)
+            .field("osc_manager", &"<OSCManager>")
+            .field("osc_configs", &"<OSCConfigurations>")
+            .field("ai_client", &self.ai_client.as_ref().map(|_| "<AIClient>"))
+            .field("shoutout_cooldowns", &"<ShoutoutCooldown>")
+            .field("shoutout_sender", &"<mpsc::Sender>")
+            .field("ad_manager", &"<AdManager>")
+            .finish()
+    }
 }
 
 impl TwitchManager {
@@ -273,7 +328,7 @@ impl TwitchManager {
         config: Arc<Config>,
         _storage: Arc<RwLock<StorageClient>>,
         ai_client: Option<Arc<AIClient>>,
-        vrchat_osc: Option<Arc<VRChatOSC>>,
+        osc_manager: Arc<OSCManager>,
         user_links: Arc<UserLinks>,
         dashboard_state: Arc<RwLock<DashboardState>>,
         websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
@@ -292,57 +347,76 @@ impl TwitchManager {
         let (bot_client, broadcaster_client) = Self::initialize_irc_clients(&config, &irc_manager).await?;
 
         let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
-        let osc_manager = Arc::new(OSCManager::new("127.0.0.1:9000").await?);
-        
-        let vrchat_osc = Self::initialize_vrchat_osc(vrchat_osc).await;
-
-        let redeem_manager = Arc::new(RwLock::new(RedeemManager::new(
-            api_client.clone(),
-            ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
-            osc_manager.clone(),
-            osc_configs.clone(),
-        )));
 
         let user_manager = UserManager::new(api_client.clone());
 
         let shoutout_cooldowns = Arc::new(Mutex::new(ShoutoutCooldown::new()));
-        let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
+        let (shoutout_sender, _shoutout_receiver) = mpsc::channel(100);
 
-        let ad_manager = Arc::new(RwLock::new(AdManager::new()));
-
-        let mut twitch_manager = Self {
-            config,
-            api_client,
+        let twitch_manager = Arc::new(Self {
+            config: config.clone(),
+            api_client: api_client.clone(),
             irc_manager,
             bot_client,
             broadcaster_client,
-            redeem_manager,
+            redeem_manager: Arc::new(RwLock::new(None)), // Initialize as None
             eventsub_client: Arc::new(Mutex::new(None)),
             user_manager,
             user_links,
             stream_status: Arc::new(RwLock::new(false)),
-            vrchat_osc: vrchat_osc.clone(),
+            osc_manager,
+            osc_configs: osc_configs.clone(),
             ai_client: ai_client.clone(),
             shoutout_cooldowns,
             shoutout_sender,
-            ad_manager,
-        };
+            ad_manager: Arc::new(RwLock::new(AdManager::new())),
+        });
 
-        let eventsub_client = Self::initialize_eventsub_client(
-            &Arc::new(twitch_manager.clone()),
-        ).await?;
+        // Initialize RedeemManager
+        let redeem_manager = RedeemManager::new(
+            twitch_manager.clone(),
+            ai_client.unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
+        );
+        *twitch_manager.redeem_manager.write().await = Some(redeem_manager);
 
-        twitch_manager.eventsub_client = Arc::new(Mutex::new(Some(eventsub_client)));
+        // Initialize EventSubClient
+        let eventsub_client = TwitchEventSubClient::new(twitch_manager.clone(), osc_configs);
+        *twitch_manager.eventsub_client.lock().await = Some(eventsub_client);
 
         twitch_manager.check_initial_stream_status().await?;
 
-        // Start the shoutout queue processor
-        let manager_clone = Arc::new(twitch_manager.clone());
-        tokio::spawn(async move {
-            manager_clone.process_shoutout_queue().await;
-        });
+        Ok((*twitch_manager).clone())
+    }
 
-        Ok(twitch_manager)
+    pub async fn initialize(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        Self::initialize_redeem_manager(self).await?;
+
+        let eventsub_client = Self::initialize_eventsub_client(self).await?;
+        *self.eventsub_client.lock().await = Some(eventsub_client);
+
+        self.check_initial_stream_status().await?;
+
+        Ok(())
+    }
+
+    async fn initialize_redeem_manager(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let redeem_manager = RedeemManager::new(
+            Arc::new(self.clone()),
+            self.ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
+        );
+
+        // Update the RedeemManager in TwitchManager
+        let mut current_redeem_manager = self.redeem_manager.write().await;
+        *current_redeem_manager = Option::from(redeem_manager);
+
+        Ok(())
+    }
+
+    // Modify this to take &self instead of &Arc<Self>
+    async fn initialize_eventsub_client(&self) -> Result<TwitchEventSubClient, Box<dyn std::error::Error + Send + Sync>> {
+        let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
+
+        Ok(TwitchEventSubClient::new(Arc::new(self.clone()), osc_configs))
     }
 
     pub async fn shutdown(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -364,14 +438,15 @@ impl TwitchManager {
             }
         }
 
-        // Shutdown RedeemManager
-        if let Err(e) = timeout(shutdown_timeout, self.redeem_manager.write().await.shutdown()).await {
-            error!("RedeemManager shutdown timed out: {:?}", e);
-        }
+        // if let Err(e) = timeout(shutdown_timeout, self.redeem_manager.write().await.shutdown()).await {
+        //     error!("RedeemManager shutdown timed out: {:?}", e);
+        // }
 
         info!("TwitchManager shutdown complete.");
         Ok(())
     }
+
+
 
     async fn initialize_vrchat_osc(existing_osc: Option<Arc<VRChatOSC>>) -> Option<Arc<VRChatOSC>> {
         if let Some(osc) = existing_osc {
@@ -415,14 +490,6 @@ impl TwitchManager {
         Ok((bot_client, broadcaster_client))
     }
 
-    async fn initialize_eventsub_client(
-        twitch_manager: &Arc<TwitchManager>,
-    ) -> Result<TwitchEventSubClient, Box<dyn std::error::Error + Send + Sync>> {
-        let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
-
-        Ok(TwitchEventSubClient::new(twitch_manager.clone(), osc_configs))
-    }
-
     pub async fn start_message_handler(&self, message_handler: Arc<MessageHandler>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut receiver = self.irc_manager.subscribe();
 
@@ -459,8 +526,12 @@ impl TwitchManager {
         self.user_manager.get_user(user_id).await
     }
 
-    pub fn get_vrchat_osc(&self) -> Option<Arc<VRChatOSC>> {
-        self.vrchat_osc.clone()
+    pub fn get_osc_manager(&self) -> Arc<OSCManager> {
+        self.osc_manager.clone()
+    }
+
+    pub fn get_osc_configs(&self) -> Arc<RwLock<OSCConfigurations>> {
+        self.osc_configs.clone()
     }
 
     pub fn get_bot_client(&self) -> Arc<TwitchBotClient> {
@@ -471,7 +542,7 @@ impl TwitchManager {
         self.broadcaster_client.clone()
     }
 
-    pub fn get_redeem_manager(&self) -> Arc<RwLock<RedeemManager>> {
+    pub fn get_redeem_manager(&self) -> Arc<RwLock<Option<RedeemManager>>> {
         self.redeem_manager.clone()
     }
 

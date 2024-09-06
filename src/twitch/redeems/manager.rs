@@ -5,21 +5,30 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use tokio::sync::RwLock;
 use crate::ai::AIClient;
-use crate::osc::{OSCManager};
-use crate::twitch::api::TwitchAPIClient;
-use crate::osc::osc_config::OSCConfigurations;
 use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
+use crate::twitch::TwitchManager;
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
 
 
 pub struct RedeemManager {
-    api_client: Arc<TwitchAPIClient>,
+    twitch_manager: Arc<TwitchManager>,
     handlers: HashMap<String, Box<dyn RedeemHandler>>,
     coin_game_state: Arc<RwLock<CoinGameState>>,
     stream_status: Arc<RwLock<StreamStatus>>,
-    osc_configs: Arc<RwLock<OSCConfigurations>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
+}
+
+impl Default for RedeemManager {
+    fn default() -> Self {
+        Self {
+            twitch_manager: Arc::new(TwitchManager::default()),
+            handlers: HashMap::new(),
+            coin_game_state: Arc::new(RwLock::new(CoinGameState::new(20))),
+            stream_status: Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() })),
+            redeem_settings: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
 }
 
 struct VRCOscRedeemWrapper(Arc<VRCOscRedeems>);
@@ -33,19 +42,17 @@ impl RedeemHandler for VRCOscRedeemWrapper {
 
 impl RedeemManager {
     pub fn new(
-        api_client: Arc<TwitchAPIClient>,
+        twitch_manager: Arc<TwitchManager>,
         ai_client: Arc<AIClient>,
-        osc_manager: Arc<OSCManager>,
-        osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
         let coin_game_state = Arc::new(RwLock::new(CoinGameState::new(20)));
         let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
 
-        let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(osc_manager.clone(), osc_configs.clone()));
+        let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(twitch_manager.clone()));
 
         let mut handlers = HashMap::new();
-        handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone(), ai_client.clone(), api_client.clone())) as Box<dyn RedeemHandler>);
+        handlers.insert("Coin Game".to_string(), Box::new(CoinGameAction::new(coin_game_state.clone(), ai_client.clone(), twitch_manager.get_api_client())) as Box<dyn RedeemHandler>);
         handlers.insert("mao mao".to_string(), Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("toss pillo".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("cream pie".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
@@ -54,11 +61,10 @@ impl RedeemManager {
         handlers.insert("snowball".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
 
         Self {
-            api_client,
+            twitch_manager,
             handlers,
             coin_game_state,
             stream_status,
-            osc_configs,
             redeem_settings,
         }
     }
@@ -82,6 +88,7 @@ impl RedeemManager {
     }
 
     pub async fn handle_redemption(&self, redemption: &Redemption) -> RedemptionResult {
+        let api_client = self.twitch_manager.get_api_client();
         debug!("Handling redemption for: {}", redemption.reward_title);
         let settings = self.redeem_settings.read().await;
         let result = if let Some(handler) = self.handlers.get(&redemption.reward_title) {
@@ -95,7 +102,7 @@ impl RedeemManager {
 
         if let Some(redeem_setting) = settings.get(&redemption.reward_title) {
             if redeem_setting.auto_complete {
-                match self.api_client.complete_channel_points(
+                match api_client.complete_channel_points(
                     &redemption.broadcaster_id,
                     &redemption.reward_id,
                     &redemption.id
@@ -298,15 +305,15 @@ impl RedeemManager {
         info!("Prepared {} redeems for initialization", redeems.len());
 
         let mut settings = self.redeem_settings.write().await;
-        let mut osc_configs = self.osc_configs.write().await;
-
+        let osc_configs = self.twitch_manager.get_osc_configs();
         for redeem in redeems {
             info!("Processing redeem: {}", redeem.title);
             settings.insert(redeem.reward_name.clone(), redeem.clone());
 
             if redeem.use_osc {
                 if let Some(osc_config) = redeem.osc_config.clone() {
-                    osc_configs.add_config(&redeem.title, osc_config.into());
+                    let mut configs = osc_configs.write().await;
+                    configs.add_config(&redeem.title, osc_config.into());
                     info!("Added OSC config for {} with key {}", redeem.title, redeem.title);
                 } else {
                     warn!("OSC is enabled for {} but no OSC config was provided", redeem.title);
@@ -314,11 +321,12 @@ impl RedeemManager {
             }
         }
 
-        info!("OSC configs after initialization: {:?}", osc_configs.configs.keys().collect::<Vec<_>>());
+        {
+            let configs = osc_configs.read().await;
+            info!("OSC configs after initialization: {:?}", configs.configs.keys().collect::<Vec<_>>());
+        }
 
         drop(settings);
-        drop(osc_configs);
-
 
         self.check_and_reset_coin_game().await?;
 
@@ -341,15 +349,16 @@ impl RedeemManager {
     }
 
     async fn check_and_reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
-        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
-        let is_live = self.api_client.is_stream_live(&broadcaster_id).await?;
+        let broadcaster_id = api_client.get_broadcaster_id().await?;
+        let is_live = api_client.is_stream_live(&broadcaster_id).await?;
 
         if state.is_active && is_live {
             // Reset price to default and refund any pending redeems
             state.current_price = state.default_price;
             if let Some((redemption, _)) = &state.current_redeemer {
-                self.api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
+               api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
             }
             state.current_redeemer = None;
             state.previous_redeemer = None;
@@ -357,7 +366,7 @@ impl RedeemManager {
             // Update the reward on Twitch
             let reward_id = self.get_coin_game_reward_id().await?;
             let initial_message = "The Coin Game has been reset! Who will be the first to join?";
-            self.api_client.update_custom_reward(
+            api_client.update_custom_reward(
                 &reward_id,
                 "Coin Game",
                 state.default_price,
@@ -378,9 +387,10 @@ impl RedeemManager {
 
     async fn sync_configured_rewards(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Syncing configured rewards");
+        let api_client = self.twitch_manager.get_api_client();
         let mut settings = self.redeem_settings.write().await;
-        let existing_redeems = self.api_client.get_channel_point_rewards().await?;
-        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        let existing_redeems = api_client.get_channel_point_rewards().await?;
+        let broadcaster_id = api_client.get_broadcaster_id().await?;
 
         for redeem_setting in settings.values_mut() {
             info!("Processing redeem: {}", redeem_setting.title);
@@ -403,7 +413,7 @@ impl RedeemManager {
                             existing_reward.max_per_stream.is_some() != limit_per_stream.is_some() ||
                             existing_reward.max_per_user_per_stream.is_some() != limit_per_user.is_some() {
                             info!("Updating existing reward: {}", redeem_setting.title);
-                            if let Err(e) = self.api_client.update_custom_reward(
+                            if let Err(e) = api_client.update_custom_reward(
                                 &existing_reward.id,
                                 &redeem_setting.title,
                                 redeem_setting.cost,
@@ -422,7 +432,7 @@ impl RedeemManager {
                         // Create new reward
                         info!("Creating new reward: {}", redeem_setting.title);
                         let (cooldown, _, _) = redeem_setting.get_cooldown_settings();
-                        match self.api_client.create_custom_reward(
+                        match api_client.create_custom_reward(
                             &redeem_setting.title,
                             redeem_setting.cost,
                             true, // is_enabled
@@ -441,7 +451,7 @@ impl RedeemManager {
                 // Delete the reward if it exists (either it shouldn't be active or is_active is false)
                 if let Some(existing_reward) = existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
                     info!("Deleting inactive reward: {}", redeem_setting.title);
-                    match self.api_client.delete_custom_reward(&broadcaster_id, &existing_reward.id).await {
+                    match api_client.delete_custom_reward(&broadcaster_id, &existing_reward.id).await {
                         Ok(_) => {
                             info!("Successfully deleted reward: {}", redeem_setting.title);
                             redeem_setting.twitch_reward_id = None;
@@ -494,9 +504,10 @@ impl RedeemManager {
 
     async fn update_redeem_availabilities(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Updating redeem availabilities");
+        let api_client = self.twitch_manager.get_api_client();
         let settings = self.redeem_settings.read().await;
         let stream_status = self.stream_status.read().await;
-        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        let broadcaster_id = api_client.get_broadcaster_id().await?;
 
         for (_, redeem_setting) in settings.iter() {
             if !redeem_setting.is_active {
@@ -516,12 +527,12 @@ impl RedeemManager {
                 redeem_setting.enabled_offline
             };
 
-            match channel_points::get_custom_reward(&self.api_client, &broadcaster_id, &redeem_setting.title).await {
+            match channel_points::get_custom_reward(&api_client, &broadcaster_id, &redeem_setting.title).await {
                 Ok(reward) => {
                     let reward_data = reward["data"][0].as_object().unwrap();
                     if reward_data["is_enabled"].as_bool().unwrap() != should_be_enabled {
                         info!("Updating redeem status on Twitch: {}. Enabled: {}", redeem_setting.title, should_be_enabled);
-                        self.api_client.update_custom_reward(
+                        api_client.update_custom_reward(
                             reward_data["id"].as_str().unwrap(),
                             &redeem_setting.title,
                             redeem_setting.cost,
@@ -544,6 +555,7 @@ impl RedeemManager {
     }
 
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
         state.is_active = true;
         state.current_price = state.default_price;
@@ -552,7 +564,7 @@ impl RedeemManager {
 
         let reward_id = self.get_coin_game_reward_id().await?;
         let initial_message = "The stream is live! The Coin Game has begun!";
-        self.api_client.update_custom_reward(
+        api_client.update_custom_reward(
             &reward_id,
             "Coin Game",
             state.default_price,
@@ -571,11 +583,12 @@ impl RedeemManager {
     }
 
     pub async fn handle_stream_offline(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
 
         // Refund the final redeemer if exists
         if let Some((redemption, _)) = &state.current_redeemer {
-            self.api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
+            api_client.refund_channel_points(&redemption.reward_id, &redemption.id).await?;
         }
 
         state.is_active = false;
@@ -583,7 +596,7 @@ impl RedeemManager {
         state.previous_redeemer = None;
 
         let reward_id = self.get_coin_game_reward_id().await?;
-        self.api_client.update_custom_reward(
+        api_client.update_custom_reward(
             &reward_id,
             "Coin Game",
             state.default_price,

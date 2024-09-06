@@ -1,12 +1,10 @@
 use crate::twitch::irc::command_system::{Command, CommandContext};
 use crate::twitch::roles::UserRole;
-use crate::twitch::api::requests::shoutout::send_shoutout;
 use crate::ai::AIClient;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
-use log::{error, info, debug};
+use log::{error};
 use crate::twitch::TwitchManager;
 
 pub const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
@@ -22,6 +20,12 @@ pub struct ShoutoutCooldown {
     global: Instant,
     per_user: HashMap<String, Instant>,
     queue: VecDeque<ShoutoutQueueItem>,
+}
+
+impl Default for ShoutoutCooldown {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ShoutoutCooldown {

@@ -57,6 +57,34 @@ pub struct Config {
     pub obs_manager: OBSManagerConfig,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            twitch_bot_username: None,
+            twitch_user_id: None,
+            twitch_channel_to_join: None,
+            twitch_client_id: None,
+            twitch_client_secret: None,
+            twitch_bot_oauth_token: None,
+            twitch_broadcaster_oauth_token: None,
+            twitch_access_token: None,
+            twitch_refresh_token: None,
+            vrchat_auth_cookie: None,
+            discord_token: None,
+            discord_client_id: None,
+            discord_guild_id: None,
+            openai_secret: None,
+            anthropic_secret: None,
+            log_level: log::LevelFilter::Info,
+            web_ui_host: None,
+            web_ui_port: None,
+            additional_streams: vec![],
+            social_links: SocialLinks::default(),
+            obs_manager: OBSManagerConfig::default(),
+        }
+    }
+}
+
 fn default_additional_streams() -> Vec<String> {
     vec!["".to_string(); 4]
 }

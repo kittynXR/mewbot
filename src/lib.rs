@@ -21,7 +21,6 @@ use std::time::Duration;
 use log::{error, info, warn};
 use tokio::task::JoinHandle;
 use crate::discord::UserLinks;
-use crate::osc::VRChatOSC;
 use crate::osc::{OSCManager};
 use crate::storage::StorageClient;
 use crate::web_ui::websocket::{DashboardState};
@@ -36,7 +35,7 @@ pub struct BotClients {
     pub obs: Option<Arc<OBSManager>>,
     pub discord: Option<Arc<discord::DiscordClient>>,
     pub ai_client: Option<Arc<AIClient>>,
-    pub vrchat_osc: Option<Arc<VRChatOSC>>,
+    pub osc_manager: Arc<OSCManager>,
     pub storage: Arc<RwLock<StorageClient>>,
     pub bot_status: Arc<RwLock<BotStatus>>,
     pub dashboard_state: Arc<RwLock<DashboardState>>,
@@ -124,16 +123,13 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     let osc_manager = match OSCManager::new("127.0.0.1:9000").await {
         Ok(manager) => {
             info!("OSCManager initialized successfully.");
-            Some(Arc::new(manager))
+            Arc::new(manager)
         }
         Err(e) => {
             error!("Failed to initialize OSCManager: {}. OSC functionality will be disabled.", e);
-            None
+            return Err(Box::new(e));
         }
     };
-
-    // Then, get the VRChatOSC instance from the OSCManager:
-    let vrchat_osc = osc_manager.as_ref().map(|manager| manager.get_vrchat_osc());
 
     let storage = Arc::new(RwLock::new(StorageClient::new("mewbot_data.db")?));
     let user_links = Arc::new(UserLinks::new());
@@ -186,29 +182,31 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         Arc::new(VRChatManager::new(
             Arc::clone(vrchat_client),
             dashboard_state.clone(),
-            osc_manager.clone(),
+            Some(osc_manager.clone()),  // Wrap in Some()
         ))
     });
 
     let config = Arc::new(config.read().await.clone());
 
-    let twitch_manager = Arc::new(TwitchManager::new(
-        config.clone(),
+    let mut twitch_manager = TwitchManager::new(
+        config,
         storage.clone(),
         ai_client.clone(),
-        vrchat_osc.clone(),
-        user_links.clone(),
+        osc_manager.clone(),
+        user_links,
         dashboard_state.clone(),
         websocket_tx.clone(),
-    ).await?);
+    ).await?;
+
+    twitch_manager.initialize().await?;
 
     let clients = BotClients {
-        twitch_manager: twitch_manager.clone(),
+        twitch_manager: twitch_manager.clone().into(),
         vrchat: vrchat_manager,
         obs: Some(obs_manager),
         discord,
         ai_client,
-        vrchat_osc,
+        osc_manager,
         storage,
         bot_status,
         dashboard_state,
@@ -262,8 +260,8 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     });
 
     info!("Initializing channel point redeems...");
-    if let Err(e) = clients.twitch_manager.redeem_manager.write().await.initialize_redeems().await {
-        error!("Failed to initialize channel point redeems: {}. Some redeems may not be available.", e);
+    if let Some(redeem_manager) = clients.twitch_manager.redeem_manager.write().await.as_mut() {
+        redeem_manager.initialize_redeems().await?;
     }
 
     info!("Setting up Twitch IRC message handling...");

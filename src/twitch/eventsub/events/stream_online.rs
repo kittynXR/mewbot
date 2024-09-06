@@ -20,7 +20,9 @@ pub async fn handle(
 
         let game_name = payload["category_name"].as_str().unwrap_or("").to_string();
 
-        twitch_manager.get_redeem_manager().write().await.handle_stream_online(game_name).await?;
+        if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
+            redeem_manager.handle_stream_online(game_name).await?;
+        }
 
         info!("Stream is now live");
     }

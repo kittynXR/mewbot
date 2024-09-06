@@ -9,6 +9,15 @@ pub struct TwitchBotClient {
     manager: Arc<TwitchIRCManager>,
 }
 
+impl Default for TwitchBotClient {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            manager: Arc::new(TwitchIRCManager::default()),
+        }
+    }
+}
+
 impl TwitchBotClient {
     pub fn new(username: String, manager: Arc<TwitchIRCManager>) -> Self {
         TwitchBotClient { username, manager }

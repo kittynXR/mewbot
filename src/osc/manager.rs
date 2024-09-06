@@ -14,6 +14,18 @@ pub struct OSCManager {
     last_reconnect_attempt: Arc<RwLock<Instant>>,
 }
 
+impl Default for OSCManager {
+    fn default() -> Self {
+        let client = Arc::new(RwLock::new(OSCClient::default()));
+        Self {
+            client: client.clone(),
+            vrchat_osc: Arc::new(VRChatOSC::new(client)),
+            connection_status: Arc::new(RwLock::new(false)),
+            last_reconnect_attempt: Arc::new(RwLock::new(Instant::now())),
+        }
+    }
+}
+
 impl OSCManager {
     pub async fn new(target_addr: &str) -> Result<Self, OSCError> {
         let client = Arc::new(RwLock::new(OSCClient::new(target_addr).await?));

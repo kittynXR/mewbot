@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::{error, info};
+use log::{error, info, debug};
 use crate::twitch::TwitchManager;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
@@ -14,6 +14,8 @@ pub async fn handle(
         let message = payload["message"].as_str().unwrap_or("");
         let cumulative_months = payload["cumulative_months"].as_u64().unwrap_or(0);
 
+        debug!("Received resub event: {} ({} months)", user_name, cumulative_months);
+
         // Create OSC config for resubscribers
         let osc_config = OSCConfig {
             uses_osc: true,
@@ -25,22 +27,32 @@ pub async fn handle(
             send_chat_message: false,
         };
 
-        // Send OSC message
-        match twitch_manager.get_vrchat_osc() {
-            Some(vrchat_osc) => {
-                if let Err(e) = vrchat_osc.send_osc_message_with_reset(&osc_config).await {
-                    error!("Failed to send OSC message for resubscriber: {}", e);
+        // Send OSC message using the OSCManager
+        let osc_manager = twitch_manager.get_osc_manager();
+        match osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.osc_value).await {
+            Ok(_) => {
+                debug!("Successfully sent OSC message for resub event");
+                // Reset the OSC value after the execution duration
+                if let Some(duration) = osc_config.execution_duration {
+                    tokio::time::sleep(duration).await;
+                    if let Err(e) = osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.default_value).await {
+                        error!("Failed to reset OSC value for resub event: {}", e);
+                    }
                 }
             },
-            None => {
-                error!("VRChatOSC instance not available for resub event");
-            }
+            Err(e) => error!("Failed to send OSC message for resub event: {}", e),
         }
 
         let response = format!("Thank you {} for {} months of support! They said: {}", user_name, cumulative_months, message);
-        twitch_manager.send_message_as_bot(channel, &response).await?;
+        if let Err(e) = twitch_manager.send_message_as_bot(channel, &response).await {
+            error!("Failed to send thank you message to chat: {}", e);
+        } else {
+            debug!("Successfully sent thank you message to chat");
+        }
 
         info!("Processed resub event for {} ({} months)", user_name, cumulative_months);
+    } else {
+        error!("Invalid event payload structure");
     }
 
     Ok(())

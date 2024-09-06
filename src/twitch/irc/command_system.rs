@@ -21,7 +21,7 @@ pub struct CommandContext {
     pub channel: String,
     pub twitch_manager: Arc<TwitchManager>,
     pub world_info: Arc<Mutex<Option<World>>>,
-    pub redeem_manager: Arc<RwLock<RedeemManager>>,
+    pub redeem_manager: Arc<RwLock<Option<RedeemManager>>>,
     pub storage: Arc<RwLock<StorageClient>>,
     pub user_links: Arc<UserLinks>,
     pub config: Arc<RwLock<Config>>,

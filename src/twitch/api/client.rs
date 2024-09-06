@@ -57,6 +57,17 @@ pub struct TwitchAPIClient {
     initialized: Arc<AtomicBool>,
 }
 
+impl Default for TwitchAPIClient {
+    fn default() -> Self {
+        Self {
+            config: Arc::new(Config::default()),
+            token: Arc::new(Mutex::new(None)),
+            client: Client::new(),
+            initialized: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 impl TwitchAPIClient {
     pub async fn new(config: Arc<Config>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let client = Client::new();
