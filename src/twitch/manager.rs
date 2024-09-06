@@ -274,11 +274,17 @@ pub struct TwitchManager {
     pub ai_client: Option<Arc<AIClient>>,
     pub shoutout_cooldowns: Arc<Mutex<ShoutoutCooldown>>,
     shoutout_sender: mpsc::Sender<(String, String)>,
+    shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
+
 }
+
 
 impl Default for TwitchManager {
     fn default() -> Self {
+        let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
+        let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
+
         Self {
             config: Arc::new(Config::default()),
             api_client: Arc::new(TwitchAPIClient::default()),
@@ -294,7 +300,8 @@ impl Default for TwitchManager {
             osc_configs: Arc::new(RwLock::new(OSCConfigurations::default())),
             ai_client: None,
             shoutout_cooldowns: Arc::new(Mutex::new(ShoutoutCooldown::default())),
-            shoutout_sender: mpsc::channel(1).0,
+            shoutout_sender,
+            shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::default())),
         }
     }
@@ -351,7 +358,8 @@ impl TwitchManager {
         let user_manager = UserManager::new(api_client.clone());
 
         let shoutout_cooldowns = Arc::new(Mutex::new(ShoutoutCooldown::new()));
-        let (shoutout_sender, _shoutout_receiver) = mpsc::channel(100);
+        let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
+        let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
@@ -369,8 +377,11 @@ impl TwitchManager {
             ai_client: ai_client.clone(),
             shoutout_cooldowns,
             shoutout_sender,
+            shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::new())),
         });
+
+        twitch_manager.start_shoutout_processing();
 
         // Initialize RedeemManager
         let redeem_manager = RedeemManager::new(
@@ -581,39 +592,54 @@ impl TwitchManager {
 
     pub async fn queue_shoutout(&self, user_id: String, username: String) {
         info!("Queueing shoutout for user: {} (ID: {})", username, user_id);
-        let mut cooldowns = self.shoutout_cooldowns.lock().await;
-        cooldowns.enqueue(user_id, username);
+        if let Err(e) = self.shoutout_sender.send((user_id, username)).await {
+            error!("Failed to send shoutout to processing queue: {:?}", e);
+        }
     }
 
     async fn process_shoutout_queue(&self) {
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let (user_id, username) = {
+                let mut receiver = self.shoutout_receiver.lock().await;
+                match receiver.recv().await {
+                    Some(item) => item,
+                    None => {
+                        error!("Shoutout channel closed unexpectedly");
+                        return;
+                    }
+                }
+            };
 
-            let mut cooldowns = self.shoutout_cooldowns.lock().await;
-            if let Some(item) = cooldowns.dequeue() {
-                if cooldowns.can_shoutout(&item.user_id) {
-                    drop(cooldowns);
+            let can_shoutout = {
+                let cooldowns = self.shoutout_cooldowns.lock().await;
+                cooldowns.can_shoutout(&user_id)
+            };
 
-                    if self.is_stream_live().await {
-                        match self.execute_api_shoutout(&item.user_id).await {
-                            Ok(_) => {
-                                info!("Successfully executed API shoutout for {}", item.username);
-                                let mut cooldowns = self.shoutout_cooldowns.lock().await;
-                                cooldowns.update_cooldowns(&item.user_id);
-                            }
-                            Err(e) => {
-                                error!("Failed to execute API shoutout for {}: {:?}", item.username, e);
-                                // Optionally, re-queue the shoutout
-                                self.queue_shoutout(item.user_id, item.username).await;
-                            }
+            if can_shoutout {
+                if self.is_stream_live().await {
+                    match self.execute_api_shoutout(&user_id).await {
+                        Ok(_) => {
+                            info!("Successfully executed API shoutout for {}", username);
+                            let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                            cooldowns.update_cooldowns(&user_id);
                         }
-                    } else {
-                        info!("Stream is offline. Skipping API shoutout for {}.", item.username);
+                        Err(e) => {
+                            error!("Failed to execute API shoutout for {}: {:?}", username, e);
+                            // Re-queue with a delay to prevent immediate retry
+                            tokio::time::sleep(Duration::from_secs(60)).await;
+                            self.queue_shoutout(user_id, username).await;
+                        }
                     }
                 } else {
-                    // If cooldown hasn't elapsed, put it back in the queue
-                    cooldowns.enqueue(item.user_id, item.username);
+                    info!("Stream is offline. Skipping API shoutout for {}.", username);
+                    // Re-queue with a delay
+                    tokio::time::sleep(Duration::from_secs(300)).await;
+                    self.queue_shoutout(user_id, username).await;
                 }
+            } else {
+                // If cooldown hasn't elapsed, put it back in the queue with a delay
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                self.queue_shoutout(user_id, username).await;
             }
         }
     }
@@ -645,6 +671,13 @@ impl TwitchManager {
         }
 
         Err("Failed to send shoutout after multiple attempts".into())
+    }
+
+    pub fn start_shoutout_processing(&self) {
+        let twitch_manager = self.clone();
+        tokio::spawn(async move {
+            twitch_manager.process_shoutout_queue().await;
+        });
     }
 
     pub async fn update_streamer_data(&self, user_id: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
