@@ -11,10 +11,13 @@ pub async fn handle(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let user_name = payload["user_name"].as_str().unwrap_or("Unknown");
-        let message = payload["message"].as_str().unwrap_or("");
+
+        // Correctly extract the message
+        let message = payload["message"].get("text").and_then(Value::as_str).unwrap_or("");
+
         let cumulative_months = payload["cumulative_months"].as_u64().unwrap_or(0);
 
-        debug!("Received resub event: {} ({} months)", user_name, cumulative_months);
+        debug!("Received resub event: {} ({} months), message: '{}'", user_name, cumulative_months, message);
 
         // Create OSC config for resubscribers
         let osc_config = OSCConfig {
@@ -43,11 +46,16 @@ pub async fn handle(
             Err(e) => error!("Failed to send OSC message for resub event: {}", e),
         }
 
-        let response = format!("Thank you {} for {} months of support! They said: {}", user_name, cumulative_months, message);
+        let response = if !message.is_empty() {
+            format!("Thank you {} for {} months of support! They said: {}", user_name, cumulative_months, message)
+        } else {
+            format!("Thank you {} for {} months of support!", user_name, cumulative_months)
+        };
+
         if let Err(e) = twitch_manager.send_message_as_bot(channel, &response).await {
             error!("Failed to send thank you message to chat: {}", e);
         } else {
-            debug!("Successfully sent thank you message to chat");
+            debug!("Successfully sent thank you message to chat: {}", response);
         }
 
         info!("Processed resub event for {} ({} months)", user_name, cumulative_months);

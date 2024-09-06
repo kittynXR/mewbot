@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::{error, info, debug};
+use log::{error, info, debug, warn};
 use crate::twitch::TwitchManager;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
@@ -11,7 +11,15 @@ pub async fn handle(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let user_name = payload["user_name"].as_str().unwrap_or("Anonymous");
-        let bits_used = payload["bits_used"].as_i64().unwrap_or(0) as i32;
+
+        // More robust extraction of bits_used
+        let bits_used = match payload["bits"].as_u64() {
+            Some(bits) => bits,
+            None => {
+                warn!("Failed to extract bits amount from payload: {:?}", payload);
+                return Ok(());  // Exit early if we can't get the bits amount
+            }
+        };
 
         debug!("Received bits event: {} bits from {}", bits_used, user_name);
 
@@ -32,7 +40,7 @@ pub async fn handle(
             uses_osc: true,
             osc_endpoint: "/avatar/parameters/twitch".to_string(),
             osc_type: OSCMessageType::Integer,
-            osc_value: OSCValue::Integer(osc_value),
+            osc_value: OSCValue::Integer(osc_value as i32),
             default_value: OSCValue::Integer(0),
             execution_duration: Some(std::time::Duration::from_secs(1)),
             send_chat_message: false,
@@ -56,9 +64,10 @@ pub async fn handle(
 
         // Send chat message
         let message = format!("Thank you {} for the {} bits!", user_name, bits_used);
-        match twitch_manager.send_message_as_bot(channel, &message).await {
-            Ok(_) => debug!("Successfully sent thank you message to chat"),
-            Err(e) => error!("Failed to send thank you message to chat: {}", e),
+        if let Err(e) = twitch_manager.send_message_as_bot(channel, &message).await {
+            error!("Failed to send thank you message to chat: {}", e);
+        } else {
+            debug!("Successfully sent thank you message to chat: {}", message);
         }
 
         info!("Processed bit cheer event for {} bits from {}", bits_used, user_name);

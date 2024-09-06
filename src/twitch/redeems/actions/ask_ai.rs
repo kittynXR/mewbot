@@ -17,7 +17,7 @@ impl AskAIAction {
 impl RedeemHandler for AskAIAction {
     async fn handle(&self, redemption: &Redemption) -> RedemptionResult {
         let base_prompt = "You are an entertaining chatbot. Your owner is the cute and funny catgirl named kittyn. \
-                           Answer questions humorously and in a playful manner. \
+                           Answer questions humorously and in a playful manner, but try not to be too cringe. \
                            We live on Twitch in a cozy but high-tech corner of the metaverse. \
                            Be friendly and love chat. ";
 
