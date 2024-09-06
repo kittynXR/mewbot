@@ -188,7 +188,7 @@ pub async fn update_dashboard_state(
             _ = interval.tick() => {
                 debug!("Tick: Preparing to update dashboard state");
                 if let Err(e) = send_dashboard_update(&state).await {
-                    error!("Failed to send dashboard update: {:?}", e);
+                    debug!("Failed to send dashboard update: {:?}", e);
                 }
             }
             _ = &mut shutdown_rx => {
