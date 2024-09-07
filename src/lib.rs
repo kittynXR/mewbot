@@ -8,6 +8,7 @@ pub mod storage;
 pub mod web_ui;
 mod bot_status;
 pub mod obs;
+pub mod stream_status;
 
 use bot_status::BotStatus;
 use std::sync::Arc;

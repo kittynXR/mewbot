@@ -15,7 +15,7 @@ pub async fn handle(
         let message = format!("{} has gone live! Stream started at {}. Come join the fun!", broadcaster_user_name, started_at);
         twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
 
-        // Update stream status using TwitchManager
+        // Update stream status using StreamStatusManager
         twitch_manager.set_stream_live(true).await;
 
         let game_name = payload["category_name"].as_str().unwrap_or("").to_string();

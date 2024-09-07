@@ -3,13 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use crate::ai::AIClient;
 use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
-
+use crate::stream_status::StreamStatusManager;
 
 pub struct RedeemManager {
     twitch_manager: Arc<TwitchManager>,
@@ -17,6 +17,7 @@ pub struct RedeemManager {
     coin_game_state: Arc<RwLock<CoinGameState>>,
     stream_status: Arc<RwLock<StreamStatus>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
+    stream_status_receiver: Option<broadcast::Receiver<bool>>,
 }
 
 impl Default for RedeemManager {
@@ -27,6 +28,7 @@ impl Default for RedeemManager {
             coin_game_state: Arc::new(RwLock::new(CoinGameState::new(20))),
             stream_status: Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() })),
             redeem_settings: Arc::new(RwLock::new(HashMap::new())),
+            stream_status_receiver: None,
         }
     }
 }
@@ -45,6 +47,7 @@ impl RedeemManager {
         twitch_manager: Arc<TwitchManager>,
         ai_client: Arc<AIClient>,
     ) -> Self {
+        let stream_status_receiver = Some(twitch_manager.stream_status_manager.subscribe());
         let coin_game_state = Arc::new(RwLock::new(CoinGameState::new(20)));
         let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
@@ -60,13 +63,18 @@ impl RedeemManager {
         handlers.insert("cat trap".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("snowball".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
 
-        Self {
+        let mut redeem_manager = Self {
             twitch_manager,
             handlers,
             coin_game_state,
             stream_status,
             redeem_settings,
-        }
+            stream_status_receiver,
+        };
+
+        redeem_manager.start_stream_status_listener();
+
+        redeem_manager
     }
 
     pub async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -552,6 +560,28 @@ impl RedeemManager {
 
         info!("Finished updating redeem availabilities");
         Ok(())
+    }
+
+    fn start_stream_status_listener(&mut self) {
+        if let Some(receiver) = self.stream_status_receiver.take() {
+            let twitch_manager = self.twitch_manager.clone();
+            tokio::spawn(async move {
+                let mut receiver = receiver;
+                while let Ok(is_live) = receiver.recv().await {
+                    if let Err(e) = twitch_manager.handle_stream_status_change(is_live).await {
+                        error!("Failed to handle stream status change: {}", e);
+                    }
+                }
+            });
+        }
+    }
+
+    async fn handle_stream_status_change(&mut self, is_live: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if is_live {
+            self.handle_stream_online("".to_string()).await
+        } else {
+            self.handle_stream_offline().await
+        }
     }
 
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

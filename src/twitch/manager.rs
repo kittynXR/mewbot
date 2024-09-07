@@ -25,6 +25,7 @@ use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
+use crate::stream_status::StreamStatusManager;
 use crate::twitch::api::client::TwitchAPIError;
 use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS};
 
@@ -277,6 +278,7 @@ pub struct TwitchManager {
     shoutout_sender: mpsc::Sender<(String, String)>,
     shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
+    pub stream_status_manager: Arc<StreamStatusManager>,
 
 }
 
@@ -304,6 +306,7 @@ impl Default for TwitchManager {
             shoutout_sender,
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::default())),
+            stream_status_manager: StreamStatusManager::new(),
         }
     }
 }
@@ -362,6 +365,8 @@ impl TwitchManager {
         let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
         let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
+        let stream_status_manager = StreamStatusManager::new();
+
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
             api_client: api_client.clone(),
@@ -380,6 +385,7 @@ impl TwitchManager {
             shoutout_sender,
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::new())),
+            stream_status_manager,
         });
 
         twitch_manager.start_shoutout_processing();
@@ -501,16 +507,27 @@ impl TwitchManager {
         Ok(())
     }
 
-    pub async fn is_stream_live(&self) -> bool {
-        *self.stream_status.read().await
+    pub async fn set_stream_live(&self, is_live: bool) {
+        self.stream_status_manager.set_stream_live(is_live).await;
     }
 
-    pub async fn set_stream_live(&self, is_live: bool) {
-        *self.stream_status.write().await = is_live;
-        // self.redeem_manager.write().await.set_stream_live(is_live).await.unwrap_or_else(|e| {
-        //     error!("Failed to set stream status in redeem manager: {}", e);
-        // });
+    pub async fn is_stream_live(&self) -> bool {
+        self.stream_status_manager.is_stream_live().await
     }
+
+    pub async fn handle_stream_status_change(&self, is_live: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if is_live {
+            if let Some(redeem_manager) = self.get_redeem_manager().write().await.as_mut() {
+                redeem_manager.handle_stream_online("".to_string()).await?;
+            }
+        } else {
+            if let Some(redeem_manager) = self.get_redeem_manager().write().await.as_mut() {
+                redeem_manager.handle_stream_offline().await?;
+            }
+        }
+        Ok(())
+    }
+
 
     pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn std::error::Error + Send + Sync>> {
         self.user_manager.get_user(user_id).await
