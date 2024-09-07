@@ -17,10 +17,9 @@ pub struct ShoutoutQueueItem {
 }
 
 pub struct ShoutoutCooldown {
-    global: Instant,
+    last_global_shoutout: Instant,
     per_user: HashMap<String, Instant>,
     queue: VecDeque<ShoutoutQueueItem>,
-    last_attempt: Instant,
 }
 
 impl Default for ShoutoutCooldown {
@@ -32,30 +31,20 @@ impl Default for ShoutoutCooldown {
 impl ShoutoutCooldown {
     pub fn new() -> Self {
         Self {
-            global: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
+            last_global_shoutout: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
             per_user: HashMap::new(),
             queue: VecDeque::new(),
-            last_attempt: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
         }
     }
 
-    pub fn can_shoutout(&self, user_id: &str) -> bool {
-        let now = Instant::now();
-        now.duration_since(self.global) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS) &&
-            now.duration_since(self.last_attempt) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS) &&
-            self.per_user.get(user_id)
-                .map_or(true, |&last_use| now.duration_since(last_use) >= Duration::from_secs(USER_COOLDOWN_SECONDS))
+    pub fn can_shoutout(&self) -> bool {
+        Instant::now().duration_since(self.last_global_shoutout) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)
     }
 
     pub fn update_cooldowns(&mut self, user_id: &str) {
         let now = Instant::now();
-        self.global = now;
-        self.last_attempt = now;
+        self.last_global_shoutout = now;
         self.per_user.insert(user_id.to_string(), now);
-    }
-
-    pub fn update_last_attempt(&mut self) {
-        self.last_attempt = Instant::now();
     }
 
     pub fn enqueue(&mut self, user_id: String, username: String) {
@@ -68,6 +57,14 @@ impl ShoutoutCooldown {
 
     pub fn dequeue(&mut self) -> Option<ShoutoutQueueItem> {
         self.queue.pop_front()
+    }
+
+    pub fn requeue(&mut self, item: ShoutoutQueueItem) {
+        self.queue.push_front(item);
+    }
+
+    pub fn remove(&mut self, user_id: &str) {
+        self.queue.retain(|item| item.user_id != user_id);
     }
 }
 

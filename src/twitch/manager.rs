@@ -588,85 +588,59 @@ impl TwitchManager {
 
     pub async fn queue_shoutout(&self, user_id: String, username: String) {
         info!("Queueing shoutout for user: {} (ID: {})", username, user_id);
-        if let Err(e) = self.shoutout_sender.send((user_id, username)).await {
-            error!("Failed to send shoutout to processing queue: {:?}", e);
-        }
+        let mut cooldowns = self.shoutout_cooldowns.lock().await;
+        cooldowns.enqueue(user_id, username);
     }
 
-    async fn process_shoutout_queue(&self) {
+    pub async fn process_shoutout_queue(&self) {
         loop {
-            let (user_id, username) = {
-                let mut receiver = self.shoutout_receiver.lock().await;
-                match receiver.recv().await {
-                    Some(item) => item,
-                    None => {
-                        error!("Shoutout channel closed unexpectedly");
-                        return;
-                    }
-                }
+            let can_shoutout = {
+                let cooldowns = self.shoutout_cooldowns.lock().await;
+                cooldowns.can_shoutout()
             };
 
-            loop {
-                let can_shoutout = {
-                    let cooldowns = self.shoutout_cooldowns.lock().await;
-                    cooldowns.can_shoutout(&user_id)
+            if can_shoutout {
+                let item = {
+                    let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                    cooldowns.dequeue()
                 };
 
-                if can_shoutout {
+                if let Some(item) = item {
                     if self.is_stream_live().await {
-                        match self.execute_api_shoutout(&user_id).await {
+                        match self.execute_api_shoutout(&item.user_id).await {
                             Ok(_) => {
-                                info!("Successfully executed API shoutout for {}", username);
-                                let mut cooldowns = self.shoutout_cooldowns.lock().await;
-                                cooldowns.update_cooldowns(&user_id);
-                                break;
+                                info!("API shoutout request sent for {}", item.username);
                             }
                             Err(e) => {
-                                error!("Failed to execute API shoutout for {}: {:?}", username, e);
-                                // Update last attempt time and wait before retrying
+                                error!("Failed to execute API shoutout for {}: {:?}", item.username, e);
                                 let mut cooldowns = self.shoutout_cooldowns.lock().await;
-                                cooldowns.update_last_attempt();
-                                drop(cooldowns);
-                                tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
+                                cooldowns.requeue(item);
                             }
                         }
                     } else {
-                        info!("Stream is offline. Skipping API shoutout for {}.", username);
-                        // Re-queue with a delay
-                        tokio::time::sleep(Duration::from_secs(300)).await;
-                        self.queue_shoutout(user_id, username).await;
-                        break;
+                        info!("Stream is offline. Skipping API shoutout for {}.", item.username);
+                        let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                        cooldowns.requeue(item);
                     }
-                } else {
-                    // Wait until the cooldown has elapsed
-                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             }
+
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     }
 
     async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        info!("Executing API shoutout for user ID: {}", user_id);
+        info!("Sending API shoutout request for user ID: {}", user_id);
         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await
+            .map_err(|e| Box::new(e) as Box<dyn StdError + Send + Sync>)
+    }
 
-        info!("Sending shoutout: broadcaster_id={}, user_id={}, moderator_id={}", broadcaster_id, user_id, broadcaster_id);
-
-        match self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await {
-            Ok(_) => {
-                info!("Shoutout sent successfully");
-                Ok(())
-            },
-            Err(e) => {
-                // Check if the error is due to the shoutout already being sent
-                if let TwitchAPIError::APIError { status, message } = &e {
-                    if *status == 429 || message.contains("cooldown period") {
-                        info!("Shoutout was likely already sent or on cooldown. Treating as success.");
-                        return Ok(());
-                    }
-                }
-                Err(Box::new(e))
-            }
-        }
+    pub async fn handle_shoutout_create_event(&self, to_broadcaster_user_id: &str) {
+        info!("Received shoutout.create event for user ID: {}", to_broadcaster_user_id);
+        let mut cooldowns = self.shoutout_cooldowns.lock().await;
+        cooldowns.remove(to_broadcaster_user_id);
+        cooldowns.update_cooldowns(to_broadcaster_user_id);
     }
 
     pub fn start_shoutout_processing(&self) {

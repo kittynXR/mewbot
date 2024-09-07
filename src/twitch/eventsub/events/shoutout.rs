@@ -9,9 +9,13 @@ pub async fn handle_shoutout_create(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(payload) = event.get("payload").and_then(|p| p.get("event")) {
         let to_broadcaster_user_name = payload["to_broadcaster_user_name"].as_str().unwrap_or("Unknown");
+        let to_broadcaster_user_id = payload["to_broadcaster_user_id"].as_str().unwrap_or("Unknown");
 
         let message = format!("Hey, you should go check out {}! Click the heart at the top of the chatbox ~ it's easy! luv luv", to_broadcaster_user_name);
         twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
+
+        // Handle the successful shoutout in TwitchManager
+        twitch_manager.handle_shoutout_create_event(to_broadcaster_user_id).await;
     }
 
     Ok(())
