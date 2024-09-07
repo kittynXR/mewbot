@@ -609,31 +609,53 @@ impl TwitchManager {
                     if self.is_stream_live().await {
                         match self.execute_api_shoutout(&item.user_id).await {
                             Ok(_) => {
-                                info!("API shoutout request sent for {}", item.username);
+                                info!("API shoutout request processed for {} (ID: {})", item.username, item.user_id);
                             }
                             Err(e) => {
-                                error!("Failed to execute API shoutout for {}: {:?}", item.username, e);
+                                error!("Failed to execute API shoutout for {} (ID: {}): {:?}", item.username, item.user_id, e);
                                 let mut cooldowns = self.shoutout_cooldowns.lock().await;
                                 cooldowns.requeue(item);
                             }
                         }
                     } else {
-                        info!("Stream is offline. Skipping API shoutout for {}.", item.username);
+                        info!("Stream is offline. Skipping API shoutout for {} (ID: {}).", item.username, item.user_id);
                         let mut cooldowns = self.shoutout_cooldowns.lock().await;
                         cooldowns.requeue(item);
                     }
                 }
             }
 
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            sleep(Duration::from_secs(10)).await;
         }
     }
 
     async fn execute_api_shoutout(&self, user_id: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
         info!("Sending API shoutout request for user ID: {}", user_id);
         let broadcaster_id = self.api_client.get_broadcaster_id().await?;
-        self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await
-            .map_err(|e| Box::new(e) as Box<dyn StdError + Send + Sync>)
+        match self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await {
+            Ok(_) => {
+                info!("API shoutout request sent successfully");
+                Ok(())
+            },
+            Err(e) => {
+                match e {
+                    TwitchAPIError::RequestFailed(ref reqwest_err) if reqwest_err.is_decode() => {
+                        // This is likely the "EOF while parsing a value" error
+                        info!("Received EOF error, but treating as potential success");
+                        Ok(())
+                    },
+                    TwitchAPIError::APIError { status, ref message } if status == 429 => {
+                        // Rate limit error, treat as success as the shoutout might have gone through
+                        info!("Received rate limit error (429), treating as potential success. Message: {}", message);
+                        Ok(())
+                    },
+                    _ => {
+                        // For other errors, propagate them
+                        Err(Box::new(e))
+                    }
+                }
+            }
+        }
     }
 
     pub async fn handle_shoutout_create_event(&self, to_broadcaster_user_id: &str) {
