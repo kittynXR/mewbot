@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use log::{error};
 use crate::twitch::TwitchManager;
+use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS, USER_COOLDOWN_SECONDS};
 
-pub const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes
-const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
+
 
 pub struct ShoutoutQueueItem {
     pub(crate) user_id: String,

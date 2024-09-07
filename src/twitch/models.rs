@@ -225,3 +225,8 @@ pub mod followers {
         pub followed_at: String,
     }
 }
+
+pub mod shoutout {
+    pub const GLOBAL_COOLDOWN_SECONDS: u64 = 121; // 2 minutes + 1 second buffer
+    pub const USER_COOLDOWN_SECONDS: u64 = 3600; // 1 hour
+}

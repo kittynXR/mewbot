@@ -13,8 +13,7 @@ use crate::ai::AIClient;
 use crate::config::Config;
 use crate::discord::UserLinks;
 use crate::osc::osc_config::OSCConfigurations;
-use crate::osc::{OSCManager, VRChatOSC};
-use crate::osc::client::OSCClient;
+use crate::osc::{OSCManager};
 use crate::storage::{ChatterData, StorageClient};
 use crate::twitch::{TwitchAPIClient, TwitchIRCManager};
 use crate::twitch::eventsub::TwitchEventSubClient;
@@ -27,6 +26,8 @@ use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
 use crate::twitch::api::client::TwitchAPIError;
+use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS};
+
 
 #[derive(Clone, Debug)]
 pub struct TwitchUser {
@@ -457,28 +458,6 @@ impl TwitchManager {
         Ok(())
     }
 
-
-
-    async fn initialize_vrchat_osc(existing_osc: Option<Arc<VRChatOSC>>) -> Option<Arc<VRChatOSC>> {
-        if let Some(osc) = existing_osc {
-            return Some(osc);
-        }
-
-        match OSCManager::new("127.0.0.1:9000").await {
-            Ok(manager) => Some(manager.get_vrchat_osc()),
-            Err(e) => {
-                error!("Failed to create OSCManager: {:?}", e);
-                match OSCClient::new("127.0.0.1:9000").await {
-                    Ok(client) => Some(Arc::new(VRChatOSC::new(Arc::new(RwLock::new(client))))),
-                    Err(e) => {
-                        error!("Failed to create OSCClient: {:?}", e);
-                        None
-                    }
-                }
-            }
-        }
-    }
-
     async fn initialize_irc_clients(
         config: &Arc<Config>,
         irc_manager: &Arc<TwitchIRCManager>,
@@ -610,36 +589,38 @@ impl TwitchManager {
                 }
             };
 
-            let can_shoutout = {
-                let cooldowns = self.shoutout_cooldowns.lock().await;
-                cooldowns.can_shoutout(&user_id)
-            };
+            loop {
+                let can_shoutout = {
+                    let cooldowns = self.shoutout_cooldowns.lock().await;
+                    cooldowns.can_shoutout(&user_id)
+                };
 
-            if can_shoutout {
-                if self.is_stream_live().await {
-                    match self.execute_api_shoutout(&user_id).await {
-                        Ok(_) => {
-                            info!("Successfully executed API shoutout for {}", username);
-                            let mut cooldowns = self.shoutout_cooldowns.lock().await;
-                            cooldowns.update_cooldowns(&user_id);
+                if can_shoutout {
+                    if self.is_stream_live().await {
+                        match self.execute_api_shoutout(&user_id).await {
+                            Ok(_) => {
+                                info!("Successfully executed API shoutout for {}", username);
+                                let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                                cooldowns.update_cooldowns(&user_id);
+                                break;
+                            }
+                            Err(e) => {
+                                error!("Failed to execute API shoutout for {}: {:?}", username, e);
+                                // Wait for the global cooldown before retrying
+                                tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
+                            }
                         }
-                        Err(e) => {
-                            error!("Failed to execute API shoutout for {}: {:?}", username, e);
-                            // Re-queue with a delay to prevent immediate retry
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                            self.queue_shoutout(user_id, username).await;
-                        }
+                    } else {
+                        info!("Stream is offline. Skipping API shoutout for {}.", username);
+                        // Re-queue with a delay
+                        tokio::time::sleep(Duration::from_secs(300)).await;
+                        self.queue_shoutout(user_id, username).await;
+                        break;
                     }
                 } else {
-                    info!("Stream is offline. Skipping API shoutout for {}.", username);
-                    // Re-queue with a delay
-                    tokio::time::sleep(Duration::from_secs(300)).await;
-                    self.queue_shoutout(user_id, username).await;
+                    // Wait until the cooldown has elapsed
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
-            } else {
-                // If cooldown hasn't elapsed, put it back in the queue with a delay
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                self.queue_shoutout(user_id, username).await;
             }
         }
     }
