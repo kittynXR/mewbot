@@ -27,8 +27,6 @@ use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 use std::fmt::Debug;
 use crate::stream_status::StreamStatusManager;
 use crate::twitch::api::client::TwitchAPIError;
-use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS};
-
 
 #[derive(Clone, Debug)]
 pub struct TwitchUser {
