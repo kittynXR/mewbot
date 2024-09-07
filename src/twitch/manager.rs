@@ -8,7 +8,7 @@ use std::time::{Duration};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use crate::ai::AIClient;
 use crate::config::Config;
 use crate::discord::UserLinks;
@@ -500,10 +500,10 @@ impl TwitchManager {
         Ok(())
     }
 
-    async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub(crate) async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let channel_id = self.api_client.get_broadcaster_id().await?;
         let is_live = self.api_client.is_stream_live(&channel_id).await?;
-        *self.stream_status.write().await = is_live;
+        self.stream_status_manager.set_stream_live(is_live).await;
         Ok(())
     }
 
@@ -623,7 +623,10 @@ impl TwitchManager {
                             }
                             Err(e) => {
                                 error!("Failed to execute API shoutout for {}: {:?}", username, e);
-                                // Wait for the global cooldown before retrying
+                                // Update last attempt time and wait before retrying
+                                let mut cooldowns = self.shoutout_cooldowns.lock().await;
+                                cooldowns.update_last_attempt();
+                                drop(cooldowns);
                                 tokio::time::sleep(Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)).await;
                             }
                         }
@@ -648,27 +651,22 @@ impl TwitchManager {
 
         info!("Sending shoutout: broadcaster_id={}, user_id={}, moderator_id={}", broadcaster_id, user_id, broadcaster_id);
 
-        let max_retries = 3;
-        let mut delay = Duration::from_secs(2);
-
-        for attempt in 1..=max_retries {
-            match self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await {
-                Ok(_) => {
-                    info!("Shoutout sent successfully");
-                    return Ok(());
-                },
-                Err(e) => {
-                    error!("Attempt {} failed to send shoutout: {:?}", attempt, e);
-                    if attempt == max_retries {
-                        return Err(Box::new(e));
+        match self.api_client.send_shoutout(&broadcaster_id, user_id, &broadcaster_id).await {
+            Ok(_) => {
+                info!("Shoutout sent successfully");
+                Ok(())
+            },
+            Err(e) => {
+                // Check if the error is due to the shoutout already being sent
+                if let TwitchAPIError::APIError { status, message } = &e {
+                    if *status == 429 || message.contains("cooldown period") {
+                        info!("Shoutout was likely already sent or on cooldown. Treating as success.");
+                        return Ok(());
                     }
-                    tokio::time::sleep(delay).await;
-                    delay *= 2; // Exponential backoff
                 }
+                Err(Box::new(e))
             }
         }
-
-        Err("Failed to send shoutout after multiple attempts".into())
     }
 
     pub fn start_shoutout_processing(&self) {

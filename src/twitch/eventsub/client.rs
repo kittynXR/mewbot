@@ -50,14 +50,24 @@ impl TwitchEventSubClient {
         twitch_manager: Arc<TwitchManager>,
         osc_configs: Arc<RwLock<OSCConfigurations>>,
     ) -> Self {
-        Self {
+        let client = Self {
             twitch_manager: twitch_manager.clone(),
             http_client: Client::new(),
             ws_tx: Mutex::new(None),
             ws_rx: Mutex::new(None),
             osc_configs,
             config: twitch_manager.config.clone(),
-        }
+        };
+
+        // Check initial stream status
+        let twitch_manager_clone = twitch_manager.clone();
+        tokio::spawn(async move {
+            if let Err(e) = twitch_manager_clone.check_initial_stream_status().await {
+                error!("Failed to check initial stream status: {:?}", e);
+            }
+        });
+
+        client
     }
 
     pub async fn shutdown(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -267,13 +277,14 @@ impl TwitchEventSubClient {
         let stream_info = self.twitch_manager.api_client.get_stream_info(&channel_id).await?;
 
         let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
-        let _game_name = if is_live {
-            stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string()
-        } else {
-            "".to_string()
-        };
 
-        // self.twitch_manager.redeem_manager.write().await.update_stream_status(game_name).await;
+        // Update the stream status using the StreamStatusManager
+        self.twitch_manager.set_stream_live(is_live).await;
+
+        if is_live {
+            let game_name = stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string();
+            // You can use game_name for other purposes if needed
+        }
 
         Ok(())
     }
