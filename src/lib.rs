@@ -10,6 +10,8 @@ mod bot_status;
 pub mod obs;
 pub mod stream_status;
 
+pub mod stream_state;
+
 use bot_status::BotStatus;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};

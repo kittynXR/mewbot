@@ -25,6 +25,7 @@ use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
+use crate::stream_state::{StateTransitionError, StreamStateMachine};
 use crate::stream_status::StreamStatusManager;
 use crate::twitch::api::client::TwitchAPIError;
 
@@ -277,6 +278,7 @@ pub struct TwitchManager {
     shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
     pub stream_status_manager: Arc<StreamStatusManager>,
+    pub stream_state_machine: Arc<StreamStateMachine>,
 
 }
 
@@ -305,6 +307,7 @@ impl Default for TwitchManager {
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::default())),
             stream_status_manager: StreamStatusManager::new(),
+            stream_state_machine: StreamStateMachine::new(),
         }
     }
 }
@@ -364,6 +367,7 @@ impl TwitchManager {
         let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
         let stream_status_manager = StreamStatusManager::new();
+        let stream_state_machine = StreamStateMachine::new();
 
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
@@ -384,6 +388,7 @@ impl TwitchManager {
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::new())),
             stream_status_manager,
+            stream_state_machine,
         });
 
         twitch_manager.start_shoutout_processing();
@@ -505,12 +510,20 @@ impl TwitchManager {
         Ok(())
     }
 
-    pub async fn set_stream_live(&self, is_live: bool) {
-        self.stream_status_manager.set_stream_live(is_live).await;
+    pub async fn set_stream_live(&self, game_name: String) -> Result<(), StateTransitionError> {
+        self.stream_state_machine.set_stream_live(game_name).await
+    }
+
+    pub async fn set_stream_offline(&self) -> Result<(), StateTransitionError> {
+        self.stream_state_machine.set_stream_offline().await
     }
 
     pub async fn is_stream_live(&self) -> bool {
-        self.stream_status_manager.is_stream_live().await
+        self.stream_state_machine.is_stream_live().await
+    }
+
+    pub async fn get_current_game(&self) -> Option<String> {
+        self.stream_state_machine.get_current_game().await
     }
 
     pub async fn handle_stream_status_change(&self, is_live: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

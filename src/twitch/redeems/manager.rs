@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use tokio::sync::{broadcast, RwLock};
 use crate::ai::AIClient;
+use crate::stream_state::StreamState;
 use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
@@ -396,82 +397,57 @@ impl RedeemManager {
     async fn sync_configured_rewards(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Syncing configured rewards");
         let api_client = self.twitch_manager.get_api_client();
-        let mut settings = self.redeem_settings.write().await;
-        let existing_redeems = api_client.get_channel_point_rewards().await?;
+        let settings = self.redeem_settings.read().await;
+        let current_state = self.twitch_manager.stream_state_machine.get_current_state().await;
         let broadcaster_id = api_client.get_broadcaster_id().await?;
 
-        for redeem_setting in settings.values_mut() {
-            info!("Processing redeem: {}", redeem_setting.title);
-            let should_be_active = self.should_redeem_be_active(redeem_setting).await;
-
-            if let Err(e) = redeem_setting.validate_cooldown_settings() {
-                error!("Invalid cooldown settings for {}: {}", redeem_setting.title, e);
+        for (_, redeem_setting) in settings.iter() {
+            if !redeem_setting.is_active {
+                info!("Skipping inactive redeem: {}", redeem_setting.title);
                 continue;
             }
 
-            if should_be_active && redeem_setting.is_active {
-                match existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
-                    Some(existing_reward) => {
-                        let (cooldown, limit_per_stream, limit_per_user) = redeem_setting.get_cooldown_settings();
-                        if existing_reward.cost != redeem_setting.cost ||
-                            !existing_reward.is_enabled ||
-                            existing_reward.is_user_input_required != redeem_setting.user_input_required ||
-                            existing_reward.prompt != redeem_setting.prompt ||
-                            existing_reward.cooldown_seconds != cooldown ||
-                            existing_reward.max_per_stream.is_some() != limit_per_stream.is_some() ||
-                            existing_reward.max_per_user_per_stream.is_some() != limit_per_user.is_some() {
-                            info!("Updating existing reward: {}", redeem_setting.title);
-                            if let Err(e) = api_client.update_custom_reward(
-                                &existing_reward.id,
-                                &redeem_setting.title,
-                                redeem_setting.cost,
-                                true, // is_enabled
-                                cooldown.unwrap_or(0),
-                                &redeem_setting.prompt,
-                                redeem_setting.user_input_required,
-                            ).await {
-                                error!("Failed to update reward {}: {}", redeem_setting.title, e);
-                            } else {
-                                redeem_setting.twitch_reward_id = Some(existing_reward.id.clone());
-                            }
-                        }
-                    },
-                    None => {
-                        // Create new reward
-                        info!("Creating new reward: {}", redeem_setting.title);
-                        let (cooldown, _, _) = redeem_setting.get_cooldown_settings();
-                        match api_client.create_custom_reward(
+            let should_be_enabled = match current_state {
+                StreamState::Live(ref game) => {
+                    if !redeem_setting.disabled_games.is_empty() {
+                        !redeem_setting.disabled_games.contains(game)
+                    } else if !redeem_setting.enabled_games.is_empty() {
+                        redeem_setting.enabled_games.contains(game)
+                    } else {
+                        true
+                    }
+                },
+                StreamState::Offline => redeem_setting.enabled_offline,
+                _ => false, // Disable during transitional states
+            };
+
+            // Update the reward on Twitch
+            match api_client.get_custom_reward(&redeem_setting.title).await {
+                Ok(existing_reward) => {
+                    if existing_reward.is_enabled != should_be_enabled ||
+                        existing_reward.cost != redeem_setting.cost ||
+                        existing_reward.prompt != redeem_setting.prompt {
+                        api_client.update_custom_reward(
+                            &existing_reward.id,
                             &redeem_setting.title,
                             redeem_setting.cost,
-                            true, // is_enabled
-                            cooldown.unwrap_or(0),
+                            should_be_enabled,
+                            redeem_setting.cooldown.unwrap_or(0),
                             &redeem_setting.prompt,
                             redeem_setting.user_input_required,
-                        ).await {
-                            Ok(new_reward) => {
-                                redeem_setting.twitch_reward_id = Some(new_reward.id);
-                            },
-                            Err(e) => error!("Failed to create reward {}: {}", redeem_setting.title, e),
-                        }
+                        ).await?;
                     }
-                }
-            } else {
-                // Delete the reward if it exists (either it shouldn't be active or is_active is false)
-                if let Some(existing_reward) = existing_redeems.iter().find(|r| r.title == redeem_setting.title) {
-                    info!("Deleting inactive reward: {}", redeem_setting.title);
-                    match api_client.delete_custom_reward(&broadcaster_id, &existing_reward.id).await {
-                        Ok(_) => {
-                            info!("Successfully deleted reward: {}", redeem_setting.title);
-                            redeem_setting.twitch_reward_id = None;
-                        },
-                        Err(e) => {
-                            if e.to_string().contains("404 Not Found") {
-                                info!("Reward {} not found, possibly already deleted", redeem_setting.title);
-                                redeem_setting.twitch_reward_id = None;
-                            } else {
-                                error!("Failed to delete reward {}: {}", redeem_setting.title, e);
-                            }
-                        }
+                },
+                Err(_) => {
+                    if should_be_enabled {
+                        api_client.create_custom_reward(
+                            &redeem_setting.title,
+                            redeem_setting.cost,
+                            true,
+                            redeem_setting.cooldown.unwrap_or(0),
+                            &redeem_setting.prompt,
+                            redeem_setting.user_input_required,
+                        ).await?;
                     }
                 }
             }
@@ -584,7 +560,13 @@ impl RedeemManager {
         }
     }
 
+
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Handling stream online event. Game: {}", game_name);
+
+        // Update stream state
+        self.twitch_manager.stream_state_machine.set_stream_live(game_name.clone()).await?;
+
         let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
         state.is_active = true;
@@ -604,15 +586,20 @@ impl RedeemManager {
             false,
         ).await?;
 
-        let mut status = self.stream_status.write().await;
-        status.is_live = true;
-        status.current_game = game_name;
-        drop(status);
+        drop(state);
 
-        self.sync_configured_rewards().await
+        self.sync_configured_rewards().await?;
+
+        info!("Stream online handling complete");
+        Ok(())
     }
 
     pub async fn handle_stream_offline(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Handling stream offline event");
+
+        // Update stream state
+        self.twitch_manager.stream_state_machine.set_stream_offline().await?;
+
         let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
 
@@ -636,19 +623,23 @@ impl RedeemManager {
             false,
         ).await?;
 
-        let mut status = self.stream_status.write().await;
-        status.is_live = false;
-        status.current_game = String::new();
-        drop(status);
+        drop(state);
 
-        self.sync_configured_rewards().await
+        self.sync_configured_rewards().await?;
+
+        info!("Stream offline handling complete");
+        Ok(())
     }
 
     pub async fn handle_stream_update(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut status = self.stream_status.write().await;
-        status.current_game = game_name;
-        drop(status);
+        info!("Handling stream update event. New game: {}", game_name);
 
-        self.sync_configured_rewards().await
+        // Update stream state
+        self.twitch_manager.stream_state_machine.update_game(game_name).await?;
+
+        self.sync_configured_rewards().await?;
+
+        info!("Stream update handling complete");
+        Ok(())
     }
 }

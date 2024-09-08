@@ -278,12 +278,13 @@ impl TwitchEventSubClient {
 
         let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
 
-        // Update the stream status using the StreamStatusManager
-        self.twitch_manager.set_stream_live(is_live).await;
-
         if is_live {
             let game_name = stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string();
-            // You can use game_name for other purposes if needed
+            // Update the stream status using the StreamStateMachine
+            self.twitch_manager.set_stream_live(game_name).await?;
+        } else {
+            // If the stream is not live, set it to offline
+            self.twitch_manager.set_stream_offline().await?;
         }
 
         Ok(())

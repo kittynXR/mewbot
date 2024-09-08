@@ -18,7 +18,7 @@ pub async fn handle(
         twitch_manager.send_message_as_bot(channel, message.as_str()).await?;
 
         // Update stream status using StreamStatusManager
-        twitch_manager.set_stream_live(false).await;
+        twitch_manager.set_stream_offline().await?;
 
         if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
             redeem_manager.handle_stream_offline().await?;
