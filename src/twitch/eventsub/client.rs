@@ -59,14 +59,6 @@ impl TwitchEventSubClient {
             config: twitch_manager.config.clone(),
         };
 
-        // Check initial stream status
-        let twitch_manager_clone = twitch_manager.clone();
-        tokio::spawn(async move {
-            if let Err(e) = twitch_manager_clone.check_initial_stream_status().await {
-                error!("Failed to check initial stream status: {:?}", e);
-            }
-        });
-
         client
     }
 
@@ -82,19 +74,16 @@ impl TwitchEventSubClient {
                     warn!("Error sending close frame: {:?}", e);
                 }
             }
-
             // Remove the WebSocket receiver to stop any ongoing message processing
             self.ws_rx.lock().await.take();
 
             Ok::<(), Box<dyn StdError + Send + Sync>>(())
         };
-
         match timeout(shutdown_timeout, close_websocket).await {
             Ok(Ok(_)) => info!("WebSocket connection closed successfully"),
             Ok(Err(e)) => warn!("Error closing WebSocket connection: {:?}", e),
             Err(_) => warn!("Timeout while closing WebSocket connection"),
         }
-
         info!("TwitchEventSubClient shutdown complete.");
         Ok(())
     }
@@ -126,7 +115,6 @@ impl TwitchEventSubClient {
                 }
             }
         }
-
         Ok(())
     }
 
