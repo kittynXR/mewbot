@@ -3,9 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock};
 use crate::ai::AIClient;
-use crate::stream_state::StreamState;
 use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
@@ -60,7 +59,7 @@ impl RedeemManager {
         handlers.insert("cat trap".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
         handlers.insert("snowball".to_string(), Box::new(VRCOscRedeemWrapper(vrc_osc_redeems.clone())) as Box<dyn RedeemHandler>);
 
-        let mut redeem_manager = Self {
+        let redeem_manager = Self {
             twitch_manager,
             handlers,
             coin_game_state,

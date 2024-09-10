@@ -26,7 +26,6 @@ use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
 use crate::stream_state::{StateTransitionError, StreamState, StreamStateMachine};
-use crate::stream_status::StreamStatusManager;
 use crate::twitch::api::client::TwitchAPIError;
 
 #[derive(Clone, Debug)]
@@ -274,7 +273,9 @@ pub struct TwitchManager {
     pub osc_configs: Arc<RwLock<OSCConfigurations>>,
     pub ai_client: Option<Arc<AIClient>>,
     pub shoutout_cooldowns: Arc<Mutex<ShoutoutCooldown>>,
+    #[allow(dead_code)]
     shoutout_sender: mpsc::Sender<(String, String)>,
+    #[allow(dead_code)]
     shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
     pub stream_state_machine: Arc<StreamStateMachine>,
@@ -365,9 +366,6 @@ impl TwitchManager {
         let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
         let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
-        // let stream_status_manager = StreamStatusManager::new();
-        // let stream_state_machine = StreamStateMachine::new();
-
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
             api_client: api_client.clone(),
@@ -402,7 +400,6 @@ impl TwitchManager {
         let eventsub_client = TwitchEventSubClient::new(twitch_manager.clone(), osc_configs);
         *twitch_manager.eventsub_client.lock().await = Some(eventsub_client);
 
-        // twitch_manager.check_initial_stream_status().await?;
         twitch_manager.start_stream_state_listener();
 
         Ok((*twitch_manager).clone())
@@ -414,7 +411,7 @@ impl TwitchManager {
         let eventsub_client = Self::initialize_eventsub_client(self).await?;
         *self.eventsub_client.lock().await = Some(eventsub_client);
 
-        // self.check_initial_stream_status().await?;
+        self.check_initial_stream_status().await?;
 
         Ok(())
     }
@@ -432,7 +429,6 @@ impl TwitchManager {
         Ok(())
     }
 
-    // Modify this to take &self instead of &Arc<Self>
     async fn initialize_eventsub_client(&self) -> Result<TwitchEventSubClient, Box<dyn std::error::Error + Send + Sync>> {
         let osc_configs = Arc::new(RwLock::new(OSCConfigurations::load("osc_config.json").unwrap_or_default()));
 

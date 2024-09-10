@@ -85,7 +85,3 @@ impl StreamStateMachine {
         }
     }
 }
-
-pub fn create_stream_state_machine() -> Arc<StreamStateMachine> {
-    StreamStateMachine::new()
-}

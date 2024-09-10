@@ -6,13 +6,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use log::{error};
 use crate::twitch::TwitchManager;
-use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS, USER_COOLDOWN_SECONDS};
+use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS};
 
 
 
 pub struct ShoutoutQueueItem {
     pub(crate) user_id: String,
     pub(crate) username: String,
+    #[allow(dead_code)]
     enqueue_time: Instant,
 }
 
