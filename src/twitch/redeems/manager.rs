@@ -486,61 +486,6 @@ impl RedeemManager {
         }
     }
 
-    async fn update_redeem_availabilities(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Updating redeem availabilities");
-        let api_client = self.twitch_manager.get_api_client();
-        let settings = self.redeem_settings.read().await;
-        let broadcaster_id = api_client.get_broadcaster_id().await?;
-
-        // Get current stream state from StreamStateMachine
-        let is_live = self.twitch_manager.stream_state_machine.is_stream_live().await;
-        let current_game = self.twitch_manager.stream_state_machine.get_current_game().await.unwrap_or_default();
-
-        for (_, redeem_setting) in settings.iter() {
-            if !redeem_setting.is_active {
-                info!("Skipping inactive redeem: {}", redeem_setting.title);
-                continue;
-            }
-
-            let should_be_enabled = if is_live {
-                if !redeem_setting.disabled_games.is_empty() {
-                    !redeem_setting.disabled_games.contains(&current_game)
-                } else if !redeem_setting.enabled_games.is_empty() {
-                    redeem_setting.enabled_games.contains(&current_game)
-                } else {
-                    true
-                }
-            } else {
-                redeem_setting.enabled_offline
-            };
-
-            match channel_points::get_custom_reward(&api_client, &broadcaster_id, &redeem_setting.title).await {
-                Ok(reward) => {
-                    let reward_data = reward["data"][0].as_object().unwrap();
-                    if reward_data["is_enabled"].as_bool().unwrap() != should_be_enabled {
-                        info!("Updating redeem status on Twitch: {}. Enabled: {}", redeem_setting.title, should_be_enabled);
-                        api_client.update_custom_reward(
-                            reward_data["id"].as_str().unwrap(),
-                            &redeem_setting.title,
-                            redeem_setting.cost,
-                            should_be_enabled,
-                            redeem_setting.cooldown.unwrap_or(0),
-                            &redeem_setting.prompt,
-                            redeem_setting.user_input_required,
-                        ).await?;
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to get custom reward for {}: {:?}", redeem_setting.title, e);
-                    // If the reward doesn't exist, we don't need to do anything as it will be created in the next sync
-                }
-            }
-        }
-
-        info!("Finished updating redeem availabilities");
-        Ok(())
-    }
-
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Handling stream online event. Game: {}", game_name);
 
