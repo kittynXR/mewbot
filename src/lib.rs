@@ -218,21 +218,6 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         websocket_rx: Some(websocket_rx),
     };
 
-    // twitch_manager.redeem_manager.read().await.initialize_redeems().await?;
-
-    // clients.twitch_manager.redeem_manager.write().await.reset_coin_game().await?;
-    let eventsub_client_clone = clients.twitch_manager.eventsub_client.clone();
-    tokio::spawn(async move {
-        let client = eventsub_client_clone.lock().await;
-        if let Some(client) = client.as_ref() {
-            if let Err(e) = client.check_current_stream_status().await {
-                eprintln!("Failed to check current stream status: {:?}", e);
-            }
-        } else {
-            eprintln!("EventSub client is not initialized");
-        }
-    });
-
     clients.bot_status.write().await.set_online(true);
 
     Ok(clients)

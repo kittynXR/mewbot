@@ -411,7 +411,28 @@ impl TwitchManager {
         let eventsub_client = Self::initialize_eventsub_client(self).await?;
         *self.eventsub_client.lock().await = Some(eventsub_client);
 
+        // Perform the initial stream state check
         self.check_initial_stream_status().await?;
+
+        Ok(())
+    }
+
+    async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let broadcaster_id = self.api_client.get_broadcaster_id().await?;
+        let stream_info = self.api_client.get_stream_info(&broadcaster_id).await?;
+
+        let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
+
+        if is_live {
+            let game_name = stream_info["data"][0]["game_name"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+
+            self.stream_state_machine.set_stream_live(game_name).await?;
+        } else {
+            self.stream_state_machine.set_stream_offline().await?;
+        }
 
         Ok(())
     }

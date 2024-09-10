@@ -260,24 +260,6 @@ impl TwitchEventSubClient {
         Duration::from_secs(delay.min(max_delay))
     }
 
-    pub async fn check_current_stream_status(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let channel_id = self.get_channel_id().await?;
-        let stream_info = self.twitch_manager.api_client.get_stream_info(&channel_id).await?;
-
-        let is_live = !stream_info["data"].as_array().unwrap_or(&vec![]).is_empty();
-
-        if is_live {
-            let game_name = stream_info["data"][0]["game_name"].as_str().unwrap_or("").to_string();
-            // Update the stream status using the StreamStateMachine
-            self.twitch_manager.set_stream_live(game_name).await?;
-        } else {
-            // If the stream is not live, set it to offline
-            self.twitch_manager.set_stream_offline().await?;
-        }
-
-        Ok(())
-    }
-
     async fn create_eventsub_subscription(&self, session_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let token = self.twitch_manager.api_client.get_token().await?;
         let channel_id = self.get_channel_id().await?;
