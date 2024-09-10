@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use tokio::sync::{RwLock};
 use crate::ai::AIClient;
-use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
