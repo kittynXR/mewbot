@@ -230,10 +230,9 @@ impl TwitchEventSubClient {
         info!("Received notification: {:?}", response);
 
         let message = serde_json::to_string(response)?;
-        handlers::handle_message(
-            &message,
-            &self.twitch_manager,
-        ).await?;
+        if let Err(e) = handlers::handle_message(&message, &self.twitch_manager).await {
+            error!("Error handling EventSub message: {:?}", e);
+        }
 
         Ok(())
     }

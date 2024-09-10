@@ -586,6 +586,30 @@ impl TwitchManager {
         // Other stream offline logic...
     }
 
+    pub async fn handle_stream_update(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Handling stream update. New game: {}", game_name);
+
+        let current_state = self.stream_state_machine.get_current_state().await;
+        match current_state {
+            StreamState::Live(_) => {
+                self.stream_state_machine.update_game(game_name.clone()).await?;
+            },
+            StreamState::Offline | StreamState::GoingOffline => {
+                info!("Stream is not live. Storing game update for later: {}", game_name);
+                // You might want to store this game name for when the stream goes live
+            },
+            StreamState::GoingLive => {
+                self.stream_state_machine.set_stream_live(game_name.clone()).await?;
+            },
+        }
+
+        if let Some(redeem_manager) = self.redeem_manager.write().await.as_mut() {
+            redeem_manager.handle_stream_update(game_name).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn std::error::Error + Send + Sync>> {
         self.user_manager.get_user(user_id).await
     }
