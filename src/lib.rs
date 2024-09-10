@@ -29,6 +29,7 @@ use crate::storage::StorageClient;
 use crate::web_ui::websocket::{DashboardState};
 use tokio::sync::mpsc;
 use crate::obs::{OBSInstance, OBSManager};
+use crate::stream_state::StreamStateMachine;
 use crate::twitch::TwitchManager;
 use crate::web_ui::websocket::WebSocketMessage;
 
@@ -190,6 +191,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
     });
 
     let config = Arc::new(config.read().await.clone());
+    let stream_state_machine = StreamStateMachine::new();
 
     let mut twitch_manager = TwitchManager::new(
         config,
@@ -199,6 +201,7 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         user_links,
         dashboard_state.clone(),
         websocket_tx.clone(),
+        stream_state_machine.clone(),
     ).await?;
 
     twitch_manager.initialize().await?;

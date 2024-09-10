@@ -17,11 +17,7 @@ pub async fn handle(
 
         // Update stream status using StreamStatusManager
         let game_name = payload["category_name"].as_str().unwrap_or("").to_string();
-        twitch_manager.set_stream_live(game_name.clone()).await?;
-
-        if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
-            redeem_manager.handle_stream_online(game_name).await?;
-        }
+        twitch_manager.stream_state_machine.set_stream_live(game_name).await?;
 
         info!("Stream is now live");
     }

@@ -10,7 +10,6 @@ use crate::twitch::api::requests::channel_points;
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
-use crate::stream_status::StreamStatusManager;
 
 pub struct RedeemManager {
     twitch_manager: Arc<TwitchManager>,
@@ -18,7 +17,6 @@ pub struct RedeemManager {
     coin_game_state: Arc<RwLock<CoinGameState>>,
     stream_status: Arc<RwLock<StreamStatus>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
-    stream_status_receiver: Option<broadcast::Receiver<bool>>,
 }
 
 impl Default for RedeemManager {
@@ -29,7 +27,6 @@ impl Default for RedeemManager {
             coin_game_state: Arc::new(RwLock::new(CoinGameState::new(20))),
             stream_status: Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() })),
             redeem_settings: Arc::new(RwLock::new(HashMap::new())),
-            stream_status_receiver: None,
         }
     }
 }
@@ -48,7 +45,6 @@ impl RedeemManager {
         twitch_manager: Arc<TwitchManager>,
         ai_client: Arc<AIClient>,
     ) -> Self {
-        let stream_status_receiver = Some(twitch_manager.stream_status_manager.subscribe());
         let coin_game_state = Arc::new(RwLock::new(CoinGameState::new(20)));
         let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
@@ -70,11 +66,7 @@ impl RedeemManager {
             coin_game_state,
             stream_status,
             redeem_settings,
-            stream_status_receiver,
         };
-
-        redeem_manager.start_stream_status_listener();
-
         redeem_manager
     }
 
@@ -501,16 +493,6 @@ impl RedeemManager {
         }
     }
 
-    pub async fn handle_channel_status_update(&self, is_live: bool, current_game: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Handling channel status update. Is live: {}, Current game: {}", is_live, current_game);
-        let mut status = self.stream_status.write().await;
-        status.is_live = is_live;
-        status.current_game = current_game.clone();
-        drop(status);
-
-        self.update_redeem_availabilities().await
-    }
-
     async fn update_redeem_availabilities(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Updating redeem availabilities");
         let api_client = self.twitch_manager.get_api_client();
@@ -562,29 +544,6 @@ impl RedeemManager {
         info!("Finished updating redeem availabilities");
         Ok(())
     }
-
-    fn start_stream_status_listener(&mut self) {
-        if let Some(receiver) = self.stream_status_receiver.take() {
-            let twitch_manager = self.twitch_manager.clone();
-            tokio::spawn(async move {
-                let mut receiver = receiver;
-                while let Ok(is_live) = receiver.recv().await {
-                    if let Err(e) = twitch_manager.handle_stream_status_change(is_live).await {
-                        error!("Failed to handle stream status change: {}", e);
-                    }
-                }
-            });
-        }
-    }
-
-    async fn handle_stream_status_change(&mut self, is_live: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if is_live {
-            self.handle_stream_online("".to_string()).await
-        } else {
-            self.handle_stream_offline().await
-        }
-    }
-
 
     pub async fn handle_stream_online(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Handling stream online event. Game: {}", game_name);

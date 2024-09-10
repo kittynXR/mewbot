@@ -25,7 +25,7 @@ use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
-use crate::stream_state::{StateTransitionError, StreamStateMachine};
+use crate::stream_state::{StateTransitionError, StreamState, StreamStateMachine};
 use crate::stream_status::StreamStatusManager;
 use crate::twitch::api::client::TwitchAPIError;
 
@@ -277,7 +277,6 @@ pub struct TwitchManager {
     shoutout_sender: mpsc::Sender<(String, String)>,
     shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
-    pub stream_status_manager: Arc<StreamStatusManager>,
     pub stream_state_machine: Arc<StreamStateMachine>,
 
 }
@@ -306,7 +305,6 @@ impl Default for TwitchManager {
             shoutout_sender,
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::default())),
-            stream_status_manager: StreamStatusManager::new(),
             stream_state_machine: StreamStateMachine::new(),
         }
     }
@@ -344,6 +342,7 @@ impl TwitchManager {
         user_links: Arc<UserLinks>,
         dashboard_state: Arc<RwLock<DashboardState>>,
         websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
+        stream_state_machine: Arc<StreamStateMachine>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let api_client = Arc::new(TwitchAPIClient::new(config.clone()).await?);
         api_client.authenticate().await?;
@@ -366,8 +365,8 @@ impl TwitchManager {
         let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
         let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
-        let stream_status_manager = StreamStatusManager::new();
-        let stream_state_machine = StreamStateMachine::new();
+        // let stream_status_manager = StreamStatusManager::new();
+        // let stream_state_machine = StreamStateMachine::new();
 
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
@@ -387,7 +386,6 @@ impl TwitchManager {
             shoutout_sender,
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::new())),
-            stream_status_manager,
             stream_state_machine,
         });
 
@@ -404,7 +402,8 @@ impl TwitchManager {
         let eventsub_client = TwitchEventSubClient::new(twitch_manager.clone(), osc_configs);
         *twitch_manager.eventsub_client.lock().await = Some(eventsub_client);
 
-        twitch_manager.check_initial_stream_status().await?;
+        // twitch_manager.check_initial_stream_status().await?;
+        twitch_manager.start_stream_state_listener();
 
         Ok((*twitch_manager).clone())
     }
@@ -415,7 +414,7 @@ impl TwitchManager {
         let eventsub_client = Self::initialize_eventsub_client(self).await?;
         *self.eventsub_client.lock().await = Some(eventsub_client);
 
-        self.check_initial_stream_status().await?;
+        // self.check_initial_stream_status().await?;
 
         Ok(())
     }
@@ -503,12 +502,12 @@ impl TwitchManager {
         Ok(())
     }
 
-    pub(crate) async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let channel_id = self.api_client.get_broadcaster_id().await?;
-        let is_live = self.api_client.is_stream_live(&channel_id).await?;
-        self.stream_status_manager.set_stream_live(is_live).await;
-        Ok(())
-    }
+    // pub(crate) async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    //     let channel_id = self.api_client.get_broadcaster_id().await?;
+    //     let is_live = self.api_client.is_stream_live(&channel_id).await?;
+    //     self.stream_status_manager.set_stream_live(is_live).await;
+    //     Ok(())
+    // }
 
     pub async fn set_stream_live(&self, game_name: String) -> Result<(), StateTransitionError> {
         self.stream_state_machine.set_stream_live(game_name).await
@@ -526,19 +525,49 @@ impl TwitchManager {
         self.stream_state_machine.get_current_game().await
     }
 
-    pub async fn handle_stream_status_change(&self, is_live: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if is_live {
-            if let Some(redeem_manager) = self.get_redeem_manager().write().await.as_mut() {
-                redeem_manager.handle_stream_online("".to_string()).await?;
+    fn start_stream_state_listener(&self) {
+        let mut receiver = self.stream_state_machine.subscribe();
+        let twitch_manager = self.clone();
+
+        tokio::spawn(async move {
+            while let Ok(new_state) = receiver.recv().await {
+                match new_state {
+                    StreamState::Offline => {
+                        twitch_manager.handle_stream_offline().await;
+                    },
+                    StreamState::GoingLive => {
+                        // Prepare for live stream
+                    },
+                    StreamState::Live(game) => {
+                        twitch_manager.handle_stream_online(game).await;
+                    },
+                    StreamState::GoingOffline => {
+                        // Prepare for stream end
+                    },
+                }
             }
-        } else {
-            if let Some(redeem_manager) = self.get_redeem_manager().write().await.as_mut() {
-                redeem_manager.handle_stream_offline().await?;
-            }
-        }
-        Ok(())
+        });
     }
 
+    async fn handle_stream_online(&self, game: String) {
+        // Move logic from RedeemManager.handle_stream_online here
+        if let Some(redeem_manager) = self.redeem_manager.write().await.as_mut() {
+            if let Err(e) = redeem_manager.handle_stream_online(game.clone()).await {
+                error!("Error handling stream online in RedeemManager: {:?}", e);
+            }
+        }
+        // Other stream online logic...
+    }
+
+    async fn handle_stream_offline(&self) {
+        // Move logic from RedeemManager.handle_stream_offline here
+        if let Some(redeem_manager) = self.redeem_manager.write().await.as_mut() {
+            if let Err(e) = redeem_manager.handle_stream_offline().await {
+                error!("Error handling stream offline in RedeemManager: {:?}", e);
+            }
+        }
+        // Other stream offline logic...
+    }
 
     pub async fn get_user(&self, user_id: &str) -> Result<TwitchUser, Box<dyn std::error::Error + Send + Sync>> {
         self.user_manager.get_user(user_id).await
