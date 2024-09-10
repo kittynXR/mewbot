@@ -78,11 +78,11 @@ pub struct RedemptionResult {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamStatus {
-    pub is_live: bool,
-    pub current_game: String,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct StreamStatus {
+//     pub is_live: bool,
+//     pub current_game: String,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinGameState {

@@ -6,7 +6,7 @@ use log::{debug, error, info, warn};
 use tokio::sync::{RwLock};
 use crate::ai::AIClient;
 use crate::twitch::api::requests::channel_points;
-use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, StreamStatus, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
+use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, CoinGameState, RedeemSettings, OSCConfig, OSCMessageType, OSCValue};
 use crate::twitch::TwitchManager;
 use super::actions::{CoinGameAction, AskAIAction, VRCOscRedeems};
 
@@ -14,7 +14,7 @@ pub struct RedeemManager {
     twitch_manager: Arc<TwitchManager>,
     handlers: HashMap<String, Box<dyn RedeemHandler>>,
     coin_game_state: Arc<RwLock<CoinGameState>>,
-    stream_status: Arc<RwLock<StreamStatus>>,
+    // stream_status: Arc<RwLock<StreamStatus>>,
     redeem_settings: Arc<RwLock<HashMap<String, RedeemSettings>>>,
 }
 
@@ -24,7 +24,7 @@ impl Default for RedeemManager {
             twitch_manager: Arc::new(TwitchManager::default()),
             handlers: HashMap::new(),
             coin_game_state: Arc::new(RwLock::new(CoinGameState::new(20))),
-            stream_status: Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() })),
+            // stream_status: Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() })),
             redeem_settings: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -45,7 +45,7 @@ impl RedeemManager {
         ai_client: Arc<AIClient>,
     ) -> Self {
         let coin_game_state = Arc::new(RwLock::new(CoinGameState::new(20)));
-        let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
+        // let stream_status = Arc::new(RwLock::new(StreamStatus { is_live: false, current_game: String::new() }));
         let redeem_settings = Arc::new(RwLock::new(HashMap::new()));
 
         let vrc_osc_redeems = Arc::new(VRCOscRedeems::new(twitch_manager.clone()));
@@ -63,7 +63,7 @@ impl RedeemManager {
             twitch_manager,
             handlers,
             coin_game_state,
-            stream_status,
+            // stream_status,
             redeem_settings,
         };
         redeem_manager
@@ -339,15 +339,6 @@ impl RedeemManager {
         Ok(())
     }
 
-    pub async fn update_stream_status(&self, is_live: bool, current_game: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut status = self.stream_status.write().await;
-        status.is_live = is_live;
-        status.current_game = current_game.clone();
-        drop(status);
-
-        self.update_redeem_availabilities().await
-    }
-
     async fn check_and_reset_coin_game(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let api_client = self.twitch_manager.get_api_client();
         let mut state = self.coin_game_state.write().await;
@@ -478,12 +469,15 @@ impl RedeemManager {
             return false;
         }
 
-        let stream_status = self.stream_status.read().await;
-        if stream_status.is_live {
+        // Get current stream state from StreamStateMachine
+        let is_live = self.twitch_manager.stream_state_machine.is_stream_live().await;
+        let current_game = self.twitch_manager.stream_state_machine.get_current_game().await.unwrap_or_default();
+
+        if is_live {
             if !redeem_setting.disabled_games.is_empty() {
-                !redeem_setting.disabled_games.contains(&stream_status.current_game)
+                !redeem_setting.disabled_games.contains(&current_game)
             } else if !redeem_setting.enabled_games.is_empty() {
-                redeem_setting.enabled_games.contains(&stream_status.current_game)
+                redeem_setting.enabled_games.contains(&current_game)
             } else {
                 true
             }
@@ -496,8 +490,11 @@ impl RedeemManager {
         info!("Updating redeem availabilities");
         let api_client = self.twitch_manager.get_api_client();
         let settings = self.redeem_settings.read().await;
-        let stream_status = self.stream_status.read().await;
         let broadcaster_id = api_client.get_broadcaster_id().await?;
+
+        // Get current stream state from StreamStateMachine
+        let is_live = self.twitch_manager.stream_state_machine.is_stream_live().await;
+        let current_game = self.twitch_manager.stream_state_machine.get_current_game().await.unwrap_or_default();
 
         for (_, redeem_setting) in settings.iter() {
             if !redeem_setting.is_active {
@@ -505,11 +502,11 @@ impl RedeemManager {
                 continue;
             }
 
-            let should_be_enabled = if stream_status.is_live {
+            let should_be_enabled = if is_live {
                 if !redeem_setting.disabled_games.is_empty() {
-                    !redeem_setting.disabled_games.contains(&stream_status.current_game)
+                    !redeem_setting.disabled_games.contains(&current_game)
                 } else if !redeem_setting.enabled_games.is_empty() {
-                    redeem_setting.enabled_games.contains(&stream_status.current_game)
+                    redeem_setting.enabled_games.contains(&current_game)
                 } else {
                     true
                 }
