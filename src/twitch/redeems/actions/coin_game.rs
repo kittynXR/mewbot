@@ -13,7 +13,7 @@ pub struct CoinGameAction {
     state: Arc<RwLock<CoinGameState>>,
     ai_client: Arc<AIClient>,
     api_client: Arc<TwitchAPIClient>,
-    rng: Arc<Mutex<StdRng>>, // Add this line
+    rng: Arc<Mutex<StdRng>>,
 }
 
 impl CoinGameAction {

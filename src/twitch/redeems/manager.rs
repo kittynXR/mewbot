@@ -333,7 +333,6 @@ impl RedeemManager {
             Ok(_) => info!("Successfully synced configured rewards"),
             Err(e) => error!("Failed to sync configured rewards: {:?}", e),
         }
-
         info!("Redeem initialization complete");
         Ok(())
     }
@@ -371,7 +370,6 @@ impl RedeemManager {
     }
 
     async fn get_coin_game_reward_id(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        // For now, just return the title of the reward
         Ok("Coin Game".to_string())
     }
 
@@ -541,7 +539,7 @@ impl RedeemManager {
             &reward_id,
             "Coin Game",
             state.default_price,
-            false,  // Disable the reward
+            false,
             0,
             "The Coin Game is currently inactive.",
             false,
@@ -558,7 +556,6 @@ impl RedeemManager {
     pub async fn handle_stream_update(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("Handling stream update event. New game: {}", game_name);
 
-        // Update stream state
         self.twitch_manager.stream_state_machine.update_game(game_name).await?;
 
         self.sync_configured_rewards().await?;
