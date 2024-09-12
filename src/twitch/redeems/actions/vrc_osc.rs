@@ -4,6 +4,7 @@ use log::{debug, error, warn};
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
 use crate::twitch::TwitchManager;
 
+#[derive(Clone)]
 pub struct VRCOscRedeems {
     twitch_manager: Arc<TwitchManager>,
 }

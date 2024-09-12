@@ -372,7 +372,7 @@ impl TwitchManager {
             irc_manager,
             bot_client,
             broadcaster_client,
-            redeem_manager: Arc::new(RwLock::new(None)), // Initialize as None
+            redeem_manager: Arc::new(RwLock::new(None)),
             eventsub_client: Arc::new(Mutex::new(None)),
             user_manager,
             user_links,
@@ -566,24 +566,20 @@ impl TwitchManager {
         });
     }
 
-    async fn handle_stream_online(&self, game: String) {
-        // Move logic from RedeemManager.handle_stream_online here
+    pub async fn handle_stream_online(&self, game: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(redeem_manager) = self.redeem_manager.write().await.as_mut() {
-            if let Err(e) = redeem_manager.handle_stream_online(game.clone()).await {
-                error!("Error handling stream online in RedeemManager: {:?}", e);
-            }
+            redeem_manager.handle_stream_online(game.clone()).await?;
         }
-        // Other stream online logic...
+        self.stream_state_machine.set_stream_live(game).await?;
+        Ok(())
     }
 
-    async fn handle_stream_offline(&self) {
-        // Move logic from RedeemManager.handle_stream_offline here
+    pub async fn handle_stream_offline(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(redeem_manager) = self.redeem_manager.write().await.as_mut() {
-            if let Err(e) = redeem_manager.handle_stream_offline().await {
-                error!("Error handling stream offline in RedeemManager: {:?}", e);
-            }
+            redeem_manager.handle_stream_offline().await?;
         }
-        // Other stream offline logic...
+        self.stream_state_machine.set_stream_offline().await?;
+        Ok(())
     }
 
     pub async fn handle_stream_update(&self, game_name: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -596,7 +592,6 @@ impl TwitchManager {
             },
             StreamState::Offline | StreamState::GoingOffline => {
                 info!("Stream is not live. Storing game update for later: {}", game_name);
-                // You might want to store this game name for when the stream goes live
             },
             StreamState::GoingLive => {
                 self.stream_state_machine.set_stream_live(game_name.clone()).await?;

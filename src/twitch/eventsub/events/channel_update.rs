@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use log::{info};
+use log::info;
 use crate::twitch::TwitchManager;
 
 pub async fn handle(
@@ -16,9 +16,7 @@ pub async fn handle(
 
             twitch_manager.send_message_as_bot(channel, response.as_str()).await?;
 
-            if let Some(redeem_manager) = twitch_manager.get_redeem_manager().write().await.as_mut() {
-                redeem_manager.handle_stream_update(category_name.to_string()).await?;
-            }
+            twitch_manager.handle_stream_update(category_name.to_string()).await?;
         }
     }
 

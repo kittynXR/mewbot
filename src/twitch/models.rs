@@ -1,4 +1,7 @@
-
+use std::error::Error;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use async_trait::async_trait;
@@ -52,6 +55,72 @@ pub struct Redemption {
     pub reward_title: String,
     pub user_input: Option<String>,
     pub status: RedemptionStatus,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedeemInfo {
+    pub id: Option<String>,
+    pub title: String,
+    pub cost: u32,
+    pub is_enabled: bool,
+    pub prompt: String,
+    pub cooldown: Option<u32>,
+    pub is_global_cooldown: bool,
+    pub limit_per_stream: Option<u32>,
+    pub limit_per_user: Option<u32>,
+    pub use_osc: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub osc_config: Option<OSCConfig>,
+    pub enabled_games: Vec<String>,
+    pub disabled_games: Vec<String>,
+    pub enabled_offline: bool,
+    pub user_input_required: bool,
+    pub auto_complete: bool,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedeemConfigurations {
+    pub redeems: Vec<RedeemInfo>,
+}
+
+
+impl RedeemConfigurations {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let mut file = File::open(path).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        let config: RedeemConfigurations = serde_json::from_str(&contents).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(config)
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let contents = serde_json::to_string_pretty(self).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        let mut file = File::create(path).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        file.write_all(contents.as_bytes()).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(())
+    }
+}
+
+impl RedeemInfo {
+    pub fn is_active(&self, current_game: Option<&str>, is_live: bool) -> bool {
+        if !self.is_enabled {
+            return false;
+        }
+
+        if is_live {
+            if !self.disabled_games.is_empty() {
+                !self.disabled_games.contains(&current_game.unwrap_or("").to_string())
+            } else if !self.enabled_games.is_empty() {
+                self.enabled_games.contains(&current_game.unwrap_or("").to_string())
+            } else {
+                true
+            }
+        } else {
+            self.enabled_offline
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -146,15 +215,38 @@ impl RedeemSettings {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OSCConfig {
     pub uses_osc: bool,
     pub osc_endpoint: String,
     pub osc_type: OSCMessageType,
     pub osc_value: OSCValue,
     pub default_value: OSCValue,
+    #[serde(with = "duration_seconds")]
     pub execution_duration: Option<Duration>,
     pub send_chat_message: bool,
+}
+
+mod duration_seconds {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match duration {
+            Some(d) => serializer.serialize_u64(d.as_secs()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<u64>::deserialize(deserializer).map(|opt| opt.map(Duration::from_secs))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

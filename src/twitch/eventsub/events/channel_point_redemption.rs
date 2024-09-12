@@ -4,6 +4,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use log::{debug, error};
 
+
+
 pub async fn handle_new_redemption(
     event: &Value,
     twitch_manager: &Arc<TwitchManager>,
@@ -13,22 +15,22 @@ pub async fn handle_new_redemption(
 
     debug!("Processing new redemption: {:?}", redemption);
 
-    let redeem_manager = twitch_manager.redeem_manager.read().await;
-    let result = if let Some(redeem_manager) = redeem_manager.as_ref() {
-        redeem_manager.handle_redemption(&redemption).await
-    } else {
-        // Handle the case where redeem_manager is None
-        // You might want to return an appropriate error or default value
-        return Err("RedeemManager is not initialized".into());
-    };
+    let redeem_manager = twitch_manager.get_redeem_manager();
+    let redeem_manager = redeem_manager.read().await;
 
-    if result.success {
-        debug!("Redemption handled successfully: {:?}", result);
-        if let Some(ref message) = result.message {
-            twitch_manager.send_message_as_bot(channel, &message).await?;
+    if let Some(redeem_manager) = redeem_manager.as_ref() {
+        let result = redeem_manager.handle_redemption(&redemption).await;
+
+        if result.success {
+            debug!("Redemption handled successfully: {:?}", result);
+            if let Some(ref message) = result.message {
+                twitch_manager.send_message_as_bot(channel, &message).await?;
+            }
+        } else {
+            error!("Failed to handle redemption: {:?}", result);
         }
     } else {
-        error!("Failed to handle redemption: {:?}", result);
+        return Err("RedeemManager is not initialized".into());
     }
 
     Ok(())
