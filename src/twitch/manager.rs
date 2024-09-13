@@ -74,7 +74,6 @@ impl From<TwitchUser> for ChatterData {
             content_summary: None,
             role: user.role,
             last_seen: user.last_seen,
-            // Add any other fields that ChatterData might have
             custom_notes: None,
         }
     }
@@ -121,7 +120,7 @@ impl UserManager {
                     user_id: user_id.to_string(),
                     username,
                     display_name,
-                    role: UserRole::Viewer, // Default role, will be updated later if needed
+                    role: UserRole::Viewer,
                     last_seen: Utc::now(),
                     last_role_check: Utc::now(),
                     messages: VecDeque::new(),
@@ -411,7 +410,6 @@ impl TwitchManager {
         let eventsub_client = Self::initialize_eventsub_client(self).await?;
         *self.eventsub_client.lock().await = Some(eventsub_client);
 
-        // Perform the initial stream state check
         self.check_initial_stream_status().await?;
 
         Ok(())
@@ -519,29 +517,6 @@ impl TwitchManager {
         Ok(())
     }
 
-    // pub(crate) async fn check_initial_stream_status(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-    //     let channel_id = self.api_client.get_broadcaster_id().await?;
-    //     let is_live = self.api_client.is_stream_live(&channel_id).await?;
-    //     self.stream_status_manager.set_stream_live(is_live).await;
-    //     Ok(())
-    // }
-
-    pub async fn set_stream_live(&self, game_name: String) -> Result<(), StateTransitionError> {
-        self.stream_state_machine.set_stream_live(game_name).await
-    }
-
-    pub async fn set_stream_offline(&self) -> Result<(), StateTransitionError> {
-        self.stream_state_machine.set_stream_offline().await
-    }
-
-    pub async fn is_stream_live(&self) -> bool {
-        self.stream_state_machine.is_stream_live().await
-    }
-
-    pub async fn get_current_game(&self) -> Option<String> {
-        self.stream_state_machine.get_current_game().await
-    }
-
     fn start_stream_state_listener(&self) {
         let mut receiver = self.stream_state_machine.subscribe();
         let twitch_manager = self.clone();
@@ -564,6 +539,22 @@ impl TwitchManager {
                 }
             }
         });
+    }
+
+    pub async fn set_stream_live(&self, game_name: String) -> Result<(), StateTransitionError> {
+        self.stream_state_machine.set_stream_live(game_name).await
+    }
+
+    pub async fn set_stream_offline(&self) -> Result<(), StateTransitionError> {
+        self.stream_state_machine.set_stream_offline().await
+    }
+
+    pub async fn is_stream_live(&self) -> bool {
+        self.stream_state_machine.is_stream_live().await
+    }
+
+    pub async fn get_current_game(&self) -> Option<String> {
+        self.stream_state_machine.get_current_game().await
     }
 
     pub async fn handle_stream_online(&self, game: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
