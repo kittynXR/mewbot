@@ -1,3 +1,4 @@
+use std::any::Any;
 use async_trait::async_trait;
 use std::sync::Arc;
 use crate::ai::AIClient;
@@ -42,5 +43,9 @@ impl RedeemHandler for AskAIAction {
                 message: Some(format!("Failed to generate AI response: {}", e)),
             },
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

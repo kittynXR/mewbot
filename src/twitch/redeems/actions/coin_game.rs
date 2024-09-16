@@ -1,28 +1,27 @@
 // In coin_game.rs
-use rand::{Rng, SeedableRng};
+
+use std::any::Any;
 use std::sync::Arc;
 use async_trait::async_trait;
+use log::{debug, error, info};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use tokio::sync::{Mutex, RwLock};
-use crate::ai::AIClient;
-use crate::twitch::api::TwitchAPIClient;
-use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler, CoinGameState};
-
+use crate::twitch::models::{CoinGameState, RedeemHandler, Redemption, RedemptionResult};
+use crate::twitch::redeems::RedeemManager;
 
 pub struct CoinGameAction {
     state: Arc<RwLock<CoinGameState>>,
-    ai_client: Arc<AIClient>,
-    api_client: Arc<TwitchAPIClient>,
+    redeem_manager: Arc<RedeemManager>,
     rng: Arc<Mutex<StdRng>>,
 }
 
 impl CoinGameAction {
-    pub fn new(state: Arc<RwLock<CoinGameState>>, ai_client: Arc<AIClient>, api_client: Arc<TwitchAPIClient>) -> Self {
+    pub fn new(state: Arc<RwLock<CoinGameState>>, redeem_manager: Arc<RedeemManager>) -> Self {
         Self {
             state,
-            ai_client,
-            api_client,
-            rng: Arc::new(Mutex::new(StdRng::from_entropy())), // Initialize the RNG
+            redeem_manager,
+            rng: Arc::new(Mutex::new(StdRng::from_entropy())),
         }
     }
 
@@ -38,12 +37,12 @@ impl CoinGameAction {
             ),
         };
 
-        self.ai_client.generate_response_without_history(&prompt).await
+        self.redeem_manager.get_ai_client().generate_response_without_history(&prompt).await
             .unwrap_or_else(|_| format!("Coin game! New price: {} points", current_price))
     }
 
     async fn update_reward(&self, reward_id: &str, new_price: u32, new_prompt: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.api_client.update_custom_reward(
+        self.redeem_manager.get_api_client().update_custom_reward(
             reward_id,
             "Coin Game",
             new_price,
@@ -52,6 +51,29 @@ impl CoinGameAction {
             new_prompt,
             false,
         ).await?;
+        Ok(())
+    }
+
+    async fn refund_previous_redeemer(&self, redemption: &Redemption) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Err(e) = self.redeem_manager.get_api_client().refund_channel_points(
+            &redemption.reward_id,
+            &redemption.id,
+        ).await {
+            error!("Failed to refund previous redeemer: {:?}", e);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    pub async fn handle_offline(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.state.write().await;
+        if let Some((redemption, _)) = &state.current_redeemer {
+            info!("Stream went offline. Refunding last coin game redeemer: {}", redemption.user_name);
+            self.refund_previous_redeemer(redemption).await?;
+            state.current_redeemer = None;
+        }
+        state.is_active = false;
+        state.current_price = state.default_price;
         Ok(())
     }
 }
@@ -77,18 +99,23 @@ impl RedeemHandler for CoinGameAction {
 
         // Refund previous redeemer if exists
         if let Some((prev_redemption, _)) = &state.current_redeemer {
-            if let Err(e) = self.api_client.refund_channel_points(
-                &prev_redemption.reward_id,
-                &prev_redemption.id,
-            ).await {
-                log::error!("Failed to refund previous redeemer: {:?}", e);
+            if let Err(e) = self.refund_previous_redeemer(prev_redemption).await {
+                error!("Failed to refund previous redeemer: {:?}", e);
+                return RedemptionResult {
+                    success: false,
+                    message: Some("Failed to process the redemption. Please try again.".to_string()),
+                };
             }
         }
 
         // Generate new message and update reward
         let new_message = self.generate_silly_message(&state.previous_redeemer, new_price).await;
-        if let Err(e) = self.update_reward("Coin Game", new_price, &new_message).await {
-            log::error!("Failed to update reward: {:?}", e);
+        if let Err(e) = self.update_reward(&redemption.reward_id, new_price, &new_message).await {
+            error!("Failed to update reward: {:?}", e);
+            return RedemptionResult {
+                success: false,
+                message: Some("Failed to update the reward. Please try again.".to_string()),
+            };
         }
 
         // Update state
@@ -100,5 +127,9 @@ impl RedeemHandler for CoinGameAction {
             success: true,
             message: Some(new_message),
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

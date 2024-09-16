@@ -1,3 +1,4 @@
+use std::any::Any;
 use async_trait::async_trait;
 use std::sync::Arc;
 use log::{debug, error, warn};
@@ -85,5 +86,9 @@ impl RedeemHandler for VRCOscRedeems {
                 message: Some(format!("Unknown VRChat OSC redeem: {}", redemption.reward_title)),
             },
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::error::Error;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -202,8 +203,9 @@ pub struct RedeemSettings {
 }
 
 #[async_trait]
-pub trait RedeemHandler: Send + Sync {
+pub trait RedeemHandler: Send + Sync + Any {
     async fn handle(&self, redemption: &Redemption) -> RedemptionResult;
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl RedeemSettings {
