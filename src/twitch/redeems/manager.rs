@@ -55,7 +55,13 @@ impl RedeemManager {
         let initial_configs = self.load_initial_configs().await?;
         let twitch_redeems = self.sync_manager.fetch_all_redeems().await?;
 
-        for config in initial_configs {
+        for mut config in initial_configs {
+            if !config.enabled_games.is_empty() && !config.disabled_games.is_empty() {
+                log::warn!("Conflicting configuration for redeem '{}': both enabled_games and disabled_games are populated. Disabling this redeem.", config.title);
+                config.is_conflicting = true;
+                config.is_enabled = false;
+            }
+
             let merged = if let Some(twitch_redeem) = twitch_redeems.iter().find(|r| r.title == config.title) {
                 self.merge_redeem_info(config.clone(), twitch_redeem.clone())
             } else {
@@ -86,7 +92,6 @@ impl RedeemManager {
         Ok(())
     }
 
-
     async fn load_initial_configs(&self) -> Result<Vec<RedeemInfo>, Box<dyn Error + Send + Sync>> {
         let config_path = "redeems_config.json";  // You might want to make this configurable
         let configs = RedeemConfigurations::load(config_path)?;
@@ -109,6 +114,7 @@ impl RedeemManager {
             enabled_games: local.enabled_games,
             disabled_games: local.disabled_games,
             enabled_offline: local.enabled_offline,
+            is_conflicting: local.is_conflicting,
             user_input_required: local.user_input_required,
             auto_complete: local.auto_complete,
         }

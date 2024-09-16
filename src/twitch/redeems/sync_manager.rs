@@ -30,6 +30,7 @@ impl RedeemSyncManager {
                 enabled_games: Vec::new(),
                 disabled_games: Vec::new(),
                 enabled_offline: false,
+                is_conflicting: false,
                 user_input_required: reward.is_user_input_required,
                 auto_complete: false,
             })

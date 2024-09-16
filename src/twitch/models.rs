@@ -75,6 +75,8 @@ pub struct RedeemInfo {
     pub enabled_games: Vec<String>,
     pub disabled_games: Vec<String>,
     pub enabled_offline: bool,
+    #[serde(skip)]
+    pub is_conflicting: bool,
     pub user_input_required: bool,
     pub auto_complete: bool,
 }
@@ -105,20 +107,24 @@ impl RedeemConfigurations {
 
 impl RedeemInfo {
     pub fn is_active(&self, current_game: Option<&str>, is_live: bool) -> bool {
-        if !self.is_enabled {
+        if !self.is_enabled || self.is_conflicting {
             return false;
         }
 
-        if is_live {
+        let game_check = |game: Option<&str>| {
             if !self.disabled_games.is_empty() {
-                !self.disabled_games.contains(&current_game.unwrap_or("").to_string())
+                !self.disabled_games.contains(&game.unwrap_or("").to_string())
             } else if !self.enabled_games.is_empty() {
-                current_game.is_none() || self.enabled_games.contains(&current_game.unwrap().to_string())
+                self.enabled_games.contains(&game.unwrap_or("").to_string())
             } else {
                 true
             }
+        };
+
+        if is_live {
+            game_check(current_game)
         } else {
-            self.enabled_offline
+            self.enabled_offline && game_check(current_game)
         }
     }
 }
