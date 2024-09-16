@@ -137,41 +137,43 @@ impl TwitchEventSubClient {
 
     async fn listen_for_messages(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let mut ws_rx = self.ws_rx.lock().await.take().expect("WebSocket receive stream not initialized");
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        let mut keepalive_check_interval = tokio::time::interval(Duration::from_secs(15)); // Slightly longer than the 10-second timeout
 
         loop {
             tokio::select! {
-                message = ws_rx.next() => {
-                    match message {
-                        Some(Ok(Message::Text(text))) => {
-                            let response: Value = serde_json::from_str(&text)?;
-                            match response["metadata"]["message_type"].as_str() {
-                                Some("session_welcome") => self.handle_welcome_message(&response).await?,
-                                Some("session_keepalive") => self.handle_keepalive_message(&response).await?,
-                                Some("notification") => self.handle_notification(&response).await?,
-                                Some("session_reconnect") => return self.handle_reconnect_message(&response).await,
-                                Some("revocation") => self.handle_revocation(&response).await?,
-                                _ => warn!("Received unhandled message type: {}", response["metadata"]["message_type"]),
-                            }
+            message = ws_rx.next() => {
+                match message {
+                    Some(Ok(Message::Text(text))) => {
+                        let response: Value = serde_json::from_str(&text)?;
+                        match response["metadata"]["message_type"].as_str() {
+                            Some("session_welcome") => self.handle_welcome_message(&response).await?,
+                            Some("session_keepalive") => self.handle_keepalive_message(&response).await?,
+                            Some("notification") => self.handle_notification(&response).await?,
+                            Some("session_reconnect") => return self.handle_reconnect_message(&response).await,
+                            Some("revocation") => self.handle_revocation(&response).await?,
+                            _ => warn!("Received unhandled message type: {}", response["metadata"]["message_type"]),
                         }
-                        Some(Ok(Message::Close(frame))) => return self.handle_close_message(frame).await,
-                        Some(Ok(Message::Ping(data))) => self.handle_ping_message(data).await?,
-                        Some(Err(e)) => {
-                            error!("EventSub WebSocket error: {:?}", e);
-                            return Err(Box::new(e));
-                        }
-                        None => {
-                            warn!("EventSub WebSocket stream ended");
-                            return Ok(());
-                        }
-                        _ => debug!("Received non-text message"),
                     }
-                }
-                _ = interval.tick() => {
-                    self.check_keepalive().await?;
-                    self.send_ping().await?;
+                    Some(Ok(Message::Close(frame))) => return self.handle_close_message(frame).await,
+                    Some(Err(e)) => {
+                        error!("EventSub WebSocket error: {:?}", e);
+                        return Err(Box::new(e));
+                    }
+                    None => {
+                        warn!("EventSub WebSocket stream ended");
+                        return Ok(());
+                    }
+                    _ => debug!("Received non-text message"),
                 }
             }
+            _ = keepalive_check_interval.tick() => {
+                if let Err(e) = self.check_keepalive().await {
+                    warn!("Keepalive check failed: {:?}", e);
+                    // Instead of immediately returning an error, we'll log it and continue
+                    // This allows for some leniency in case of minor network hiccups
+                }
+            }
+        }
         }
     }
 
@@ -221,9 +223,24 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        debug!("Received EventSub keepalive: {:?}", response);
-        *self.last_keepalive.lock().await = Instant::now();
+        info!("Received EventSub keepalive: {:?}", response);
+        let mut last_keepalive = self.last_keepalive.lock().await;
+        *last_keepalive = Instant::now();
         Ok(())
+    }
+
+    async fn check_keepalive(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        let last_keepalive = *self.last_keepalive.lock().await;
+        let timeout = *self.keepalive_timeout.lock().await;
+        let elapsed = last_keepalive.elapsed();
+
+        if elapsed > timeout * 2 {  // Allow for double the timeout before considering it an error
+            error!("Keepalive timeout exceeded. Last keepalive: {:?} ago, Timeout: {:?}", elapsed, timeout);
+            Err("Keepalive timeout".into())
+        } else {
+            debug!("Keepalive check passed. Last keepalive: {:?} ago, Timeout: {:?}", elapsed, timeout);
+            Ok(())
+        }
     }
 
     async fn handle_ping_message(&self, data: Vec<u8>) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -277,16 +294,6 @@ impl TwitchEventSubClient {
     async fn handle_revocation(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
         warn!("Received revocation: {:?}", response);
         // Implement revocation handling logic here
-        Ok(())
-    }
-
-    async fn check_keepalive(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let last_keepalive = *self.last_keepalive.lock().await;
-        let timeout = *self.keepalive_timeout.lock().await;
-        if last_keepalive.elapsed() > timeout {
-            error!("Keepalive timeout exceeded");
-            return Err("Keepalive timeout".into());
-        }
         Ok(())
     }
 
