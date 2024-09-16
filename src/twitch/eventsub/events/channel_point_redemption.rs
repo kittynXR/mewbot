@@ -26,6 +26,19 @@ pub async fn handle_new_redemption(
             if let Some(ref message) = result.message {
                 twitch_manager.send_message_as_bot(channel, &message).await?;
             }
+
+            // Check if the redeem should be auto-completed
+            let redeems = redeem_manager.registry.get_all().await;
+            if let Some(redeem_info) = redeems.iter().find(|r| r.title == redemption.reward_title) {
+                if redeem_info.auto_complete {
+                    debug!("Auto-completing redemption: {}", redemption.reward_title);
+                    twitch_manager.api_client.complete_channel_points(
+                        &redemption.broadcaster_id,
+                        &redemption.reward_id,
+                        &redemption.id,
+                    ).await?;
+                }
+            }
         } else {
             error!("Failed to handle redemption: {:?}", result);
         }

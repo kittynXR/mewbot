@@ -15,7 +15,7 @@ use crate::twitch::redeems::sync_manager::RedeemSyncManager;
 pub struct RedeemManager {
     twitch_manager: Arc<TwitchManager>,
     ai_client: Arc<AIClient>,
-    registry: Arc<RedeemRegistry>,
+    pub(crate) registry: Arc<RedeemRegistry>,
     sync_manager: Arc<RedeemSyncManager>,
     handlers: HashMap<String, Box<dyn RedeemHandler + Send + Sync>>,
     coin_game_state: Arc<RwLock<CoinGameState>>,

@@ -15,7 +15,7 @@ use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use tungstenite::protocol::CloseFrame;
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
@@ -223,7 +223,7 @@ impl TwitchEventSubClient {
     }
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        info!("Received EventSub keepalive: {:?}", response);
+        trace!("Received EventSub keepalive: {:?}", response);
         let mut last_keepalive = self.last_keepalive.lock().await;
         *last_keepalive = Instant::now();
         Ok(())
