@@ -9,12 +9,14 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use reqwest::Client;
 use super::handlers;
 use std::time::Duration;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use log::{debug, error, info, warn};
+use tungstenite::protocol::CloseFrame;
 use crate::osc::models::OSCConfig;
 use crate::osc::osc_config::OSCConfigurations;
 
@@ -29,6 +31,12 @@ pub struct TwitchEventSubClient {
     ws_rx: Mutex<Option<WebSocketRx>>,
     osc_configs: Arc<RwLock<OSCConfigurations>>,
     config: Arc<Config>,
+    reconnect_attempts: Arc<AtomicUsize>,
+    max_reconnect_attempts: usize,
+    base_delay: Duration,
+    max_delay: Duration,
+    last_keepalive: Arc<Mutex<Instant>>,
+    keepalive_timeout: Arc<Mutex<Duration>>,
 }
 
 
@@ -57,6 +65,12 @@ impl TwitchEventSubClient {
             ws_rx: Mutex::new(None),
             osc_configs,
             config: twitch_manager.config.clone(),
+            reconnect_attempts: Arc::new(AtomicUsize::new(0)),
+            max_reconnect_attempts: 10,
+            base_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            last_keepalive: Arc::new(Mutex::new(Instant::now())),
+            keepalive_timeout: Arc::new(Mutex::new(Duration::from_secs(60))),
         };
 
         client
@@ -89,33 +103,27 @@ impl TwitchEventSubClient {
     }
 
     pub async fn connect_and_listen(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let url = "wss://eventsub.wss.twitch.tv/ws".to_string();
-        let mut reconnect_attempt = 0;
-        let max_reconnect_attempts = 5;
-
         loop {
-            match self.connect_websocket(&url).await {
+            match self.connect_websocket("wss://eventsub.wss.twitch.tv/ws").await {
                 Ok(()) => {
-                    reconnect_attempt = 0;
+                    self.reconnect_attempts.store(0, Ordering::SeqCst);
                     if let Err(e) = self.listen_for_messages().await {
                         error!("Error in message handling: {:?}", e);
-                        break;
                     }
                 }
                 Err(e) => {
                     error!("WebSocket error: {:?}", e);
-                    reconnect_attempt += 1;
-                    if reconnect_attempt > max_reconnect_attempts {
+                    let attempts = self.reconnect_attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempts >= self.max_reconnect_attempts {
                         error!("Max reconnection attempts reached. Exiting.");
                         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Max reconnection attempts reached")));
                     }
-                    let backoff_duration = self.calculate_backoff(reconnect_attempt);
-                    warn!("Attempting to reconnect (attempt {}/{}) after {:?}", reconnect_attempt, max_reconnect_attempts, backoff_duration);
+                    let backoff_duration = self.calculate_backoff(attempts);
+                    warn!("Attempting to reconnect (attempt {}/{}) after {:?}", attempts + 1, self.max_reconnect_attempts, backoff_duration);
                     tokio::time::sleep(backoff_duration).await;
                 }
             }
         }
-        Ok(())
     }
 
     async fn connect_websocket(&self, url: &str) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -129,56 +137,42 @@ impl TwitchEventSubClient {
 
     async fn listen_for_messages(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let mut ws_rx = self.ws_rx.lock().await.take().expect("WebSocket receive stream not initialized");
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
 
-        while let Some(message) = ws_rx.next().await {
-            match message {
-                Ok(Message::Text(text)) => {
-                    let response: Value = serde_json::from_str(&text)?;
-                    match response["metadata"]["message_type"].as_str() {
-                        Some("session_welcome") => {
-                            self.handle_welcome_message(&response).await?;
-                        }
-                        Some("session_keepalive") => {
-                            self.handle_keepalive_message(&response).await?;
-                        }
-                        Some("session_reconnect") => {
-                            if let Some(new_url) = response["payload"]["session"]["reconnect_url"].as_str() {
-                                warn!("Received reconnect message. New URL: {}", new_url);
-                                self.handle_reconnect(new_url.to_string()).await?;
-                                return Ok(());
+        loop {
+            tokio::select! {
+                message = ws_rx.next() => {
+                    match message {
+                        Some(Ok(Message::Text(text))) => {
+                            let response: Value = serde_json::from_str(&text)?;
+                            match response["metadata"]["message_type"].as_str() {
+                                Some("session_welcome") => self.handle_welcome_message(&response).await?,
+                                Some("session_keepalive") => self.handle_keepalive_message(&response).await?,
+                                Some("notification") => self.handle_notification(&response).await?,
+                                Some("session_reconnect") => return self.handle_reconnect_message(&response).await,
+                                Some("revocation") => self.handle_revocation(&response).await?,
+                                _ => warn!("Received unhandled message type: {}", response["metadata"]["message_type"]),
                             }
                         }
-                        Some("notification") => {
-                            self.handle_notification(&response).await?;
+                        Some(Ok(Message::Close(frame))) => return self.handle_close_message(frame).await,
+                        Some(Ok(Message::Ping(data))) => self.handle_ping_message(data).await?,
+                        Some(Err(e)) => {
+                            error!("EventSub WebSocket error: {:?}", e);
+                            return Err(Box::new(e));
                         }
-                        Some("revocation") => {
-                            self.handle_revocation(&response).await?;
+                        None => {
+                            warn!("EventSub WebSocket stream ended");
+                            return Ok(());
                         }
-                        _ => {
-                            warn!("Received unhandled message type: {}", response["metadata"]["message_type"]);
-                        }
+                        _ => debug!("Received non-text message"),
                     }
                 }
-                Ok(Message::Close(frame)) => {
-                    warn!("EventSub WebSocket closed with frame: {:?}", frame);
-                    return Ok(());
-                }
-                Ok(Message::Ping(data)) => {
-                    if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
-                        ws_tx.send(Message::Pong(data)).await?;
-                    }
-                }
-                Err(e) => {
-                    error!("EventSub WebSocket error: {:?}", e);
-                    return Err(Box::new(e) as Box<dyn StdError + Send + Sync>);
-                }
-                _ => {
-                    debug!("Received non-text message: {:?}", message);
+                _ = interval.tick() => {
+                    self.check_keepalive().await?;
+                    self.send_ping().await?;
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn handle_reconnect(&self, reconnect_url: String) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -217,12 +211,55 @@ impl TwitchEventSubClient {
             if let Some(session_id) = session["id"].as_str() {
                 self.create_eventsub_subscription(session_id).await?;
             }
+            if let Some(keepalive_timeout) = session["keepalive_timeout_seconds"].as_u64() {
+                let mut timeout = self.keepalive_timeout.lock().await;
+                *timeout = Duration::from_secs(keepalive_timeout);
+            }
         }
+        *self.last_keepalive.lock().await = Instant::now();
         Ok(())
     }
 
     async fn handle_keepalive_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
         debug!("Received EventSub keepalive: {:?}", response);
+        *self.last_keepalive.lock().await = Instant::now();
+        Ok(())
+    }
+
+    async fn handle_ping_message(&self, data: Vec<u8>) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
+            ws_tx.send(Message::Pong(data)).await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_reconnect_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        if let Some(new_url) = response["payload"]["session"]["reconnect_url"].as_str() {
+            warn!("Received reconnect message. New URL: {}", new_url);
+            self.handle_reconnect(new_url.to_string()).await
+        } else {
+            Err("Invalid reconnect message".into())
+        }
+    }
+
+    async fn handle_close_message(&self, frame: Option<CloseFrame<'_>>) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        match frame {
+            Some(frame) => {
+                warn!("EventSub WebSocket closed with code {}: {}", frame.code, frame.reason);
+                match frame.code.into() {
+                    4000 => error!("Internal server error"),
+                    4001 => error!("Client sent inbound traffic"),
+                    4002 => error!("Client failed ping-pong"),
+                    4003 => error!("Connection unused"),
+                    4004 => error!("Reconnect grace time expired"),
+                    4005 => warn!("Network timeout"),
+                    4006 => warn!("Network error"),
+                    4007 => error!("Invalid reconnect"),
+                    _ => warn!("Unknown close code"),
+                }
+            }
+            None => warn!("EventSub WebSocket closed without a frame"),
+        }
         Ok(())
     }
 
@@ -243,6 +280,22 @@ impl TwitchEventSubClient {
         Ok(())
     }
 
+    async fn check_keepalive(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        let last_keepalive = *self.last_keepalive.lock().await;
+        let timeout = *self.keepalive_timeout.lock().await;
+        if last_keepalive.elapsed() > timeout {
+            error!("Keepalive timeout exceeded");
+            return Err("Keepalive timeout".into());
+        }
+        Ok(())
+    }
+
+    async fn send_ping(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
+            ws_tx.send(Message::Ping(vec![])).await?;
+        }
+        Ok(())
+    }
 
     pub async fn refresh_token_periodically(&self) -> Result<(), BoxedError> {
         if let Err(e) = self.twitch_manager.api_client.refresh_token().await {
@@ -252,11 +305,9 @@ impl TwitchEventSubClient {
         Ok(())
     }
 
-    fn calculate_backoff(&self, attempt: u32) -> Duration {
-        let base_delay = 1;
-        let max_delay = 60;
-        let delay = base_delay * 2u64.pow(attempt - 1);
-        Duration::from_secs(delay.min(max_delay))
+    fn calculate_backoff(&self, attempt: usize) -> Duration {
+        let delay = self.base_delay * 2u32.pow(attempt as u32);
+        std::cmp::min(delay, self.max_delay)
     }
 
     async fn create_eventsub_subscription(&self, session_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

@@ -257,14 +257,6 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
     let _channel = config.read().await.twitch_channel_to_join.clone()
         .ok_or("Twitch channel to join not set")?;
 
-    // if let Some(irc_client) = clients.twitch_manager.bot_client.get_client().await {
-    //     if let Err(e) = clients.twitch_manager.redeem_manager.read().await.announce_redeems(&irc_client, &channel).await {
-    //         error!("Failed to announce redeems: {}", e);
-    //     }
-    // } else {
-    //     error!("Failed to get IRC client for announcing redeems");
-    // }
-
     let world_info = Arc::new(Mutex::new(None::<World>));
     let message_handler = Arc::new(MessageHandler::new(
         config.clone(),
@@ -319,8 +311,15 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
             info!("Starting EventSub client");
             let client = eventsub_client.lock().await;
             if let Some(client) = client.as_ref() {
-                if let Err(e) = client.connect_and_listen().await {
-                    error!("EventSub client error: {:?}", e);
+                loop {
+                    match client.connect_and_listen().await {
+                        Ok(_) => {},
+                        Err(e) => {
+                            error!("EventSub client error: {:?}", e);
+                            // Optional: add a delay before attempting to reconnect
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    }
                 }
             } else {
                 error!("EventSub client is not initialized");

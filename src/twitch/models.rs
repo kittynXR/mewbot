@@ -113,7 +113,7 @@ impl RedeemInfo {
             if !self.disabled_games.is_empty() {
                 !self.disabled_games.contains(&current_game.unwrap_or("").to_string())
             } else if !self.enabled_games.is_empty() {
-                self.enabled_games.contains(&current_game.unwrap_or("").to_string())
+                current_game.is_none() || self.enabled_games.contains(&current_game.unwrap().to_string())
             } else {
                 true
             }
