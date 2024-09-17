@@ -42,13 +42,14 @@ fn setup_logger(log_level: LevelFilter, single_level: bool) -> Result<(), fern::
     let log_file_name = Local::now().format("mewbot_%Y-%m-%d_%H-%M-%S.log").to_string();
     let log_file_path = logs_dir.join(log_file_name);
 
-    // Define a list of modules to filter out
+    // Define a list of modules to filter out or set to a higher log level
     let filtered_modules = vec![
         "tokio_tungstenite",
         "tungstenite",
         "hyper_util",
         "serenity",
         "tracing::span",
+        "twitch_irc",
     ];
 
     // Build the logger
@@ -66,9 +67,14 @@ fn setup_logger(log_level: LevelFilter, single_level: bool) -> Result<(), fern::
         })
         .level(log_level)
         .level_for("serenity", LevelFilter::Error)
+        .level_for("twitch_irc", LevelFilter::Warn)
+        .level_for("twitch_irc::connection", LevelFilter::Error)
+        .level_for("twitch_irc::client", LevelFilter::Error)
+        .level_for("mewbot::discord::events::handler", LevelFilter::Warn)
+        .level_for("mewbot::twitch::connection_monitor", LevelFilter::Warn)
         .filter(move |metadata| {
             // Filter out specified modules
-            !filtered_modules.iter().any(|&module| metadata.target().contains(module))
+            !filtered_modules.iter().any(|&module| metadata.target().starts_with(module))
                 && !(metadata.level() <= log::Level::Info && metadata.target().contains("do_heartbeat"))
         })
         .chain(std::io::stdout())
