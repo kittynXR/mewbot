@@ -30,6 +30,7 @@ pub struct IRCClient {
     pub state: Arc<RwLock<ConnectionState>>,
     reconnect_attempts: Arc<AtomicU32>,
     channels: Arc<RwLock<Vec<String>>>,
+    circuit_breaker: Arc<AtomicU32>,
 }
 
 impl IRCClient {
@@ -40,6 +41,7 @@ impl IRCClient {
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
             reconnect_attempts: Arc::new(AtomicU32::new(0)),
             channels: Arc::new(RwLock::new(channels)),
+            circuit_breaker: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -54,7 +56,6 @@ impl IRCClient {
         *state = ConnectionState::Connected;
         drop(state);
 
-        // Perform the connection
         for channel in self.channels.read().await.iter() {
             match self.client.join(channel.clone()) {
                 Ok(_) => info!("Successfully joined channel: {}", channel),
@@ -67,6 +68,7 @@ impl IRCClient {
 
         self.monitor.lock().await.on_connect();
         self.reconnect_attempts.store(0, Ordering::SeqCst);
+        self.circuit_breaker.store(0, Ordering::SeqCst);
         info!("Successfully connected to Twitch IRC");
         Ok(())
     }
@@ -95,37 +97,49 @@ impl IRCClient {
 
     pub async fn reconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         const MAX_RECONNECT_ATTEMPTS: u32 = 5;
-        let mut attempts = 0;
+        const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+        const CIRCUIT_BREAKER_RESET_TIME: Duration = Duration::from_secs(300); // 5 minutes
 
-        while attempts < MAX_RECONNECT_ATTEMPTS {
-            attempts += 1;
-            let backoff_duration = Duration::from_secs(2u64.pow(attempts.min(6)));
+        let attempts = self.reconnect_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        let circuit_breaker_count = self.circuit_breaker.load(Ordering::SeqCst);
 
-            warn!("Attempting to reconnect to Twitch IRC in {} seconds (attempt {}/{})",
-                  backoff_duration.as_secs(), attempts, MAX_RECONNECT_ATTEMPTS);
-            sleep(backoff_duration).await;
-
-            *self.state.write().await = ConnectionState::Reconnecting;
-
-            if let Err(e) = self.disconnect().await {
-                error!("Error during disconnect phase of reconnection: {:?}", e);
-                // Continue with reconnection attempt even if disconnect fails
-            }
-
-            match self.connect().await {
-                Ok(_) => {
-                    info!("Successfully reconnected to Twitch IRC");
-                    return Ok(());
-                }
-                Err(e) => {
-                    error!("Failed to reconnect to Twitch IRC: {:?}", e);
-                }
-            }
+        if circuit_breaker_count >= CIRCUIT_BREAKER_THRESHOLD {
+            error!("Circuit breaker activated. Waiting for {} seconds before attempting to reconnect.", CIRCUIT_BREAKER_RESET_TIME.as_secs());
+            sleep(CIRCUIT_BREAKER_RESET_TIME).await;
+            self.circuit_breaker.store(0, Ordering::SeqCst);
         }
 
-        error!("Failed to reconnect after {} attempts", MAX_RECONNECT_ATTEMPTS);
-        *self.state.write().await = ConnectionState::Disconnected;
-        Err("Max reconnection attempts reached".into())
+        if attempts > MAX_RECONNECT_ATTEMPTS {
+            error!("Max reconnection attempts reached ({}). Abandoning reconnection.", MAX_RECONNECT_ATTEMPTS);
+            *self.state.write().await = ConnectionState::Disconnected;
+            return Err("Max reconnection attempts reached".into());
+        }
+
+        let backoff_duration = Duration::from_secs(2u64.pow(attempts.min(6)));
+        warn!("Attempting to reconnect to Twitch IRC in {} seconds (attempt {}/{})",
+          backoff_duration.as_secs(), attempts, MAX_RECONNECT_ATTEMPTS);
+        sleep(backoff_duration).await;
+
+        *self.state.write().await = ConnectionState::Reconnecting;
+
+        if let Err(e) = self.disconnect().await {
+            error!("Error during disconnect phase of reconnection: {:?}", e);
+            // Continue with reconnection attempt even if disconnect fails
+        }
+
+        match self.connect().await {
+            Ok(_) => {
+                info!("Successfully reconnected to Twitch IRC");
+                self.reconnect_attempts.store(0, Ordering::SeqCst);
+                self.circuit_breaker.store(0, Ordering::SeqCst);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to reconnect to Twitch IRC: {:?}", e);
+                self.circuit_breaker.fetch_add(1, Ordering::SeqCst);
+                Err(e)
+            }
+        }
     }
 
     pub async fn add_channel(&self, channel: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
