@@ -9,7 +9,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use reqwest::Client;
 use super::handlers;
 use std::time::Duration;
-use tokio::time::{timeout, Instant};
+use tokio::time::{interval, timeout, Instant};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::SinkExt;
 use serde::ser::StdError;
@@ -37,6 +37,8 @@ pub struct TwitchEventSubClient {
     max_delay: Duration,
     last_keepalive: Arc<Mutex<Instant>>,
     keepalive_timeout: Arc<Mutex<Duration>>,
+    consecutive_keepalive_failures: Arc<AtomicUsize>,
+    max_consecutive_keepalive_failures: usize,
 }
 
 
@@ -71,6 +73,8 @@ impl TwitchEventSubClient {
             max_delay: Duration::from_secs(60),
             last_keepalive: Arc::new(Mutex::new(Instant::now())),
             keepalive_timeout: Arc::new(Mutex::new(Duration::from_secs(60))),
+            consecutive_keepalive_failures: Arc::new(AtomicUsize::new(0)),
+            max_consecutive_keepalive_failures: 2,
         };
 
         client
@@ -107,22 +111,26 @@ impl TwitchEventSubClient {
             match self.connect_websocket("wss://eventsub.wss.twitch.tv/ws").await {
                 Ok(()) => {
                     self.reconnect_attempts.store(0, Ordering::SeqCst);
+                    self.consecutive_keepalive_failures.store(0, Ordering::SeqCst);
                     if let Err(e) = self.listen_for_messages().await {
                         error!("Error in message handling: {:?}", e);
                     }
+                    warn!("Connection lost. Attempting to reconnect...");
                 }
                 Err(e) => {
-                    error!("WebSocket error: {:?}", e);
-                    let attempts = self.reconnect_attempts.fetch_add(1, Ordering::SeqCst);
-                    if attempts >= self.max_reconnect_attempts {
-                        error!("Max reconnection attempts reached. Exiting.");
-                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Max reconnection attempts reached")));
-                    }
-                    let backoff_duration = self.calculate_backoff(attempts);
-                    warn!("Attempting to reconnect (attempt {}/{}) after {:?}", attempts + 1, self.max_reconnect_attempts, backoff_duration);
-                    tokio::time::sleep(backoff_duration).await;
+                    error!("WebSocket connection error: {:?}", e);
                 }
             }
+
+            let attempts = self.reconnect_attempts.fetch_add(1, Ordering::SeqCst);
+            if attempts >= self.max_reconnect_attempts {
+                error!("Max reconnection attempts reached. Exiting.");
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Max reconnection attempts reached")));
+            }
+
+            let backoff_duration = self.calculate_backoff(attempts);
+            warn!("Attempting to reconnect (attempt {}/{}) after {:?}", attempts + 1, self.max_reconnect_attempts, backoff_duration);
+            tokio::time::sleep(backoff_duration).await;
         }
     }
 
@@ -137,44 +145,55 @@ impl TwitchEventSubClient {
 
     async fn listen_for_messages(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         let mut ws_rx = self.ws_rx.lock().await.take().expect("WebSocket receive stream not initialized");
-        let mut keepalive_check_interval = tokio::time::interval(Duration::from_secs(15)); // Slightly longer than the 10-second timeout
+        let mut keepalive_check_interval = interval(Duration::from_secs(15));
 
         loop {
             tokio::select! {
-            message = ws_rx.next() => {
-                match message {
-                    Some(Ok(Message::Text(text))) => {
-                        let response: Value = serde_json::from_str(&text)?;
-                        match response["metadata"]["message_type"].as_str() {
-                            Some("session_welcome") => self.handle_welcome_message(&response).await?,
-                            Some("session_keepalive") => self.handle_keepalive_message(&response).await?,
-                            Some("notification") => self.handle_notification(&response).await?,
-                            Some("session_reconnect") => return self.handle_reconnect_message(&response).await,
-                            Some("revocation") => self.handle_revocation(&response).await?,
-                            _ => warn!("Received unhandled message type: {}", response["metadata"]["message_type"]),
+                message = ws_rx.next() => {
+                    match message {
+                        Some(Ok(msg)) => self.handle_message(msg).await?,
+                        Some(Err(e)) => {
+                            error!("EventSub WebSocket error: {:?}", e);
+                            return Err(Box::new(e));
+                        }
+                        None => {
+                            warn!("EventSub WebSocket stream ended");
+                            return Ok(());
                         }
                     }
-                    Some(Ok(Message::Close(frame))) => return self.handle_close_message(frame).await,
-                    Some(Err(e)) => {
-                        error!("EventSub WebSocket error: {:?}", e);
-                        return Err(Box::new(e));
-                    }
-                    None => {
-                        warn!("EventSub WebSocket stream ended");
-                        return Ok(());
-                    }
-                    _ => debug!("Received non-text message"),
                 }
-            }
-            _ = keepalive_check_interval.tick() => {
-                if let Err(e) = self.check_keepalive().await {
-                    warn!("Keepalive check failed: {:?}", e);
-                    // Instead of immediately returning an error, we'll log it and continue
-                    // This allows for some leniency in case of minor network hiccups
+                _ = keepalive_check_interval.tick() => {
+                    if let Err(e) = self.check_keepalive().await {
+                        warn!("Keepalive check failed: {:?}", e);
+                        if self.consecutive_keepalive_failures.fetch_add(1, Ordering::SeqCst) + 1 >= self.max_consecutive_keepalive_failures {
+                            error!("Max consecutive keepalive failures reached. Forcing reconnection.");
+                            return Err("Max keepalive failures".into());
+                        }
+                    } else {
+                        self.consecutive_keepalive_failures.store(0, Ordering::SeqCst);
+                    }
                 }
             }
         }
+    }
+
+    async fn handle_message(&self, message: Message) -> Result<(), Box<dyn StdError + Send + Sync>> {
+        match message {
+            Message::Text(text) => {
+                let response: Value = serde_json::from_str(&text)?;
+                match response["metadata"]["message_type"].as_str() {
+                    Some("session_welcome") => self.handle_welcome_message(&response).await?,
+                    Some("session_keepalive") => self.handle_keepalive_message(&response).await?,
+                    Some("notification") => self.handle_notification(&response).await?,
+                    Some("session_reconnect") => return self.handle_reconnect_message(&response).await,
+                    Some("revocation") => self.handle_revocation(&response).await?,
+                    _ => warn!("Received unhandled message type: {}", response["metadata"]["message_type"]),
+                }
+            }
+            Message::Close(frame) => return self.handle_close_message(frame).await,
+            _ => debug!("Received non-text message: {:?}", message),
         }
+        Ok(())
     }
 
     async fn handle_reconnect(&self, reconnect_url: String) -> Result<(), Box<dyn StdError + Send + Sync>> {
@@ -226,6 +245,7 @@ impl TwitchEventSubClient {
         trace!("Received EventSub keepalive: {:?}", response);
         let mut last_keepalive = self.last_keepalive.lock().await;
         *last_keepalive = Instant::now();
+        self.consecutive_keepalive_failures.store(0, Ordering::SeqCst);
         Ok(())
     }
 
@@ -234,7 +254,7 @@ impl TwitchEventSubClient {
         let timeout = *self.keepalive_timeout.lock().await;
         let elapsed = last_keepalive.elapsed();
 
-        if elapsed > timeout * 2 {  // Allow for double the timeout before considering it an error
+        if elapsed > timeout * 3 {  // Allow for triple the timeout before considering it an error
             error!("Keepalive timeout exceeded. Last keepalive: {:?} ago, Timeout: {:?}", elapsed, timeout);
             Err("Keepalive timeout".into())
         } else {
