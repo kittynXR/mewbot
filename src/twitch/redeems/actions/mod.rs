@@ -4,4 +4,5 @@ mod vrc_osc;
 
 pub use coin_game::CoinGameAction;
 pub use ask_ai::AskAIAction;
+pub use ask_ai::SeriousAIAction;
 pub use vrc_osc::VRCOscRedeems;

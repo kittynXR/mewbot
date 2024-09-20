@@ -7,8 +7,7 @@ use crate::twitch::{TwitchAPIClient, TwitchManager};
 use crate::ai::AIClient;
 use crate::osc::OSCConfigurations;
 use crate::twitch::models::{CoinGameState, RedeemConfigurations, RedeemHandler, RedeemInfo, Redemption, RedemptionResult};
-use crate::twitch::redeems::actions::VRCOscRedeems;
-use crate::twitch::redeems::{AskAIAction, CoinGameAction};
+use crate::twitch::redeems::{AskAIAction, SeriousAIAction, CoinGameAction, VRCOscRedeems};
 use crate::twitch::redeems::registry::RedeemRegistry;
 use crate::twitch::redeems::sync_manager::RedeemSyncManager;
 
@@ -66,7 +65,11 @@ impl RedeemManager {
         );
         handlers.insert(
             "mao mao".to_string(),
-            Box::new(AskAIAction::new(ai_client)) as Box<dyn RedeemHandler + Send + Sync>
+            Box::new(AskAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler + Send + Sync>
+        );
+        handlers.insert(
+            "get ai answer".to_string(),
+            Box::new(SeriousAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler + Send + Sync>
         );
         handlers.insert(
             "toss pillo".to_string(),

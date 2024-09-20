@@ -4,4 +4,4 @@ mod registry;
 mod sync_manager;
 
 pub use manager::RedeemManager;
-pub use actions::{CoinGameAction, AskAIAction};
+pub use self::actions::{AskAIAction, SeriousAIAction, CoinGameAction, VRCOscRedeems};
