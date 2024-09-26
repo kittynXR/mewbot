@@ -54,7 +54,8 @@ pub async fn handle(
                 let follower_count = api_client.get_follower_count(&broadcaster_id).await?;
 
                 let prompt = format!(
-                    "Generate a short, friendly welcome message (1-2 sentences) for a new Twitch follower named {}. Make it warm and inviting, welcoming them to the community. Additional info: {}",
+                    "Generate a short, friendly welcome message (1-2 sentences) for a new Twitch follower named {}. Make it warm and inviting, welcoming them to the community. \
+                    Additional info about the new follower that we retrieved from their twitch channel (if they have one): {}",
                     user_name, follower_info
                 );
 
