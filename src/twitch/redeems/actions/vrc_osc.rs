@@ -4,6 +4,7 @@ use std::sync::Arc;
 use log::{debug, error, warn};
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
 use crate::twitch::TwitchManager;
+use crate::osc::models::{OSCMessageType, OSCValue}; // Add this import
 
 #[derive(Clone)]
 pub struct VRCOscRedeems {
@@ -38,7 +39,8 @@ impl VRCOscRedeems {
             if config.uses_osc {
                 match osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value).await {
                     Ok(_) => {
-                        if let Some(duration) = config.execution_duration {
+                        if let Some(frames) = config.execution_duration {
+                            let duration = std::time::Duration::from_secs_f32(frames as f32 / 60.0);
                             tokio::time::sleep(duration).await;
                             if let Err(e) = osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value).await {
                                 error!("Failed to reset OSC value for {}: {}", redemption.reward_title, e);

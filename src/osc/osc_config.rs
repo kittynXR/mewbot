@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
 #[derive(Serialize, Deserialize)]
@@ -48,7 +47,7 @@ impl Default for OSCConfigurations {
             osc_type: OSCMessageType::Boolean,
             osc_value: OSCValue::Boolean(true),
             default_value: OSCValue::Boolean(false),
-            execution_duration: Some(Duration::from_secs(5)),
+            execution_duration: Some(300), // 5 seconds * 60 frames
             send_chat_message: false,
         });
         configs.insert("channel.subscribe".to_string(), OSCConfig {
@@ -57,7 +56,7 @@ impl Default for OSCConfigurations {
             osc_type: OSCMessageType::Boolean,
             osc_value: OSCValue::Boolean(true),
             default_value: OSCValue::Boolean(false),
-            execution_duration: Some(Duration::from_secs(5)),
+            execution_duration: Some(300), // 5 seconds * 60 frames
             send_chat_message: false,
         });
         OSCConfigurations { configs }

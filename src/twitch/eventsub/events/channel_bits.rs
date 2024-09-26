@@ -42,7 +42,7 @@ pub async fn handle(
             osc_type: OSCMessageType::Integer,
             osc_value: OSCValue::Integer(osc_value as i32),
             default_value: OSCValue::Integer(0),
-            execution_duration: Some(std::time::Duration::from_secs(1)),
+            execution_duration: Some(60),
             send_chat_message: false,
         };
 
@@ -52,7 +52,8 @@ pub async fn handle(
             Ok(_) => {
                 debug!("Successfully sent OSC message for bits event");
                 // Reset the OSC value after the execution duration
-                if let Some(duration) = osc_config.execution_duration {
+                if let Some(frames) = osc_config.execution_duration {
+                    let duration = std::time::Duration::from_secs_f32(frames as f32 / 60.0);
                     tokio::time::sleep(duration).await;
                     if let Err(e) = osc_manager.send_osc_message(&osc_config.osc_endpoint, &osc_config.osc_type, &osc_config.default_value).await {
                         error!("Failed to reset OSC value for bits event: {}", e);

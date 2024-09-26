@@ -1,5 +1,5 @@
 use std::sync::Arc;
-
+use std::time::Duration;
 use crate::osc::client::OSCClient;
 use crate::osc::errors::OSCError;
 use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
@@ -58,7 +58,8 @@ impl VRChatOSC {
     pub async fn send_osc_message_with_reset(&self, config: &OSCConfig) -> Result<(), OSCError> {
         self.client.read().await.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value).await?;
 
-        if let Some(duration) = config.execution_duration {
+        if let Some(frames) = config.execution_duration {
+            let duration = Duration::from_secs_f32(frames as f32 / 60.0);
             tokio::time::sleep(duration).await;
             self.client.read().await.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value).await?;
         }

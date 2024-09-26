@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use async_trait::async_trait;
 use crate::osc::models as osc_models;
+use crate::osc::models::{OSCConfig, OSCMessageType, OSCValue};
 
 pub mod channel_points {
     use super::*;
@@ -81,7 +82,6 @@ pub struct RedeemInfo {
     pub user_input_required: bool,
     pub auto_complete: bool,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedeemConfigurations {
@@ -220,92 +220,6 @@ impl RedeemSettings {
 
     pub fn get_cooldown_settings(&self) -> (Option<u32>, Option<u32>, Option<u32>) {
         (self.cooldown, self.limit_per_stream, self.limit_per_user)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OSCConfig {
-    pub uses_osc: bool,
-    pub osc_endpoint: String,
-    pub osc_type: OSCMessageType,
-    pub osc_value: OSCValue,
-    pub default_value: OSCValue,
-    #[serde(with = "duration_seconds")]
-    pub execution_duration: Option<Duration>,
-    pub send_chat_message: bool,
-}
-
-mod duration_seconds {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match duration {
-            Some(d) => serializer.serialize_u64(d.as_secs()),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<u64>::deserialize(deserializer).map(|opt| opt.map(Duration::from_secs))
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum OSCMessageType {
-    Integer,
-    Float,
-    String,
-    Bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum OSCValue {
-    Integer(i32),
-    Float(f32),
-    String(String),
-    Bool(bool),
-}
-
-impl From<OSCConfig> for osc_models::OSCConfig {
-    fn from(config: OSCConfig) -> Self {
-        osc_models::OSCConfig {
-            uses_osc: config.uses_osc,
-            osc_endpoint: config.osc_endpoint,
-            osc_type: config.osc_type.into(),
-            osc_value: config.osc_value.into(),
-            default_value: config.default_value.into(),
-            execution_duration: config.execution_duration,
-            send_chat_message: config.send_chat_message,
-        }
-    }
-}
-
-impl From<OSCMessageType> for osc_models::OSCMessageType {
-    fn from(osc_type: OSCMessageType) -> Self {
-        match osc_type {
-            OSCMessageType::Integer => osc_models::OSCMessageType::Integer,
-            OSCMessageType::Float => osc_models::OSCMessageType::Float,
-            OSCMessageType::String => osc_models::OSCMessageType::String,
-            OSCMessageType::Bool => osc_models::OSCMessageType::Boolean,
-        }
-    }
-}
-
-impl From<OSCValue> for osc_models::OSCValue {
-    fn from(value: OSCValue) -> Self {
-        match value {
-            OSCValue::Integer(i) => osc_models::OSCValue::Integer(i),
-            OSCValue::Float(f) => osc_models::OSCValue::Float(f),
-            OSCValue::String(s) => osc_models::OSCValue::String(s),
-            OSCValue::Bool(b) => osc_models::OSCValue::Boolean(b),
-        }
     }
 }
 
