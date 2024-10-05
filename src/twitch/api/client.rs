@@ -3,9 +3,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex};
-use std::time::{Duration, Instant};
+use chrono::{DateTime, Utc, Duration};
 use warp::Filter;
-use tokio::time::timeout;
+use tokio::time::{timeout, sleep, Duration as TokioDuration};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, Ordering};
 use log::{debug, error, info, warn};
@@ -44,9 +44,9 @@ impl From<Box<dyn StdError + Send + Sync>> for TwitchAPIError {
 struct TwitchToken {
     access_token: String,
     refresh_token: String,
-    expires_in: u64,
+    expires_in: i64,
     #[serde(skip)]
-    expires_at: Option<Instant>,
+    expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone)]
@@ -246,7 +246,7 @@ impl TwitchAPIClient {
                 access_token: access_token.clone(),
                 refresh_token: refresh_token.clone(),
                 expires_in: 0,
-                expires_at: Some(Instant::now()),
+                expires_at: Some(Utc::now()),
             });
             warn!("Existing Twitch API tokens found.");
         } else {
@@ -258,6 +258,7 @@ impl TwitchAPIClient {
 
         Ok(())
     }
+
 
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::SeqCst)
@@ -310,12 +311,12 @@ impl TwitchAPIClient {
             println!("Failed to open the browser automatically. Please open the URL manually.");
         }
 
-        let code = match timeout(Duration::from_secs(300), async {
+        let code = match timeout(TokioDuration::from_secs(300), async {
             loop {
                 if let Some(code) = auth_code.lock().await.take() {
                     return code;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                sleep(TokioDuration::from_millis(100)).await;
             }
         }).await {
             Ok(code) => code,
@@ -376,6 +377,7 @@ impl TwitchAPIClient {
         Ok(())
     }
 
+
     pub async fn get_token(&self) -> Result<String, TwitchAPIError> {
         if !self.is_initialized() {
             self.initialize().await?;
@@ -383,7 +385,7 @@ impl TwitchAPIClient {
 
         let token = self.token.lock().await;
         if let Some(token) = &*token {
-            if token.expires_at.map_or(false, |expires_at| expires_at > std::time::Instant::now()) {
+            if token.expires_at.map_or(false, |expires_at| expires_at > Utc::now()) {
                 return Ok(token.access_token.clone());
             }
         }
@@ -413,7 +415,7 @@ impl TwitchAPIClient {
             .await?;
 
         let mut new_token = res;
-        new_token.expires_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(new_token.expires_in));
+        new_token.expires_at = Some(Utc::now() + Duration::seconds(new_token.expires_in));
 
         let access_token = new_token.access_token.clone();
         *self.token.lock().await = Some(new_token.clone());

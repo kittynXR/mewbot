@@ -3,7 +3,7 @@ use crate::twitch::roles::UserRole;
 use crate::ai::AIClient;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use chrono::{DateTime, Utc, Duration};
 use log::{error};
 use crate::twitch::TwitchManager;
 use crate::twitch::models::shoutout::{GLOBAL_COOLDOWN_SECONDS};
@@ -14,12 +14,12 @@ pub struct ShoutoutQueueItem {
     pub(crate) user_id: String,
     pub(crate) username: String,
     #[allow(dead_code)]
-    enqueue_time: Instant,
+    enqueue_time: DateTime<Utc>,
 }
 
 pub struct ShoutoutCooldown {
-    last_global_shoutout: Instant,
-    per_user: HashMap<String, Instant>,
+    last_global_shoutout: DateTime<Utc>,
+    per_user: HashMap<String, DateTime<Utc>>,
     queue: VecDeque<ShoutoutQueueItem>,
 }
 
@@ -32,18 +32,18 @@ impl Default for ShoutoutCooldown {
 impl ShoutoutCooldown {
     pub fn new() -> Self {
         Self {
-            last_global_shoutout: Instant::now() - Duration::from_secs(GLOBAL_COOLDOWN_SECONDS + 1),
+            last_global_shoutout: Utc::now() - Duration::seconds(GLOBAL_COOLDOWN_SECONDS as i64 + 1),
             per_user: HashMap::new(),
             queue: VecDeque::new(),
         }
     }
 
     pub fn can_shoutout(&self) -> bool {
-        Instant::now().duration_since(self.last_global_shoutout) >= Duration::from_secs(GLOBAL_COOLDOWN_SECONDS)
+        Utc::now().signed_duration_since(self.last_global_shoutout) >= Duration::seconds(GLOBAL_COOLDOWN_SECONDS as i64)
     }
 
     pub fn update_cooldowns(&mut self, user_id: &str) {
-        let now = Instant::now();
+        let now = Utc::now();
         self.last_global_shoutout = now;
         self.per_user.insert(user_id.to_string(), now);
     }
@@ -52,7 +52,7 @@ impl ShoutoutCooldown {
         self.queue.push_back(ShoutoutQueueItem {
             user_id,
             username,
-            enqueue_time: Instant::now(),
+            enqueue_time: Utc::now(),
         });
     }
 

@@ -21,7 +21,7 @@ impl RedeemHandler for AskAIAction {
                            Answer questions humorously and in a playful manner. \
                            We live on Twitch in a cozy but high-tech corner of the metaverse. \
                            Be friendly and love the chat who asks you these questions. \
-                           Treat chat like they were your own children. ";
+                           Treat chat like they were your own children.";
 
         let user_input = redemption.user_input.as_deref().unwrap_or("").trim();
 

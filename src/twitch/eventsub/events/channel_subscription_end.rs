@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use chrono::{DateTime, Utc, Duration};
 use lazy_static::lazy_static;
 use crate::twitch::irc::TwitchBotClient;
 use crate::twitch::TwitchManager;
@@ -14,10 +14,10 @@ struct SubEndInfo {
 
 lazy_static! {
     static ref PENDING_SUB_ENDS: Mutex<HashMap<String, SubEndInfo>> = Mutex::new(HashMap::new());
-    static ref LAST_SEND_TIME: Mutex<Instant> = Mutex::new(Instant::now());
+    static ref LAST_SEND_TIME: Mutex<DateTime<Utc>> = Mutex::new(Utc::now());
 }
 
-const BATCH_WINDOW: Duration = Duration::from_secs(5);
+const BATCH_WINDOW: Duration = Duration::seconds(5);
 
 pub async fn handle(
     event: &Value,
@@ -34,9 +34,9 @@ pub async fn handle(
         pending_subs.insert(user_name, SubEndInfo { tier, months });
 
         let mut last_send_time = LAST_SEND_TIME.lock().await;
-        if last_send_time.elapsed() >= BATCH_WINDOW {
+        if Utc::now().signed_duration_since(*last_send_time) >= BATCH_WINDOW {
             send_combined_message(pending_subs, irc_client, channel).await?;
-            *last_send_time = Instant::now();
+            *last_send_time = Utc::now();
         }
     }
 

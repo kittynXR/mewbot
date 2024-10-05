@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
+use chrono::{DateTime, Utc, Duration};
 use log::{debug, error, info, warn};
 use tokio::sync::{RwLock, mpsc, broadcast, Mutex};
 use tokio::time::sleep;
@@ -98,14 +98,14 @@ impl IRCClient {
     pub async fn reconnect(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         const MAX_RECONNECT_ATTEMPTS: u32 = 5;
         const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
-        const CIRCUIT_BREAKER_RESET_TIME: Duration = Duration::from_secs(300); // 5 minutes
+        const CIRCUIT_BREAKER_RESET_TIME: Duration = Duration::seconds(300); // 5 minutes
 
         let attempts = self.reconnect_attempts.fetch_add(1, Ordering::SeqCst) + 1;
         let circuit_breaker_count = self.circuit_breaker.load(Ordering::SeqCst);
 
         if circuit_breaker_count >= CIRCUIT_BREAKER_THRESHOLD {
-            error!("Circuit breaker activated. Waiting for {} seconds before attempting to reconnect.", CIRCUIT_BREAKER_RESET_TIME.as_secs());
-            sleep(CIRCUIT_BREAKER_RESET_TIME).await;
+            error!("Circuit breaker activated. Waiting for {} seconds before attempting to reconnect.", CIRCUIT_BREAKER_RESET_TIME.num_seconds());
+            sleep(CIRCUIT_BREAKER_RESET_TIME.to_std().unwrap()).await;
             self.circuit_breaker.store(0, Ordering::SeqCst);
         }
 
@@ -115,10 +115,10 @@ impl IRCClient {
             return Err("Max reconnection attempts reached".into());
         }
 
-        let backoff_duration = Duration::from_secs(2u64.pow(attempts.min(6)));
+        let backoff_duration = Duration::seconds(2i64.pow(attempts.min(6)));
         warn!("Attempting to reconnect to Twitch IRC in {} seconds (attempt {}/{})",
-          backoff_duration.as_secs(), attempts, MAX_RECONNECT_ATTEMPTS);
-        sleep(backoff_duration).await;
+            backoff_duration.num_seconds(), attempts, MAX_RECONNECT_ATTEMPTS);
+        sleep(backoff_duration.to_std().unwrap()).await;
 
         *self.state.write().await = ConnectionState::Reconnecting;
 
@@ -248,7 +248,7 @@ impl TwitchIRCManager {
         let clients = self.clients.read().await;
         for (username, client) in clients.iter() {
             info!("Disconnecting client for user: {}", username);
-            match tokio::time::timeout(Duration::from_secs(5), client.disconnect()).await {
+            match tokio::time::timeout(Duration::seconds(5).to_std().unwrap(), client.disconnect()).await {
                 Ok(Ok(_)) => info!("Successfully disconnected client for user: {}", username),
                 Ok(Err(e)) => warn!("Error disconnecting client for user {}: {:?}", username, e),
                 Err(_) => warn!("Timed out while disconnecting client for user: {}", username),
@@ -267,7 +267,7 @@ impl TwitchIRCManager {
             StaticLoginCredentials::new(username.clone(), Some(cleaned_oauth_token))
         );
 
-        client_config.connect_timeout = std::time::Duration::from_secs(30);
+        client_config.connect_timeout = Duration::seconds(30).to_std().unwrap();
         client_config.max_channels_per_connection = 10;
         client_config.max_waiting_messages_per_connection = 100;
 

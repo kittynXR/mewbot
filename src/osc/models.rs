@@ -36,6 +36,7 @@ mod duration_frames {
         S: Serializer,
     {
         match frames {
+
             Some(f) => serializer.serialize_u32(*f),
             None => serializer.serialize_none(),
         }

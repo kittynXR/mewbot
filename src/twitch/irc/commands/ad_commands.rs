@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use chrono::{DateTime, Utc, Duration};
 use tokio::time::sleep;
 use crate::twitch::irc::command_system::{Command, CommandContext};
 use crate::twitch::roles::UserRole;
@@ -7,7 +7,7 @@ use crate::twitch::roles::UserRole;
 pub struct AdInfo {
     pub text: String,
     pub interval: Duration,
-    pub end_time: Instant,
+    pub end_time: DateTime<Utc>,
 }
 
 pub struct AdManager {
@@ -20,6 +20,7 @@ impl Default for AdManager {
     }
 }
 
+
 impl AdManager {
     pub fn new() -> Self {
         Self {
@@ -31,7 +32,7 @@ impl AdManager {
         self.ads.insert(id, AdInfo {
             text,
             interval,
-            end_time: Instant::now() + duration,
+            end_time: Utc::now() + duration,
         });
     }
 
@@ -44,9 +45,10 @@ impl AdManager {
     }
 
     pub fn get_active_ads(&self) -> Vec<(String, &AdInfo)> {
+        let now = Utc::now();
         self.ads
             .iter()
-            .filter(|(_, info)| info.end_time > Instant::now())
+            .filter(|(_, info)| info.end_time > now)
             .map(|(id, info)| (id.clone(), info))
             .collect()
     }
@@ -74,18 +76,18 @@ impl Command for StartAdCommand {
             return Ok(());
         }
 
-        let interval_minutes: u64 = args[0].parse()?;
-        let duration_minutes: u64 = args[1].parse()?;
+        let interval_minutes: i64 = args[0].parse()?;
+        let duration_minutes: i64 = args[1].parse()?;
         let ad_text = args[2..].join(" ");
 
         let ad_manager = ctx.twitch_manager.get_ad_manager();
         let mut ad_manager_lock = ad_manager.write().await;
-        let ad_id = format!("ad_{}", Instant::now().elapsed().as_secs());
+        let ad_id = format!("ad_{}", Utc::now().timestamp());
         ad_manager_lock.add_ad(
             ad_id.clone(),
             ad_text.clone(),
-            Duration::from_secs(interval_minutes * 60),
-            Duration::from_secs(duration_minutes * 60),
+            Duration::minutes(interval_minutes),
+            Duration::minutes(duration_minutes),
         );
         drop(ad_manager_lock);
 
@@ -95,10 +97,10 @@ impl Command for StartAdCommand {
         let ad_manager_clone = ad_manager.clone();
         tokio::spawn(async move {
             loop {
-                sleep(Duration::from_secs(interval_minutes * 60)).await;
+                sleep(std::time::Duration::from_secs((interval_minutes * 60) as u64)).await;
                 let ad_manager_lock = ad_manager_clone.read().await;
                 if let Some(ad_info) = ad_manager_lock.ads.get(&ad_id) {
-                    if Instant::now() < ad_info.end_time {
+                    if Utc::now() < ad_info.end_time {
                         bot_client.send_message(&channel, &ad_info.text).await.ok();
                     } else {
                         break;
