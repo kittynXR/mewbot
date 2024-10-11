@@ -1,8 +1,12 @@
 use std::path::Path;
 use std::fs;
 use std::io::{self, Write};
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use log::LevelFilter;
+use log::{error, info, LevelFilter};
+use reqwest::Client;
+use tokio::sync::RwLock;
+use crate::vrchat::VRChatClient;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SocialLinks {
@@ -522,6 +526,76 @@ impl Config {
         self.log_level = level;
         println!("Log level set to {:?}", self.log_level);
         self.save()?;
+        Ok(())
+    }
+
+    pub async fn reinitialize_twitch_token(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Reinitializing Twitch token...");
+        let client = Client::new();
+
+        let params = [
+            ("client_id", self.twitch_client_id.as_ref().ok_or("Twitch client ID not set")?),
+            ("client_secret", self.twitch_client_secret.as_ref().ok_or("Twitch client secret not set")?),
+            ("grant_type", &"refresh_token".to_string()),
+            ("refresh_token", self.twitch_refresh_token.as_ref().ok_or("Twitch refresh token not set")?),
+        ];
+
+        let res = client.post("https://id.twitch.tv/oauth2/token")
+            .form(&params)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        if let (Some(access_token), Some(refresh_token)) = (res["access_token"].as_str(), res["refresh_token"].as_str()) {
+            self.twitch_access_token = Some(access_token.to_string());
+            self.twitch_refresh_token = Some(refresh_token.to_string());
+            info!("Twitch token reinitialized successfully.");
+            Ok(())
+        } else {
+            error!("Failed to reinitialize Twitch token: {:?}", res);
+            Err("Failed to reinitialize Twitch token".into())
+        }
+    }
+
+    pub async fn reinitialize_vrchat_token(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Reinitializing VRChat token...");
+
+        // Temporarily remove the VRChat auth cookie to force a new login
+        self.vrchat_auth_cookie = None;
+
+        // Create a temporary VRChatClient to handle the login process
+        let config = Arc::new(RwLock::new(self.clone()));
+        let (websocket_tx, _) = tokio::sync::mpsc::unbounded_channel();
+
+        match VRChatClient::new(config.clone(), websocket_tx).await {
+            Ok(vrchat_client) => {
+                let new_auth_cookie = vrchat_client.get_auth_cookie().await;
+                self.vrchat_auth_cookie = Some(new_auth_cookie);
+                info!("VRChat token reinitialized successfully.");
+                self.save()?; // Save the entire config
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to reinitialize VRChat token: {}", e);
+                Err(Box::new(e))
+            }
+        }
+    }
+
+    pub fn save_specific_fields(&self, fields: &[&str]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut config_to_save = serde_json::Map::new();
+        let full_config = serde_json::to_value(self)?;
+
+        for field in fields {
+            if let Some(value) = full_config.get(field) {
+                config_to_save.insert(field.to_string(), value.clone());
+            }
+        }
+
+        let config_str = toml::to_string_pretty(&config_to_save)?;
+        std::fs::write(Self::CONFIG_PATH, config_str)?;
+        info!("Saved specific fields to config file: {:?}", fields);
         Ok(())
     }
 }

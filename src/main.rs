@@ -23,6 +23,14 @@ struct Args {
     /// Enable single-level logging (only show logs of the specified level)
     #[arg(long, action = ArgAction::SetTrue)]
     single_level: bool,
+
+    /// Reinitialize Twitch token
+    #[arg(long, action = ArgAction::SetTrue)]
+    reinit_twitch_token: bool,
+
+    /// Reinitialize VRChat token
+    #[arg(long, action = ArgAction::SetTrue)]
+    reinit_vrchat_token: bool,
 }
 
 fn setup_logger(log_level: LevelFilter, single_level: bool) -> Result<(), fern::InitError> {
@@ -111,6 +119,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize logger
     setup_logger(log_level, args.single_level)?;
+
+    // Handle token reinitialization
+    if args.reinit_twitch_token {
+        config.reinitialize_twitch_token().await?;
+        println!("Twitch token reinitialized successfully.");
+        return Ok(());
+    }
+
+    if args.reinit_vrchat_token {
+        config.reinitialize_vrchat_token().await?;
+        println!("VRChat token reinitialized successfully.");
+        return Ok(());
+    }
 
     // Update config with new log level and save
     config.log_level = log_level;
