@@ -549,24 +549,34 @@ impl OBSWebSocketClient {
 
     pub async fn refresh_browser_source(&self, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let request_id = "refresh_browser_source";
+        debug!("Attempting to refresh browser source: {}", source_name);
+
         let payload = json!({
-            "op": 6,
-            "d": {
-                "requestType": "PressInputPropertiesButton",
-                "requestId": request_id,
-                "requestData": {
-                    "inputName": source_name,
-                    "propertyName": "refreshNoCache"
-                }
+        "op": 6,
+        "d": {
+            "requestType": "TriggerInputPropertiesAction", // Changed from PressInputPropertiesButton
+            "requestId": request_id,
+            "requestData": {
+                "inputName": source_name,
+                "actionName": "refresh" // Changed from propertyName/refreshNoCache
             }
-        });
+        }
+    });
 
-        self.send_request(payload, request_id).await?;
-
-        Ok(())
+        debug!("Sending refresh payload: {}", payload);
+        match self.send_request(payload, request_id).await {
+            Ok(response) => {
+                debug!("Received response for refresh: {:?}", response);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to refresh browser source {}: {:?}", source_name, e);
+                Err(e)
+            }
+        }
     }
 
-    async fn send_request(&self, payload: Value, request_id: &str) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    pub(crate) async fn send_request(&self, payload: Value, request_id: &str) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let (tx, rx) = oneshot::channel();
         self.response_channels.write().await.insert(request_id.to_string(), tx);
 

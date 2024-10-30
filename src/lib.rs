@@ -266,6 +266,7 @@ pub async fn run(mut clients: BotClients, config: Arc<RwLock<Config>>) -> Result
         world_info,
         clients.vrchat.clone().expect("VRChatClient should be initialized"),
         clients.ai_client.clone(),
+        clients.obs.clone().expect("OBS manager should be initialized"), // Add this line
     ));
 
     // Start only one message handler

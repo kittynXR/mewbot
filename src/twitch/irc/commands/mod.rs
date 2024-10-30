@@ -11,6 +11,7 @@ pub(crate) mod followers;
 pub(crate) mod calc;
 pub(crate) mod fun_commands;
 pub(crate) mod ad_commands;
+pub(crate) mod reset_drop_game;
 
 pub use ping::PingCommand;
 pub use calc::CalcCommand;
@@ -22,3 +23,4 @@ pub use uptime::UptimeCommand;
 pub use verify::VerifyCommand;
 pub use vrc::VRCCommand;
 pub use world::WorldCommand;
+pub use reset_drop_game::ResetDropGameCommand;

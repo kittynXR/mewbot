@@ -14,6 +14,7 @@ use crate::twitch::redeems::RedeemManager;
 use crate::twitch::roles::{get_user_role, UserRole};
 use crate::vrchat::VRChatManager;
 use crate::vrchat::models::World;
+use crate::obs::OBSManager;
 
 pub struct CommandContext {
     pub msg: PrivmsgMessage,
@@ -28,6 +29,7 @@ pub struct CommandContext {
     pub vrchat_manager: Arc<VRChatManager>,
     pub ai_client: Option<Arc<AIClient>>,
     pub is_stream_online: bool,
+    pub obs_manager: Arc<OBSManager>,
 }
 
 #[async_trait::async_trait]

@@ -1,6 +1,6 @@
 // src/obs/mod.rs
 
-mod models;
+pub(crate) mod models;
 mod websocket;
 
 pub use models::{

@@ -145,19 +145,67 @@ impl OBSManager {
         Ok(())
     }
 
-    async fn refresh_source(&self, instance_name: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut clients = self.clients.write().await;
-        if let Some(client) = clients.get_mut(instance_name) {
-            client.refresh_browser_source(source_name).await?;
-            // Optionally get and send updated info
-            // self.get_info().await?;
+    pub(crate) async fn refresh_source(&self, instance_name: &str, source_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let clients = self.clients.read().await;
+
+        if let Some(client) = clients.get(instance_name) {
+            let state = client.state.read().await;
+            if state.connection.is_none() {
+                return Err("OBS instance is not connected".into());
+            }
+            drop(state);
+
+            info!("Attempting to refresh source {} on instance {}", source_name, instance_name);
+            let request_id = "refresh_browser_source";
+
+            // First try to verify the source exists and is a browser source
+            let verify_payload = json!({
+            "op": 6,
+            "d": {
+                "requestType": "GetInputSettings",
+                "requestId": "verify_source",
+                "requestData": {
+                    "inputName": source_name
+                }
+            }
+        });
+
+            match client.send_request(verify_payload, "verify_source").await {
+                Ok(response) => {
+                    info!("Source info response: {:?}", response);
+
+                    // Now try to refresh using SetInputSettings with the same settings
+                    if let Some(settings) = response["responseData"]["inputSettings"].as_object() {
+                        info!("Attempting to refresh by re-applying settings");
+                        let refresh_payload = json!({
+                        "op": 6,
+                        "d": {
+                            "requestType": "SetInputSettings",
+                            "requestId": request_id,
+                            "requestData": {
+                                "inputName": source_name,
+                                "inputSettings": settings
+                            }
+                        }
+                    });
+
+                        client.send_request(refresh_payload, request_id).await?;
+                        info!("Settings re-applied to {} on {}", source_name, instance_name);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to verify source: {:?}", e);
+                    return Err(e);
+                }
+            }
+
+            Ok(())
         } else {
-            return Err(format!("OBS instance not found: {}", instance_name).into());
+            Err(format!("OBS instance not found: {}", instance_name).into())
         }
-        Ok(())
     }
 
-    async fn get_instances(&self) -> Vec<OBSInstanceState> {
+    pub(crate) async fn get_instances(&self) -> Vec<OBSInstanceState> {
         let clients = self.clients.read().await;
         let mut instances = Vec::new();
         for (name, client) in clients.iter() {

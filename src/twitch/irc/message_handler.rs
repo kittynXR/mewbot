@@ -6,6 +6,7 @@ use log::{debug, error};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use twitch_irc::message::ServerMessage;
 use crate::ai::AIClient;
+use crate::obs::OBSManager;
 use crate::vrchat::{VRChatManager, World};
 use crate::web_ui::websocket::WebSocketMessage;
 use crate::twitch::manager::TwitchManager;
@@ -21,6 +22,7 @@ use crate::twitch::irc::commands::{
     VerifyCommand,
     VRCCommand,
     WorldCommand,
+    ResetDropGameCommand,
 };
 
 
@@ -33,6 +35,7 @@ pub struct MessageHandler {
     vrchat_manager: Arc<VRChatManager>,
     ai_client: Option<Arc<AIClient>>,
     command_registry: CommandRegistry,
+    obs_manager: Arc<OBSManager>,
 }
 
 impl MessageHandler {
@@ -44,6 +47,7 @@ impl MessageHandler {
         world_info: Arc<Mutex<Option<World>>>,
         vrchat_manager: Arc<VRChatManager>,
         ai_client: Option<Arc<AIClient>>,
+        obs_manager: Arc<OBSManager>,
     ) -> Self {
         let mut command_registry = CommandRegistry::new();
 
@@ -60,6 +64,7 @@ impl MessageHandler {
         command_registry.register(Box::new(VerifyCommand));
         command_registry.register(Box::new(VRCCommand));
         command_registry.register(Box::new(WorldCommand));
+        command_registry.register(Box::new(ResetDropGameCommand));
 
 
         MessageHandler {
@@ -71,6 +76,7 @@ impl MessageHandler {
             vrchat_manager,
             ai_client,
             command_registry,
+            obs_manager,
         }
     }
 
@@ -129,6 +135,7 @@ impl MessageHandler {
                     vrchat_manager: self.vrchat_manager.clone(),
                     ai_client: self.ai_client.clone(),
                     is_stream_online: self.twitch_manager.is_stream_live().await,
+                    obs_manager: self.obs_manager.clone(),
                 };
 
                 self.command_registry.execute(cmd, &ctx, args).await?;
