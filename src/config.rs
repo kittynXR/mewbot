@@ -59,6 +59,7 @@ pub struct Config {
     pub social_links: SocialLinks,
     #[serde(default)]
     pub obs_manager: OBSManagerConfig,
+    pub discord_announcement_channel_id: Option<String>,
 }
 
 impl Default for Config {
@@ -85,6 +86,7 @@ impl Default for Config {
             additional_streams: vec![],
             social_links: SocialLinks::default(),
             obs_manager: OBSManagerConfig::default(),
+            discord_announcement_channel_id: None,
         }
     }
 }
@@ -193,6 +195,16 @@ impl Config {
         // Discord
         if self.discord_token.is_none() {
             self.discord_token = Some(Self::prompt_input("Enter your Discord Bot Token (leave empty if not using Discord): ")?);
+        }
+
+        // In Config::prompt_for_missing_fields or Config::initial_setup
+        if self.discord_announcement_channel_id.is_none() {
+            println!("To get the announcement channel ID:");
+            println!("1. Enable Developer Mode in Discord (User Settings > App Settings > Advanced)");
+            println!("2. Right-click the channel where announcements should go");
+            println!("3. Click 'Copy ID'");
+            let channel_id = Self::prompt_input("Enter the Discord channel ID for stream announcements: ")?;
+            self.discord_announcement_channel_id = Some(channel_id);
         }
 
         // OBS Manager Configuration
@@ -364,6 +376,16 @@ impl Config {
         let mut buffer = String::new();
         io::stdin().read_line(&mut buffer)?;
 
+        let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
+        let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
+        let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
+
+        println!("To get the announcement channel ID:");
+        println!("1. Enable Developer Mode in Discord (User Settings > App Settings > Advanced)");
+        println!("2. Right-click the channel where announcements should go");
+        println!("3. Click 'Copy ID'");
+        let discord_announcement_channel_id = Self::prompt_input("Enter the Discord channel ID for stream announcements: ")?;
+
         // OBS Manager Configuration
         println!("\nNow, let's configure your OBS setup.");
         let setup_type = Self::prompt_input("Are you using a 1 PC or 2 PC streaming setup? (1/2): ")?;
@@ -398,10 +420,6 @@ impl Config {
             instance1,
             instance2,
         };
-
-        let discord_token = Self::prompt_input("Enter your Discord Bot Token: ")?;
-        let discord_client_id = Self::prompt_input("Enter your Discord Application ID: ")?;
-        let discord_guild_id = Self::prompt_input("Enter the Discord Guild ID where the bot will operate: ")?;
 
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
@@ -464,6 +482,7 @@ impl Config {
             additional_streams,
             social_links,
             obs_manager,
+            discord_announcement_channel_id: Some(discord_announcement_channel_id),
         };
 
         config.save()?;
