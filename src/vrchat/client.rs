@@ -1,7 +1,7 @@
 use tokio::time::{sleep, Instant};
 use crate::vrchat::models::{Friend, VRChatError, VRChatStatus};
 use crate::config::Config;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, COOKIE};
 use serde_json::Value;
 use std::sync::Arc;
@@ -13,6 +13,8 @@ use rpassword::read_password;
 use tokio::sync::mpsc;
 use crate::vrchat::World;
 use crate::web_ui::websocket::WebSocketMessage;
+
+const VRCHAT_API_BASE: &str = "https://api.vrchat.cloud/api/1";
 
 pub struct VRChatClient {
     client: Client,
@@ -72,11 +74,12 @@ impl VRChatClient {
         io::stdout().flush().map_err(|e| VRChatError(format!("Failed to flush stdout: {}", e)))?;
         let password = read_password().map_err(|e| VRChatError(format!("Failed to read password: {}", e)))?;
 
-        let resp = client.get("https://api.vrchat.cloud/api/1/auth/user")
+        let resp = client.get(&format!("{}/auth/user", VRCHAT_API_BASE))
             .basic_auth(username, Some(&password))
             .send()
             .await
             .map_err(|e| VRChatError(format!("Failed to send login request: {}", e)))?;
+
 
         println!("Login response status: {}", resp.status());
 
@@ -114,7 +117,7 @@ impl VRChatClient {
         io::stdin().read_line(&mut twofa_code).map_err(|e| VRChatError(format!("Failed to read 2FA code: {}", e)))?;
         let twofa_code = twofa_code.trim();
 
-        let twofa_resp = client.post("https://api.vrchat.cloud/api/1/auth/twofactorauth/totp/verify")
+        let twofa_resp = client.post(&format!("{}/auth/twofactorauth/totp/verify", VRCHAT_API_BASE))
             .header(COOKIE, auth_cookie)
             .json(&serde_json::json!({
                 "code": twofa_code
@@ -156,7 +159,8 @@ impl VRChatClient {
         let mut attempts = 0;
         loop {
             let auth_cookie = self.auth_cookie.read().await.clone();
-            let response = self.client.get("https://api.vrchat.cloud/api/1/auth/user")
+            let url = format!("{}/auth/user", VRCHAT_API_BASE);
+            let response = self.client.get(&url)
                 .header(COOKIE, &auth_cookie)
                 .header(USER_AGENT, "kittynvrc/twitchbot")
                 .send()
@@ -257,15 +261,16 @@ impl VRChatClient
             let auth_cookie = self.get_auth_cookie().await;
             let user_id = self.get_current_user_id().await?;
 
+            let url = format!("{}/users/{}", VRCHAT_API_BASE, user_id);
             info!("Sending request to VRChat API:");
-            info!("URL: https://vrchat.com/api/1/users/{}", user_id);
+            info!("URL: {}", url);
             info!("Method: GET");
             info!("Headers:");
             info!("  User-Agent: kittynvrc/twitchbot");
             info!("  Cookie: auth=<redacted> (length: {})", auth_cookie.len());
 
             let response = self.client
-                .get(&format!("https://vrchat.com/api/1/users/{}", user_id))
+                .get(&url)
                 .header(COOKIE, &auth_cookie)
                 .header(USER_AGENT, "kittynvrc/twitchbot")
                 .send()
@@ -273,6 +278,17 @@ impl VRChatClient
                 .map_err(|e| VRChatError(format!("Failed to send request: {}", e)))?;
 
             info!("Received response with status: {}", response.status());
+
+            if response.status() == StatusCode::UNAUTHORIZED {
+                error!("Unauthorized response from VRChat API");
+                if attempt < 3 {
+                    warn!("Attempting to refresh VRChat token...");
+                    if let Ok(()) = self.config.write().await.reinitialize_vrchat_token().await {
+                        continue;
+                    }
+                }
+                return Err(VRChatError("Failed to authenticate with VRChat API".to_string()));
+            }
 
             if !response.status().is_success() {
                 error!("API request failed with status: {}", response.status());

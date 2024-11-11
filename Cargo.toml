@@ -18,7 +18,7 @@ twitch-irc = "^5.0"
 url = "^2.5"
 futures = "^0.3"
 futures-util = "^0.3"
-tokio-tungstenite = { version = "^0.23", features = ["rustls-native-certs", "rustls-tls-native-roots", "native-tls", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "^0.24", features = ["rustls-native-certs", "rustls-tls-native-roots", "native-tls", "rustls-tls-webpki-roots"] }
 native-tls = "^0.2"
 http = "^1.1"
 serde = "^1.0"
@@ -27,10 +27,10 @@ reqwest = { version = "^0.12", features = ["json", "cookies"] }
 rpassword = "^7.3"
 percent-encoding = "^2.3"
 config = "^0.14"
-tungstenite = "^0.23"
+tungstenite = "^0.24"
 serenity = "^0.12"
 twitch_api = { version = "^0.7.0-rc.7", features = ["pubsub", "helix", "twitch_oauth2", "client", "eventsub"] }
-twitch_oauth2 = "^0.13"
+twitch_oauth2 = "^0.14"
 rosc = "^0.10"
 toml = "^0.8"
 chrono = {  version = "^0.4", features = ["serde"] }
@@ -47,12 +47,12 @@ lru-cache = "^0.1"
 colored = "2.1.0"
 log = "^0.4"
 fern = { version = "^0.6", features = ["colored"] }
-hyper = "0.14.30"
+hyper = "^1.5.0"
 uuid = { version = "1.8.0", features = ["v4"] }
 base64 = "^0.22"
 sha256 = "^1.5"
-evalexpr = "^11.3"
-thiserror = "1.0.61"
+evalexpr = "^11.3.1"
+thiserror = "^2.0"
 
 [dependencies.tokio]
 version = "^1.39"
