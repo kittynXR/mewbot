@@ -2,6 +2,7 @@ use std::env;
 use std::future::Future;
 use warp::Filter;
 use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use futures_util::StreamExt;
 use log::{error, info, warn};
 use tokio::sync::{broadcast, oneshot, RwLock};
@@ -122,8 +123,7 @@ impl WebUI {
         };
 
         let config_read = self.config.read().await;
-        let host = config_read.web_ui_host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
-        let port = config_read.web_ui_port.unwrap_or(3333);
+        let (host, port) = self.parse_address_config(&config_read)?;
         drop(config_read);
 
         info!("Starting web UI server on {}:{}", host, port);
@@ -136,7 +136,7 @@ impl WebUI {
             update_task_shutdown_rx,
         ));
 
-        let addr: std::net::SocketAddr = format!("{}:{}", host, port).parse().expect("Invalid address");
+        let addr = SocketAddr::new(host, port);
         let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
 
         let server_handle = tokio::spawn(server);
@@ -155,6 +155,76 @@ impl WebUI {
 
         info!("Web UI server has shut down.");
         Ok(())
+    }
+
+    fn is_port_available(host: IpAddr, port: u16) -> bool {
+        let addr = SocketAddr::new(host, port);
+        TcpListener::bind(addr).is_ok()
+    }
+
+    fn find_available_port(host: IpAddr, preferred_port: u16) -> Option<u16> {
+        if Self::is_port_available(host, preferred_port) {
+            return Some(preferred_port);
+        }
+
+        // Try the next 10 ports
+        for port in (preferred_port + 1)..=(preferred_port + 10) {
+            if Self::is_port_available(host, port) {
+                return Some(port);
+            }
+        }
+
+        None
+    }
+
+    fn parse_address_config(&self, config: &Config) -> Result<(IpAddr, u16), Box<dyn std::error::Error + Send + Sync>> {
+        let host_str = config.web_ui_host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+        let preferred_port = config.web_ui_port.unwrap_or(3333);
+
+        // Validate port
+        if !(1..=65535).contains(&preferred_port) {
+            return Err(format!("Invalid port number: {}. Port must be between 1 and 65535", preferred_port).into());
+        }
+
+        // Parse and validate host
+        let ip_addr = match host_str.as_str() {
+            "localhost" => Ok::<IpAddr, std::net::AddrParseError>("127.0.0.1".parse::<IpAddr>()?),
+            host => {
+                match host.parse::<IpAddr>() {
+                    Ok(ip) => Ok(ip),
+                    Err(_) => {
+                        warn!("Invalid host address '{}', falling back to 127.0.0.1", host);
+                        Ok("127.0.0.1".parse::<IpAddr>()?)
+                    }
+                }
+            }
+        }?;
+
+        // Additional validation for unroutable addresses
+        let ip_addr = if ip_addr.is_unspecified() {
+            warn!("Unspecified address detected, using 127.0.0.1 instead");
+            "127.0.0.1".parse::<IpAddr>()?
+        } else if ip_addr.is_multicast() {
+            return Err("Multicast addresses are not supported".into());
+        } else {
+            ip_addr
+        };
+
+        // Find an available port
+        let port = Self::find_available_port(ip_addr, preferred_port)
+            .ok_or_else(|| {
+                format!(
+                    "Unable to bind to ports {}-{}. Please ensure no other instance is running and try again.",
+                    preferred_port,
+                    preferred_port + 10
+                )
+            })?;
+
+        if port != preferred_port {
+            warn!("Preferred port {} was in use, using port {} instead", preferred_port, port);
+        }
+
+        Ok((ip_addr, port))
     }
 }
 
@@ -193,7 +263,6 @@ fn header_map() -> HeaderMap {
                    HeaderValue::from_static("frame-ancestors 'self' https://player.twitch.tv http://player.twitch.tv"));
     headers
 }
-
 
 fn with_obs_manager(
     obs_manager: Arc<OBSManager>,
