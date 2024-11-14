@@ -4,7 +4,6 @@ mod events;
 mod commands;
 mod link;
 mod roles;
-mod announcements;
-
+pub mod announcements;
 pub use client::DiscordClient;
 pub use link::UserLinks;

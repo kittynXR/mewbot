@@ -175,7 +175,7 @@ impl RedeemManager {
             let should_be_active = redeem.is_active(current_game.as_deref(), is_live);
 
             if should_be_active {
-                if let Some(id) = redeem.id.as_ref() {
+                if let Some(_id) = redeem.id.as_ref() {
                     // Update existing redeem
                     self.sync_manager.update_redeem(&redeem).await?;
                 } else {

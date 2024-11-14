@@ -4,7 +4,6 @@ use std::sync::Arc;
 use log::{debug, error, warn};
 use crate::twitch::models::{Redemption, RedemptionResult, RedeemHandler};
 use crate::twitch::TwitchManager;
-use crate::osc::models::{OSCMessageType, OSCValue}; // Add this import
 
 #[derive(Clone)]
 pub struct VRCOscRedeems {

@@ -18,6 +18,7 @@ impl RedeemRegistry {
         redeems.insert(title, info);
     }
 
+    #[allow(dead_code)]
     pub async fn get(&self, title: &str) -> Option<RedeemInfo> {
         let redeems = self.redeems.read().await;
         redeems.get(title).cloned()
@@ -28,6 +29,7 @@ impl RedeemRegistry {
         redeems.values().cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub async fn remove(&self, title: &str) {
         let mut redeems = self.redeems.write().await;
         redeems.remove(title);

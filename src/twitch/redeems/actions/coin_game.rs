@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::sync::Arc;
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{error, info};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::{Mutex, RwLock};

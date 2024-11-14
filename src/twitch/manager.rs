@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{sleep, timeout};
 use crate::ai::AIClient;
 use crate::config::Config;
-use crate::discord::UserLinks;
+use crate::discord::{DiscordClient, UserLinks};
 use crate::osc::osc_config::OSCConfigurations;
 use crate::osc::{OSCManager};
 use crate::storage::{ChatterData, StorageClient};
@@ -25,6 +25,7 @@ use crate::twitch::irc::commands::ad_commands::AdManager;
 use crate::twitch::irc::commands::shoutout::ShoutoutCooldown;
 
 use std::fmt::Debug;
+use crate::discord;
 use crate::stream_state::{StateTransitionError, StreamState, StreamStateMachine};
 use crate::twitch::api::client::TwitchAPIError;
 
@@ -278,7 +279,7 @@ pub struct TwitchManager {
     shoutout_receiver: Arc<Mutex<mpsc::Receiver<(String, String)>>>,
     pub ad_manager: Arc<RwLock<AdManager>>,
     pub stream_state_machine: Arc<StreamStateMachine>,
-
+    pub discord_client: Option<Arc<DiscordClient>>,
 }
 
 
@@ -306,6 +307,7 @@ impl Default for TwitchManager {
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::default())),
             stream_state_machine: StreamStateMachine::new(),
+            discord_client: None,
         }
     }
 }
@@ -365,6 +367,15 @@ impl TwitchManager {
         let (shoutout_sender, shoutout_receiver) = mpsc::channel(100);
         let shoutout_receiver = Arc::new(Mutex::new(shoutout_receiver));
 
+        let discord_client = if config.is_discord_configured() {
+            Some(Arc::new(discord::DiscordClient::new(
+                Arc::new(RwLock::new(config.as_ref().clone())),  // Fixed config wrapping
+                user_links.clone()
+            ).await?))
+        } else {
+            None
+        };
+
         let twitch_manager = Arc::new(Self {
             config: config.clone(),
             api_client: api_client.clone(),
@@ -384,6 +395,7 @@ impl TwitchManager {
             shoutout_receiver,
             ad_manager: Arc::new(RwLock::new(AdManager::new())),
             stream_state_machine,
+            discord_client,
         });
 
         twitch_manager.start_shoutout_processing();
@@ -525,13 +537,13 @@ impl TwitchManager {
             while let Ok(new_state) = receiver.recv().await {
                 match new_state {
                     StreamState::Offline => {
-                        twitch_manager.handle_stream_offline().await;
+                        let _ = twitch_manager.handle_stream_offline().await;
                     },
                     StreamState::GoingLive => {
                         // Prepare for live stream
                     },
                     StreamState::Live(game) => {
-                        twitch_manager.handle_stream_online(game).await;
+                        let _ = twitch_manager.handle_stream_online(game).await;
                     },
                     StreamState::GoingOffline => {
                         // Prepare for stream end

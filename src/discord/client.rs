@@ -7,6 +7,7 @@ use crate::discord::UserLinks;
 use std::sync::Arc;
 use std::time::Duration;
 use log::{info, warn};
+use serenity::http::Http;
 use tokio::sync::{RwLock, Mutex};
 
 use super::events::EventHandler;
@@ -65,5 +66,12 @@ impl DiscordClient {
         } else {
             Err(serenity::Error::Other("Discord client has already been started"))
         }
+    }
+
+    pub async fn get_http(&self) -> Arc<Http> {
+        self.client.lock().await
+            .as_ref()
+            .expect("Discord client not initialized")
+            .http.clone()
     }
 }

@@ -263,6 +263,7 @@ impl TwitchEventSubClient {
         }
     }
 
+    #[allow(dead_code)]
     async fn handle_ping_message(&self, data: Vec<u8>) -> Result<(), Box<dyn StdError + Send + Sync>> {
         if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
             ws_tx.send(Message::Pong(data)).await?;
@@ -270,6 +271,7 @@ impl TwitchEventSubClient {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn handle_reconnect_message(&self, response: &Value) -> Result<(), Box<dyn StdError + Send + Sync>> {
         if let Some(new_url) = response["payload"]["session"]["reconnect_url"].as_str() {
             warn!("Received reconnect message. New URL: {}", new_url);
@@ -317,6 +319,7 @@ impl TwitchEventSubClient {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn send_ping(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
         if let Some(ws_tx) = &mut *self.ws_tx.lock().await {
             ws_tx.send(Message::Ping(vec![])).await?;
