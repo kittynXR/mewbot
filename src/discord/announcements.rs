@@ -41,7 +41,7 @@ pub async fn send_stream_announcement(
     embed = embed.footer(CreateEmbedFooter::new("Come join the stream!"));
 
     channel_id.send_message(&http, CreateMessage::default()
-        .content(format!("Hey @everyone, {} is live!", broadcaster_name))
+        .content(format!("Hey @pogtime, {} is live!", broadcaster_name))
         .embed(embed)
     ).await?;
 
