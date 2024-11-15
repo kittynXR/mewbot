@@ -1,9 +1,24 @@
-// src/twitch/events/stream_online.rs
 use serde_json::Value;
 use std::sync::Arc;
 use log::{info, error};
 use crate::twitch::TwitchManager;
 use serenity::model::id::ChannelId;
+
+async fn generate_stream_description(
+    ai_client: &Arc<crate::ai::AIClient>,
+    broadcaster_name: &str,
+    title: &str,
+    game_name: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let prompt = format!(
+        "Generate a short, exciting message (max 100 characters) about {}'s stream. \
+        They're playing {} with the title: '{}'. Make it engaging and fun!",
+        broadcaster_name, game_name, title
+    );
+
+    ai_client.generate_response_without_history(&prompt).await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+}
 
 pub async fn handle(
     event: &Value,
@@ -26,6 +41,29 @@ pub async fn handle(
             if let Some(announcement_channel_id) = &twitch_manager.config.discord_announcement_channel_id {
                 if let Ok(channel_id) = announcement_channel_id.parse::<u64>() {
                     let http = discord_client.get_http().await;
+
+                    // Get broadcaster profile image
+                    let api_client = twitch_manager.get_api_client();
+                    let user_info = api_client.get_user_info(broadcaster_user_name).await?;
+                    let profile_image_url = user_info["data"][0]["profile_image_url"].as_str();
+
+                    // Generate AI message if we have an AI client
+                    let ai_message = if let Some(ai_client) = &twitch_manager.ai_client {
+                        if let (Some(t), Some(g)) = (title, game_name) {
+                            match generate_stream_description(ai_client, broadcaster_user_name, t, g).await {
+                                Ok(msg) => Some(msg),
+                                Err(e) => {
+                                    error!("Failed to generate AI description: {}", e);
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     match crate::discord::announcements::send_stream_announcement(
                         &http,
                         ChannelId::new(channel_id),
@@ -34,6 +72,8 @@ pub async fn handle(
                         game_name,
                         title,
                         thumbnail_url,
+                        profile_image_url,
+                        ai_message.as_deref(),
                     ).await {
                         Ok(_) => info!("Discord announcement sent successfully"),
                         Err(e) => error!("Failed to send Discord announcement: {}", e),
