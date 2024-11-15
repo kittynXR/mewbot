@@ -25,4 +25,4 @@ pub use verify::VerifyCommand;
 pub use vrc::VRCCommand;
 pub use world::WorldCommand;
 pub use reset_drop_game::ResetDropGameCommand;
-pub use channel_management::{TitleCommand, GameCommand, ContentCommand, RunAdCommand, RefreshAdsCommand};
+pub use channel_management::{TitleCommand, GameCommand, ContentCommand, RunAdCommand, RefreshAdsCommand, AdNomsterCommand};

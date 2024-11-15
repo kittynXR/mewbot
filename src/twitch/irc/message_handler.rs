@@ -1,3 +1,5 @@
+// message_handler.rs
+
 use super::command_system::{CommandContext, CommandRegistry};
 use crate::config::Config;
 use crate::storage::StorageClient;
@@ -28,6 +30,7 @@ use crate::twitch::irc::commands::{
     ContentCommand,
     RunAdCommand,
     RefreshAdsCommand,
+    AdNomsterCommand,
 };
 
 
@@ -75,7 +78,7 @@ impl MessageHandler {
         command_registry.register(Box::new(ContentCommand));
         command_registry.register(Box::new(RunAdCommand));
         command_registry.register(Box::new(RefreshAdsCommand));
-
+        command_registry.register(Box::new(AdNomsterCommand));
 
         MessageHandler {
             config,
