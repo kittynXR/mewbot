@@ -12,6 +12,7 @@ pub(crate) mod calc;
 pub(crate) mod fun_commands;
 pub(crate) mod ad_commands;
 pub(crate) mod reset_drop_game;
+mod channel_management;
 
 pub use ping::PingCommand;
 pub use calc::CalcCommand;
@@ -24,3 +25,4 @@ pub use verify::VerifyCommand;
 pub use vrc::VRCCommand;
 pub use world::WorldCommand;
 pub use reset_drop_game::ResetDropGameCommand;
+pub use channel_management::{TitleCommand, GameCommand, ContentCommand, RunAdCommand, RefreshAdsCommand};

@@ -23,6 +23,11 @@ use crate::twitch::irc::commands::{
     VRCCommand,
     WorldCommand,
     ResetDropGameCommand,
+    TitleCommand,
+    GameCommand,
+    ContentCommand,
+    RunAdCommand,
+    RefreshAdsCommand,
 };
 
 
@@ -65,6 +70,11 @@ impl MessageHandler {
         command_registry.register(Box::new(VRCCommand));
         command_registry.register(Box::new(WorldCommand));
         command_registry.register(Box::new(ResetDropGameCommand));
+        command_registry.register(Box::new(TitleCommand));
+        command_registry.register(Box::new(GameCommand));
+        command_registry.register(Box::new(ContentCommand));
+        command_registry.register(Box::new(RunAdCommand));
+        command_registry.register(Box::new(RefreshAdsCommand));
 
 
         MessageHandler {
