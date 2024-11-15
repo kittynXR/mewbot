@@ -3,7 +3,6 @@ use serenity::model::prelude::*;
 use serenity::http::Http;
 use chrono::{DateTime, Utc};
 use log::info;
-use crate::ai::AIClient;
 
 pub async fn send_stream_announcement(
     http: &Http,

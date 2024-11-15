@@ -247,7 +247,7 @@ impl Command for AdNomsterCommand {
                 ctx.bot_client
                     .send_message(
                         &ctx.channel,
-                        "Usage: !adnomster <start|stop> - Starts or stops the automatic ad runner every 59 minutes.",
+                        "Usage: !adnomster <start|stop> - Starts or stops the ad nomster!",
                     )
                     .await?;
             }
