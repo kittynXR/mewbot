@@ -30,7 +30,10 @@ pub async fn handle(
         let started_at = payload["started_at"].as_str().unwrap_or("Unknown time");
         let game_name = payload["category_name"].as_str();
         let title = payload["title"].as_str();
-        let thumbnail_url = payload["thumbnail_url"].as_str();
+        // In the handle function, before sending the Discord announcement
+        let thumbnail_url = payload["thumbnail_url"].as_str().map(|url| {
+            url.replace("{width}", "1920").replace("{height}", "1080")
+        });
 
         let message = format!("{} has gone live! Stream started at {}. Come join the fun!",
                               broadcaster_user_name, started_at);
@@ -45,7 +48,9 @@ pub async fn handle(
                     // Get broadcaster profile image
                     let api_client = twitch_manager.get_api_client();
                     let user_info = api_client.get_user_info(broadcaster_user_name).await?;
-                    let profile_image_url = user_info["data"][0]["profile_image_url"].as_str();
+                    let profile_image_url = user_info["data"][0]["profile_image_url"]
+                        .as_str()
+                        .map(|url| url.to_string());
 
                     // Generate AI message if we have an AI client
                     let ai_message = if let Some(ai_client) = &twitch_manager.ai_client {
@@ -71,8 +76,8 @@ pub async fn handle(
                         started_at,
                         game_name,
                         title,
-                        thumbnail_url,
-                        profile_image_url,
+                        thumbnail_url.as_deref(),
+                        profile_image_url.as_deref(),
                         ai_message.as_deref(),
                     ).await {
                         Ok(_) => info!("Discord announcement sent successfully"),

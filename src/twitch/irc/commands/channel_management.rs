@@ -299,6 +299,14 @@ pub async fn refresh_ads(
             .await?;
     }
 
+    // After setting the content label
+    let ccl_wait_time = 10; // Wait for 10 seconds
+    bot_client
+        .send_message(channel, &format!("Waiting {} seconds for CCL to take effect...", ccl_wait_time))
+        .await?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(ccl_wait_time)).await;
+
+
     // 4. Remove the content label
     if let Err(err) = channel::update_content_classification_labels(
         api_client,
