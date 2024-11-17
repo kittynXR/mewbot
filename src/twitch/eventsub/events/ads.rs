@@ -13,7 +13,7 @@ pub async fn handle_ad_break_begin(
         let is_automatic = payload["is_automatic"].as_str().unwrap_or("false") == "true";
 
         // Generate a friendly AI message
-        let ai_client = AIClient::new(None, None); // You might want to pass actual API keys here
+        let ai_client = AIClient::new(None, None, None, None, None, None); // You might want to pass actual API keys here
         let prompt = format!(
             "Generate a short, friendly message (max 100 characters) for a Twitch streamer to say when an ad break of {} seconds begins. {}",
             duration_seconds,

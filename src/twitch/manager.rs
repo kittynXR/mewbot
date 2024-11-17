@@ -403,7 +403,7 @@ impl TwitchManager {
         // Initialize RedeemManager
         let redeem_manager = RedeemManager::new(
             twitch_manager.clone(),
-            ai_client.unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
+            ai_client.unwrap_or_else(|| Arc::new(AIClient::new(None, None, None, None, None, None)),),
         );
         *twitch_manager.redeem_manager.write().await = Some(redeem_manager);
 
@@ -450,7 +450,7 @@ impl TwitchManager {
     async fn initialize_redeem_manager(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let redeem_manager = RedeemManager::new(
             Arc::new(self.clone()),
-            self.ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None))),
+            self.ai_client.clone().unwrap_or_else(|| Arc::new(AIClient::new(None, None, None, None, None, None))),
         );
 
         // Update the RedeemManager in TwitchManager

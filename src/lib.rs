@@ -101,6 +101,10 @@ pub async fn init(config: Arc<RwLock<Config>>) -> Result<BotClients, Box<dyn std
         Some(Arc::new(AIClient::new(
             Some(openai_secret.clone()),
             config_read.anthropic_secret.clone(),
+            config_read.xai_secret.clone(),
+            config_read.google_search_api_key.clone(),
+            config_read.google_search_cx.clone(),
+            config_read.bing_search_api_key.clone(),
         )))
     } else {
         None

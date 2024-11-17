@@ -13,7 +13,9 @@ pub(crate) mod fun_commands;
 pub(crate) mod ad_commands;
 pub(crate) mod reset_drop_game;
 mod channel_management;
+mod continue_message;
 
+pub use continue_message::ContinueCommand;
 pub use ping::PingCommand;
 pub use calc::CalcCommand;
 pub use discord::DiscordCommand;

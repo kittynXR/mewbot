@@ -31,6 +31,7 @@ use crate::twitch::irc::commands::{
     RunAdCommand,
     RefreshAdsCommand,
     AdNomsterCommand,
+    ContinueCommand,
 };
 
 
@@ -79,6 +80,7 @@ impl MessageHandler {
         command_registry.register(Box::new(RunAdCommand));
         command_registry.register(Box::new(RefreshAdsCommand));
         command_registry.register(Box::new(AdNomsterCommand));
+        command_registry.register(Box::new(ContinueCommand));
 
         MessageHandler {
             config,

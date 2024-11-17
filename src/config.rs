@@ -49,6 +49,10 @@ pub struct Config {
     pub discord_guild_id: Option<String>,
     pub openai_secret: Option<String>,
     pub anthropic_secret: Option<String>,
+    pub xai_secret: Option<String>,
+    pub google_search_api_key: Option<String>,
+    pub google_search_cx: Option<String>,
+    pub bing_search_api_key: Option<String>,
     #[serde(with = "log_level_serde")]
     pub log_level: LevelFilter,
     pub web_ui_host: Option<String>,
@@ -80,6 +84,10 @@ impl Default for Config {
             discord_guild_id: None,
             openai_secret: None,
             anthropic_secret: None,
+            xai_secret: None,
+            google_search_api_key: None,
+            google_search_cx: None,
+            bing_search_api_key: None,
             log_level: log::LevelFilter::Info,
             web_ui_host: None,
             web_ui_port: None,
@@ -229,12 +237,70 @@ impl Config {
 
         // OpenAI
         if self.openai_secret.is_none() {
-            self.openai_secret = Some(Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?);
+            self.openai_secret = Some(Self::prompt_input(
+                "Enter your OpenAI API secret key (leave empty if not using OpenAI): "
+            )?);
+            if let Some(key) = &self.openai_secret {
+                if key.is_empty() {
+                    self.openai_secret = None;
+                }
+            }
         }
 
         // Anthropic
         if self.anthropic_secret.is_none() {
-            self.anthropic_secret = Some(Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?);
+            self.anthropic_secret = Some(Self::prompt_input(
+                "Enter your Anthropic API secret key (leave empty if not using Anthropic): "
+            )?);
+            if let Some(key) = &self.anthropic_secret {
+                if key.is_empty() {
+                    self.anthropic_secret = None;
+                }
+            }
+        }
+
+        // XAI
+        if self.xai_secret.is_none() {
+            self.xai_secret = Some(Self::prompt_input(
+                "Enter your XAI (Grok) API secret key (leave empty if not using XAI/Grok): "
+            )?);
+            if let Some(key) = &self.xai_secret {
+                if key.is_empty() {
+                    self.xai_secret = None;
+                }
+            }
+        }
+
+        // Web Search Configuration
+        if self.google_search_api_key.is_none() || self.google_search_cx.is_none() {
+            self.google_search_api_key = Some(Self::prompt_input(
+                "Enter your Google Custom Search API key (leave empty to skip): "
+            )?);
+
+            if self.google_search_api_key.as_ref().map_or(false, |k| !k.is_empty()) {
+                self.google_search_cx = Some(Self::prompt_input(
+                    "Enter your Google Custom Search Engine ID (cx): "
+                )?);
+            }
+        }
+
+        if self.bing_search_api_key.is_none() {
+            self.bing_search_api_key = Some(Self::prompt_input(
+                "Enter your Bing Web Search API key (leave empty to skip): "
+            )?);
+        }
+
+        // Handle empty inputs
+        if let Some(key) = &self.google_search_api_key {
+            if key.is_empty() {
+                self.google_search_api_key = None;
+                self.google_search_cx = None;
+            }
+        }
+        if let Some(key) = &self.bing_search_api_key {
+            if key.is_empty() {
+                self.bing_search_api_key = None;
+            }
         }
 
         if self.discord_token.is_none() {
@@ -424,6 +490,38 @@ impl Config {
         // Add prompts for OpenAI and Anthropic keys
         let openai_secret = Self::prompt_input("Enter your OpenAI API secret key (leave empty if not using OpenAI): ")?;
         let anthropic_secret = Self::prompt_input("Enter your Anthropic API secret key (leave empty if not using Anthropic): ")?;
+        let xai_secret = Self::prompt_input("Enter your XAI (Grok) API secret key: ")?;
+
+        // Web Search API Configuration
+        println!("\nNow, let's configure web search capabilities.");
+
+        // Google Search Setup
+        println!("\nGoogle Custom Search configuration (press Enter to skip):");
+        println!("To get these credentials:");
+        println!("1. Go to https://console.cloud.google.com/");
+        println!("2. Create a new project or select existing project");
+        println!("3. Enable the Custom Search API");
+        println!("4. Create credentials (API key)");
+        println!("5. Go to https://programmablesearchengine.google.com/");
+        println!("6. Create a new search engine");
+        println!("7. Get your Search Engine ID (cx)");
+
+        let google_api = Self::prompt_input("Enter your Google Custom Search API key: ")?;
+        let google_cx = if !google_api.is_empty() {
+            Self::prompt_input("Enter your Google Custom Search Engine ID (cx): ")?
+        } else {
+            String::new()
+        };
+
+        // Bing Search Setup
+        println!("\nBing Web Search configuration (press Enter to skip):");
+        println!("To get your Bing API key:");
+        println!("1. Go to https://portal.azure.com/");
+        println!("2. Create or select a resource group");
+        println!("3. Add a new Bing Web Search resource");
+        println!("4. Get your API key from the resource's Keys and Endpoint section");
+
+        let bing_api = Self::prompt_input("Enter your Bing Web Search API key: ")?;
 
         let web_ui_host = Self::prompt_input("Enter the host for the Web UI (default is localhost): ")?;
         let web_ui_host = if web_ui_host.is_empty() {
@@ -476,6 +574,10 @@ impl Config {
             discord_guild_id: Some(discord_guild_id),
             openai_secret: if openai_secret.is_empty() { None } else { Some(openai_secret) },
             anthropic_secret: if anthropic_secret.is_empty() { None } else { Some(anthropic_secret) },
+            xai_secret: if xai_secret.is_empty() { None } else { Some(xai_secret) },
+            google_search_api_key: if google_api.is_empty() { None } else { Some(google_api) },
+            google_search_cx: if google_cx.is_empty() { None } else { Some(google_cx) },
+            bing_search_api_key: if bing_api.is_empty() { None } else { Some(bing_api) },
             log_level: LevelFilter::Trace,
             web_ui_host,
             web_ui_port,
@@ -600,6 +702,59 @@ impl Config {
                 Err(Box::new(e))
             }
         }
+    }
+
+    pub async fn reinitialize_ai_tokens(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Optional reinitialize method if needed
+        println!("Reinitializing AI tokens...");
+
+        // Prompt for new tokens
+        if let Some(_) = &self.openai_secret {
+            self.openai_secret = Some(Self::prompt_input("Enter new OpenAI API secret key: ")?);
+        }
+
+        if let Some(_) = &self.anthropic_secret {
+            self.anthropic_secret = Some(Self::prompt_input("Enter new Anthropic API secret key: ")?);
+        }
+
+        if let Some(_) = &self.xai_secret {
+            self.xai_secret = Some(Self::prompt_input("Enter new XAI (Grok) API secret key: ")?);
+        }
+
+        self.save()?;
+        Ok(())
+    }
+
+    // Add a method for reinitializing web search credentials
+    pub async fn reinitialize_web_search_keys(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        println!("Reinitializing web search API keys...");
+
+        // Google Search
+        println!("\nGoogle Custom Search configuration (press Enter to skip):");
+        let google_api = Self::prompt_input("Enter new Google Custom Search API key: ")?;
+        if !google_api.is_empty() {
+            self.google_search_api_key = Some(google_api);
+            let google_cx = Self::prompt_input("Enter new Google Custom Search Engine ID (cx): ")?;
+            if !google_cx.is_empty() {
+                self.google_search_cx = Some(google_cx);
+            }
+        } else {
+            self.google_search_api_key = None;
+            self.google_search_cx = None;
+        }
+
+        // Bing Search
+        println!("\nBing Web Search configuration (press Enter to skip):");
+        let bing_api = Self::prompt_input("Enter new Bing Web Search API key: ")?;
+        if !bing_api.is_empty() {
+            self.bing_search_api_key = Some(bing_api);
+        } else {
+            self.bing_search_api_key = None;
+        }
+
+        self.save()?;
+        println!("Web search API keys updated successfully!");
+        Ok(())
     }
 
     pub fn save_specific_fields(&self, fields: &[&str]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

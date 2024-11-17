@@ -17,13 +17,13 @@ impl OpenAIProvider {
         }
     }
 
-    async fn generate_response_with_model(&self, prompt: &str, model: &str) -> Result<String, AIError> {
+    async fn generate_response_with_model(&self, prompt: &str, model: &str, tokens: i32) -> Result<String, AIError> {
         let response = self.client.post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&json!({
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 100
+                "max_tokens": tokens,
             }))
             .send()
             .await
@@ -38,15 +38,23 @@ impl OpenAIProvider {
             .map(|s| s.to_string())
             .ok_or_else(|| AIError::InvalidResponse("No content in response".to_string()))
     }
+
+    pub async fn generate_web_search_response(
+        &self,
+        prompt: &str,
+    ) -> Result<String, AIError> {
+
+        self.generate_response_with_model(&prompt, "gpt-4", 250).await
+    }
 }
 
 #[async_trait]
 impl AIProvider for OpenAIProvider {
     async fn generate_response(&self, prompt: &str) -> Result<String, AIError> {
-        self.generate_response_with_model(prompt, "gpt-4o-mini").await
+        self.generate_response_with_model(prompt, "gpt-4o-mini", 100).await
     }
 
     async fn generate_response_without_history(&self, prompt: &str) -> Result<String, AIError> {
-        self.generate_response_with_model(prompt, "gpt-4o").await
+        self.generate_response_with_model(prompt, "gpt-4o", 250).await
     }
 }
