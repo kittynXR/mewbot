@@ -8,7 +8,7 @@ use crate::ai::AIClient;
 use crate::osc::OSCConfigurations;
 use crate::twitch::models::{CoinGameState, RedeemConfigurations, RedeemHandler, RedeemInfo, Redemption, RedemptionResult};
 use crate::twitch::redeems::{AskAIAction, SeriousAIAction, CoinGameAction, VRCOscRedeems};
-use crate::twitch::redeems::actions::{AIWebSearchAction, GrokAIAction};
+use crate::twitch::redeems::actions::{AIWebSearchAction, GrokAIAction, VRCToggleRedeems};
 use crate::twitch::redeems::registry::RedeemRegistry;
 use crate::twitch::redeems::sync_manager::RedeemSyncManager;
 
@@ -99,6 +99,14 @@ impl RedeemManager {
         handlers.insert(
             "ask grok".to_string(),
             Box::new(GrokAIAction::new(ai_client.clone())) as Box<dyn RedeemHandler + Send + Sync>
+        );
+        handlers.insert(
+            "evil kittyn".to_string(),
+            Box::new(VRCToggleRedeems::new(twitch_manager.get_osc_manager())) as Box<dyn RedeemHandler + Send + Sync>
+        );
+        handlers.insert(
+            "vrc fox ears".to_string(),
+            Box::new(VRCToggleRedeems::new(twitch_manager.get_osc_manager())) as Box<dyn RedeemHandler + Send + Sync>
         );
 
         redeem_manager.handlers = handlers;
