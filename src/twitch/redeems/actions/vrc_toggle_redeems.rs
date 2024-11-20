@@ -45,7 +45,7 @@ impl VRCToggleRedeems {
                 let default_value = osc_config.default_value;
 
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(10)).await; // 20 minutes
+                    tokio::time::sleep(Duration::from_secs(1200)).await; // 20 minutes
                     if let Err(e) = osc_manager.send_osc_message(&endpoint, &msg_type, &default_value).await {
                         error!("Failed to disable evil kittyn mode: {}", e);
                     } else {
@@ -55,7 +55,7 @@ impl VRCToggleRedeems {
 
                 RedemptionResult {
                     success: true,
-                    message: Some(format!("@{} has unleashed evil kittyn! MUA HA HA HA!", redemption.user_name)),
+                    message: Some(format!("@{} has unleashed evil kittyn!", redemption.user_name)),
                 }
             },
             Err(e) => {
