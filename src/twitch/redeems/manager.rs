@@ -90,7 +90,7 @@ impl RedeemManager {
         );
         handlers.insert(
             "snowball".to_string(),
-            Box::new(vrc_osc_redeems) as Box<dyn RedeemHandler + Send + Sync>
+            Box::new(vrc_osc_redeems.clone()) as Box<dyn RedeemHandler + Send + Sync>
         );
         handlers.insert(
             "ai web search".to_string(),
@@ -108,6 +108,15 @@ impl RedeemManager {
             "vrc fox ears".to_string(),
             Box::new(VRCToggleRedeems::new(twitch_manager.get_osc_manager())) as Box<dyn RedeemHandler + Send + Sync>
         );
+        handlers.insert(
+            "share loli".to_string(),
+            Box::new(vrc_osc_redeems.clone()) as Box<dyn RedeemHandler + Send + Sync>
+        );
+        handlers.insert(
+            "leash".to_string(),
+            Box::new(vrc_osc_redeems) as Box<dyn RedeemHandler + Send + Sync>
+        );
+
 
         redeem_manager.handlers = handlers;
 
