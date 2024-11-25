@@ -79,7 +79,7 @@ impl VRCOscRedeems {
 impl RedeemHandler for VRCOscRedeems {
     async fn handle(&self, redemption: &Redemption) -> RedemptionResult {
         match redemption.reward_title.as_str() {
-            "toss pillo" | "cream pie" | "water balloon" | "cat trap" | "snowball" | "show loli" | "leash" => {
+            "toss pillo" | "cream pie" | "water balloon" | "cat trap" | "snowball" | "share loli slam" | "leash" => {
                 self.handle_osc_redeem(redemption).await
             },
             _ => RedemptionResult {

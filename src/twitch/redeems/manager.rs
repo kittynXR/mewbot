@@ -109,7 +109,7 @@ impl RedeemManager {
             Box::new(VRCToggleRedeems::new(twitch_manager.get_osc_manager())) as Box<dyn RedeemHandler + Send + Sync>
         );
         handlers.insert(
-            "share loli".to_string(),
+            "share loli slam".to_string(),
             Box::new(vrc_osc_redeems.clone()) as Box<dyn RedeemHandler + Send + Sync>
         );
         handlers.insert(
