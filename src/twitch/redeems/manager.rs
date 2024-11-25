@@ -113,6 +113,10 @@ impl RedeemManager {
             Box::new(vrc_osc_redeems.clone()) as Box<dyn RedeemHandler + Send + Sync>
         );
         handlers.insert(
+            "gib cookie".to_string(),
+            Box::new(vrc_osc_redeems.clone()) as Box<dyn RedeemHandler + Send + Sync>
+        );
+        handlers.insert(
             "leash".to_string(),
             Box::new(vrc_osc_redeems) as Box<dyn RedeemHandler + Send + Sync>
         );
