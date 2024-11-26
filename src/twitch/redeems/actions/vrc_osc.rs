@@ -39,11 +39,21 @@ impl VRCOscRedeems {
                 match osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.osc_value).await {
                     Ok(_) => {
                         if let Some(frames) = config.execution_duration {
-                            let duration = std::time::Duration::from_secs_f32(frames as f32 / 60.0);
-                            tokio::time::sleep(duration).await;
-                            if let Err(e) = osc_manager.send_osc_message(&config.osc_endpoint, &config.osc_type, &config.default_value).await {
-                                error!("Failed to reset OSC value for {}: {}", redemption.reward_title, e);
-                            }
+                            // Clone necessary values for the background task
+                            let osc_manager = osc_manager.clone();
+                            let osc_endpoint = config.osc_endpoint.clone();
+                            let osc_type = config.osc_type.clone();
+                            let default_value = config.default_value.clone();
+                            let reward_title = redemption.reward_title.clone();
+
+                            // Spawn a background task for the timer
+                            tokio::spawn(async move {
+                                let duration = std::time::Duration::from_secs_f32(frames as f32 / 60.0);
+                                tokio::time::sleep(duration).await;
+                                if let Err(e) = osc_manager.send_osc_message(&osc_endpoint, &osc_type, &default_value).await {
+                                    error!("Failed to reset OSC value for {}: {}", reward_title, e);
+                                }
+                            });
                         }
                         RedemptionResult {
                             success: true,
