@@ -21,7 +21,7 @@ pub struct VRChatClient {
     auth_cookie: Arc<RwLock<String>>,
     config: Arc<RwLock<Config>>,
     current_user_id: Arc<RwLock<Option<String>>>,
-    current_world: Arc<RwLock<Option<(World, Instant)>>>,
+    pub(crate) current_world: Arc<RwLock<Option<(World, Instant)>>>,
     world_cache_duration: Duration,
     websocket_tx: mpsc::UnboundedSender<WebSocketMessage>,
 }
@@ -54,7 +54,7 @@ impl VRChatClient {
             config,
             current_user_id: Arc::new(RwLock::new(None)),
             current_world: Arc::new(RwLock::new(None)),
-            world_cache_duration: Duration::from_secs(300),
+            world_cache_duration: Duration::from_secs(60),
             websocket_tx,
         })
     }
@@ -254,7 +254,26 @@ impl VRChatClient
         }
     }
 
-    async fn fetch_current_world_api(&self) -> Result<Option<World>, VRChatError> {
+    pub async fn force_invalidate_cache(&self) -> Result<(), VRChatError> {
+        let mut world_data = self.current_world.write().await;
+        *world_data = None;
+        Ok(())
+    }
+
+    pub async fn should_refresh_cache(&self) -> bool {
+        let world_data = self.current_world.read().await;
+        match &*world_data {
+            Some((_, last_updated)) => last_updated.elapsed() > std::time::Duration::from_secs(60),
+            None => true,
+        }
+    }
+
+    pub async fn get_cached_world(&self) -> Option<World> {
+        let world_data = self.current_world.read().await;
+        world_data.as_ref().map(|(world, _)| world.clone())
+    }
+
+    pub(crate) async fn fetch_current_world_api(&self) -> Result<Option<World>, VRChatError> {
         for attempt in 1..=3 {  // Try up to 3 times
             info!("Attempt {} to fetch current world", attempt);
 
@@ -367,18 +386,25 @@ impl VRChatClient
     }
 
     pub async fn update_current_world(&self, world: World) -> Result<(), VRChatError> {
-        let mut world_data = self.current_world.write().await;
-        *world_data = Some((world.clone(), Instant::now()));
+        {
+            let mut world_data = self.current_world.write().await;
+            *world_data = Some((world.clone(), Instant::now())); // Reset the cache timer
+        }
 
         // Send the updated world information to the frontend via WebSocket
         let message = WebSocketMessage {
             module: "vrchat".to_string(),
             action: "world_update".to_string(),
-            data: serde_json::to_value(world.clone()).map_err(|e| VRChatError(format!("Failed to serialize world data: {}", e)))?,
+            data: serde_json::to_value(world.clone())
+                .map_err(|e| VRChatError(format!("Failed to serialize world data: {}", e)))?,
         };
-        self.websocket_tx.send(message)
-            .map_err(|e| VRChatError(format!("Failed to send world update via WebSocket: {}", e)))?;
 
+        if let Err(e) = self.websocket_tx.send(message) {
+            error!("Failed to send world update via WebSocket: {}", e);
+            return Err(VRChatError(format!("Failed to send world update via WebSocket: {}", e)));
+        }
+
+        info!("Successfully updated current world cache and sent websocket update");
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use log::{debug, info};
+use log::{debug};
 use crate::ai::{SearchProvider, WebSearchClient};
 use super::models::{AIProvider, AIError};
 use super::openai::OpenAIProvider;

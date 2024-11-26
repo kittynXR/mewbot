@@ -91,8 +91,31 @@ impl VRChatManager {
         self.vrchat_client.is_online().await
     }
 
+    pub async fn force_invalidate_world_cache(&self) -> Result<(), VRChatError> {
+        // VRChatClient is already an Arc, no need to check Some
+        let vrchat_client = &self.vrchat_client;
+        vrchat_client.force_invalidate_cache().await?;
+        info!("Forcefully invalidated world cache");
+        Ok(())
+    }
+
     pub async fn get_current_world(&self) -> Result<World, VRChatError> {
-        self.vrchat_client.get_current_world().await
+        let vrchat_client = &self.vrchat_client;
+
+        let should_fetch = vrchat_client.should_refresh_cache().await;
+
+        if should_fetch {
+            if let Ok(world) = vrchat_client.fetch_current_world_api().await {
+                if let Some(world) = world {
+                    self.update_current_world(world.clone()).await?;
+                    return Ok(world);
+                }
+            }
+        }
+
+        // If we have cached data, return it
+        vrchat_client.get_cached_world().await
+            .ok_or_else(|| VRChatError("No world data available".to_string()))
     }
 
     pub async fn connect_osc(&self) -> Result<(), VRChatError> {

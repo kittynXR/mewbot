@@ -37,15 +37,31 @@ pub async fn handler(
                                     match message_type {
                                         VRChatMessage::UserLocation(content) => {
                                             info!("Current user location update: {:?}", content);
-                                            if let Ok(Some(new_world)) = extract_user_location_info(&msg, &current_user_id) {
-                                                info!("Current user entered new world: {:?}", new_world);
-                                                if let Err(e) = vrchat_manager.update_current_world(new_world.clone()).await {
-                                                    error!("Failed to update VRChatManager with new world: {}", e);
-                                                }
+                                            // Use await here
+                                            match extract_user_location_info(&msg, &current_user_id).await {
+                                                Ok(Some(new_world)) => {
+                                                    info!("Current user entered new world: {:?}", new_world);
 
-                                                let mut dashboard = dashboard_state.write().await;
-                                                dashboard.update_vrchat_world(Some(new_world.clone())).await;
-                                                info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                                    // Force invalidate cache first
+                                                    if let Err(e) = vrchat_manager.force_invalidate_world_cache().await {
+                                                        error!("Failed to invalidate world cache: {}", e);
+                                                    }
+
+                                                    // Then update the world information
+                                                    if let Err(e) = vrchat_manager.update_current_world(new_world.clone()).await {
+                                                        error!("Failed to update VRChatManager with new world: {}", e);
+                                                    }
+
+                                                    let mut dashboard = dashboard_state.write().await;
+                                                    dashboard.update_vrchat_world(Some(new_world.clone())).await;
+                                                    info!("Current VRChat world state updated: {:?}", dashboard.vrchat_world);
+                                                }
+                                                Ok(None) => {
+                                                    debug!("No world update in location message");
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to extract world info: {}", e);
+                                                }
                                             }
                                         },
                                         VRChatMessage::UserOnline(_) => {
@@ -149,7 +165,7 @@ fn create_request(auth_token: &str) -> Result<Request<()>, VRChatError> {
         .map_err(|e| VRChatError(format!("Failed to build WebSocket request: {}", e)))
 }
 
-fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Result<Option<World>, VRChatError> {
+async fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Result<Option<World>, VRChatError> {
     let message: serde_json::Value = serde_json::from_str(json_message)
         .map_err(|e| VRChatError(format!("Failed to parse JSON: {}", e)))?;
 
@@ -157,17 +173,22 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
         let content: serde_json::Value = serde_json::from_str(content.as_str().unwrap_or(""))
             .map_err(|e| VRChatError(format!("Failed to parse content JSON: {}", e)))?;
 
+        // First check if this message is for the current user
         if let Some(user_id) = content.get("userId") {
             let user_id_str = user_id.as_str().unwrap_or("");
             if user_id_str != current_user_id {
+                debug!("Location update for different user: {}", user_id_str);
                 return Ok(None);
             }
         } else {
+            debug!("No user ID in message");
             return Ok(None);
         }
 
+        // Check if user is in private
         if let Some(location) = content.get("location") {
             if location.as_str() == Some("private") {
+                info!("User entered private instance");
                 return Ok(None);
             }
         }
@@ -195,7 +216,7 @@ fn extract_user_location_info(json_message: &str, current_user_id: &str) -> Resu
                 created_at,
                 updated_at,
             };
-            info!("Current user changed world: {:?}", world);
+            info!("Extracted world update: {:?}", world);
             return Ok(Some(world));
         }
     }
