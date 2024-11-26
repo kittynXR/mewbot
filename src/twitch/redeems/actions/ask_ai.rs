@@ -37,9 +37,22 @@ impl RedeemHandler for AskAIAction {
         let full_prompt = format!("{}User's question: {}", base_prompt, user_input);
 
         match self.ai_client.generate_response_without_history(&full_prompt).await {
-            Ok(response) => RedemptionResult {
-                success: true,
-                message: Some(response),
+            Ok(response) => {
+                let (first_part, remainder) = split_response(response);
+
+                if let Some(remainder) = remainder {
+                    self.ai_client.store_remainder(redemption.user_id.clone(), remainder).await;
+
+                    RedemptionResult {
+                        success: true,
+                        message: Some(format!("{} (Use !continue to see more)", first_part)),
+                    }
+                } else {
+                    RedemptionResult {
+                        success: true,
+                        message: Some(first_part),
+                    }
+                }
             },
             Err(e) => RedemptionResult {
                 success: false,
@@ -81,9 +94,22 @@ impl RedeemHandler for SeriousAIAction {
         let full_prompt = format!("{}User's question: {}", base_prompt, user_input);
 
         match self.ai_client.generate_response_without_history(&full_prompt).await {
-            Ok(response) => RedemptionResult {
-                success: true,
-                message: Some(response),
+            Ok(response) => {
+                let (first_part, remainder) = split_response(response);
+
+                if let Some(remainder) = remainder {
+                    self.ai_client.store_remainder(redemption.user_id.clone(), remainder).await;
+
+                    RedemptionResult {
+                        success: true,
+                        message: Some(format!("{} (Use !continue to see more)", first_part)),
+                    }
+                } else {
+                    RedemptionResult {
+                        success: true,
+                        message: Some(first_part),
+                    }
+                }
             },
             Err(e) => RedemptionResult {
                 success: false,
